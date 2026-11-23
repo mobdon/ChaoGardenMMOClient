@@ -71,6 +71,13 @@ use std::sync::Arc;
 /// Read access to the game's memory (GameCube addresses).
 pub trait GxMemory {
     fn read(&self, addr: u32, len: usize) -> Option<&[u8]>;
+    /// A read that only sets up a view (a vertex array's whole window); the
+    /// bytes actually used are reported with [`Self::touch`].
+    fn view(&self, addr: u32, len: usize) -> Option<&[u8]> {
+        self.read(addr, len)
+    }
+    /// `len` bytes at `addr` were used through a [`Self::view`].
+    fn touch(&self, _addr: u32, _len: usize) {}
 }
 
 /// Main RAM as one slice starting at physical address 0; cached
@@ -322,6 +329,18 @@ pub struct Gx {
     in_call: bool,
     // Output.
     immediate: Option<Immediate>,
+    /// No register was written since the last FIFO draw, and that draw is a
+    /// 3D one: the next FIFO draw joins it (see [`Self::run_draws`]).
+    joinable: bool,
+    /// Registers whose last write was decoded and still stands: writing the
+    /// same value again changes nothing, so it is dropped and the next draw
+    /// can still join. A register is dropped from here when state its
+    /// decoding reads changes elsewhere. BP by address; CP and XF hold the
+    /// value. The `set_*`/`load_*` methods don't keep these: a caller mixing
+    /// them with FIFO writes of an unchanged value keeps the method's state.
+    bp_fresh: [bool; 0x100],
+    cp_seen: [Option<u32>; 0x100],
+    xf_seen: Vec<Option<u32>>,
     frame: Frame,
     /// What this state machine ignored, with counts: unknown FIFO opcodes
     /// and BP/CP/XF registers it doesn't model ("BP 0x45", ...).
@@ -410,6 +429,10 @@ impl Gx {
             tlut_loads: FastMap::default(),
             in_call: false,
             immediate: None,
+            joinable: false,
+            bp_fresh: [false; 0x100],
+            cp_seen: [None; 0x100],
+            xf_seen: vec![None; 0x1100],
             frame: Frame::default(),
             unhandled: FastMap::default(),
             last_loader: None,
@@ -433,6 +456,8 @@ impl Gx {
         let clear = self.frame.clear_color;
         let mut f = std::mem::take(&mut self.frame);
         self.frame.clear_color = clear;
+        // Growing the list a draw at a time copied it over and over.
+        self.frame.draws.reserve(f.draws.len());
         static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         f.serial = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         f
@@ -534,7 +559,11 @@ impl Gx {
             .clone()
     }
 
-    fn array_views<'m>(&self, mem: &'m dyn GxMemory) -> [GxArray<'m>; ATTR_COUNT] {
+    fn array_views<'m>(
+        &self,
+        mem: &'m dyn GxMemory,
+        used: &'m [std::cell::Cell<usize>; ATTR_COUNT],
+    ) -> [GxArray<'m>; ATTR_COUNT] {
         let mut out = [GxArray::default(); ATTR_COUNT];
         for a in attr::POS..=attr::TEX7 {
             let (base, stride) = self.arrays[(a - attr::POS) as usize];
@@ -544,7 +573,7 @@ impl Gx {
             // The array runs to the end of RAM; reads past it give zeros.
             let mut len = 0x40_0000usize;
             let data = loop {
-                if let Some(d) = mem.read(base, len) {
+                if let Some(d) = mem.view(base, len) {
                     break d;
                 }
                 len /= 2;
@@ -552,7 +581,11 @@ impl Gx {
                     break &[][..];
                 }
             };
-            out[a as usize] = GxArray { data, stride };
+            out[a as usize] = GxArray {
+                data,
+                stride,
+                used: Some(&used[a as usize]),
+            };
         }
         out
     }
@@ -687,7 +720,7 @@ impl Gx {
         let mut fifo = im.fifo;
         fifo.resize(needed, 0);
         fifo.push(0);
-        self.run_draws(&fifo, mem);
+        self.run_draws(&fifo, mem, false);
     }
 
     // ---- display lists -------------------------------------------------
@@ -788,12 +821,17 @@ impl Gx {
                 _ if (command::DRAW_QUADS..=command::DRAW_POINTS + 7).contains(&cmd) => {
                     let fmt = (cmd & 7) as usize;
                     let n = be16(i + 1) as usize;
+                    if n == 0 {
+                        // A draw of no vertices (the game sends thousands).
+                        i += 3;
+                        continue;
+                    }
                     let size = vtx::source_vertex_size(&self.vat[fmt], &self.vcd);
                     let end = (i + 3 + size * n).min(dl.len());
                     let mut one = dl[i..end].to_vec();
                     one.resize(3 + size * n, 0);
                     one.push(0);
-                    self.run_draws(&one, mem);
+                    self.run_draws(&one, mem, true);
                     i = end;
                 }
                 command::CALL_DL => {
@@ -809,16 +847,54 @@ impl Gx {
         }
     }
 
-    fn run_draws(&mut self, dl: &[u8], mem: &dyn GxMemory) {
+    /// Record the draw commands of `dl`. A FIFO draw (`fifo`) that follows
+    /// another with no register write between them has the same material,
+    /// matrices and vertex format, so its triangles are added to that draw:
+    /// a model drawn as many short strips costs one draw's state, not one
+    /// each. HUD and view-space draws stay apart (widescreen places each by
+    /// its own extent). Callers that change state through the `set_*`/`load_*`
+    /// methods between FIFO draws don't clear `joinable`; the FIFO's own
+    /// state changes all arrive as BP/CP/XF writes, which do.
+    fn run_draws(&mut self, dl: &[u8], mem: &dyn GxMemory, fifo: bool) {
         let (loader, layout) = self.loader();
-        let arrays = self.array_views(mem);
+        let used: [std::cell::Cell<usize>; ATTR_COUNT] = Default::default();
+        let arrays = self.array_views(mem, &used);
+        let join = std::mem::take(&mut self.joinable) && fifo;
+        if let Some(last) = self
+            .frame
+            .draws
+            .last_mut()
+            .filter(|d| join && Arc::ptr_eq(&d.layout, &layout))
+        {
+            let base = (last.vertices.len() / layout.stride.max(1)) as u32;
+            let mut data = loader.parse_display_list(dl, base);
+            loader.load_vertex_data(&mut data, dl, &arrays);
+            last.vertices.extend_from_slice(&data.vertices);
+            last.indices.extend_from_slice(&data.indices);
+            // The part of each array window this joined draw indexed.
+            for a in attr::POS..=attr::TEX7 {
+                let n = used[a as usize].get();
+                if n > 0 {
+                    mem.touch(self.arrays[(a - attr::POS) as usize].0, n);
+                }
+            }
+            self.joinable = true;
+            return;
+        }
         let mut data = loader.parse_display_list(dl, 0);
         if data.indices.is_empty() {
             return;
         }
         loader.load_vertex_data(&mut data, dl, &arrays);
+        // The part of each array window the draws indexed.
+        for a in attr::POS..=attr::TEX7 {
+            let n = used[a as usize].get();
+            if n > 0 {
+                mem.touch(self.arrays[(a - attr::POS) as usize].0, n);
+            }
+        }
         let (material, params, draw_params) = self.snapshot(mem);
-        self.frame.draws.push(DrawCmd {
+        let d = DrawCmd {
             material,
             layout,
             vertices: data.vertices,
@@ -828,7 +904,10 @@ impl Gx {
             projection: self.wgpu_projection(),
             viewport: self.viewport,
             scissor: self.scissor,
-        });
+        };
+        self.joinable =
+            fifo && !crate::widescreen::is_hud(&d) && !crate::widescreen::is_view_space(&d);
+        self.frame.draws.push(d);
     }
 
     fn material(&mut self) -> Arc<GxMaterial> {
@@ -1033,8 +1112,18 @@ impl Gx {
 
     fn xf_write(&mut self, addr: u32, v: u32) {
         let f = f32::from_bits(v);
+        if let Some(m) = self.xf_matrices.get_mut(addr as usize) {
+            if m.to_bits() != v {
+                *m = f;
+                self.joinable = false;
+            }
+            return;
+        }
+        if self.xf_seen.get(addr as usize) == Some(&Some(v)) {
+            return;
+        }
+        let was = std::mem::take(&mut self.joinable);
         match addr {
-            0x000..=0x3FF => self.xf_matrices[addr as usize] = f,
             0x500..=0x5FF => {
                 let k = (addr - 0x500) as usize;
                 if let Some(m) = self.post_tex_mtx.get_mut(k / 12) {
@@ -1102,8 +1191,15 @@ impl Gx {
                     ]
                 };
             }
-            a if a == xf_register::XF_NUMCOLORS_ID => self.num_chans = v as usize & 3,
-            a if a == xf_register::XF_NUMTEX_ID => self.num_tex_gens = v as usize & 0xF,
+            // BP GEN_MODE holds these counts too: its next write counts again.
+            a if a == xf_register::XF_NUMCOLORS_ID => {
+                self.num_chans = v as usize & 3;
+                self.bp_fresh[bp_register::GEN_MODE_ID as usize] = false;
+            }
+            a if a == xf_register::XF_NUMTEX_ID => {
+                self.num_tex_gens = v as usize & 0xF;
+                self.bp_fresh[bp_register::GEN_MODE_ID as usize] = false;
+            }
             a if a == xf_register::XF_AMBIENT0_ID || a == xf_register::XF_AMBIENT1_ID => {
                 self.params.colors[color_kind::AMB0 + (a - xf_register::XF_AMBIENT0_ID) as usize] =
                     rgba8(v.to_be_bytes());
@@ -1123,6 +1219,8 @@ impl Gx {
                 if a >= xf_register::XF_DUALTEX0_ID {
                     let i = a - xf_register::XF_DUALTEX0_ID;
                     self.mat_tex_dual(i, v);
+                    // The texgen register decodes with this one.
+                    self.xf_seen[(xf_register::XF_TEX0_ID + i) as usize] = None;
                 } else if a >= xf_register::XF_TEX0_ID {
                     let i = a - xf_register::XF_TEX0_ID;
                     let dual = self.dual_tex[i as usize];
@@ -1145,7 +1243,15 @@ impl Gx {
                     self.mat.set_color_channel_from_registers(&r, i);
                 }
             }
-            _ => *self.unhandled.entry((b'X', addr)).or_default() += 1,
+            _ => {
+                // Not modelled: nothing a draw reads changed.
+                *self.unhandled.entry((b'X', addr)).or_default() += 1;
+                self.joinable = was;
+                return;
+            }
+        }
+        if let Some(s) = self.xf_seen.get_mut(addr as usize) {
+            *s = Some(v);
         }
     }
 
@@ -1154,6 +1260,16 @@ impl Gx {
     }
 
     fn cp_write(&mut self, addr: u32, v: u32) {
+        // The bits of the address the decoding below tells apart.
+        let key = (match addr & 0xF0 {
+            0x50 | 0x60 => addr & 0xF0,
+            0x70 | 0x80 | 0x90 => addr & 0xF7,
+            _ => addr,
+        } & 0xFF) as usize;
+        if self.cp_seen[key] == Some(v) {
+            return;
+        }
+        let was = std::mem::take(&mut self.joinable);
         let two = |v: u32, at: u32| (v >> at) & 3;
         match addr & 0xF0 {
             0x50 => {
@@ -1206,13 +1322,28 @@ impl Gx {
             }
             0xA0 => self.arrays[(addr & 0xF) as usize].0 = v,
             0xB0 => self.arrays[(addr & 0xF) as usize].1 = (v & 0xFF) as usize,
-            _ => *self.unhandled.entry((b'C', addr)).or_default() += 1,
+            _ => {
+                *self.unhandled.entry((b'C', addr)).or_default() += 1;
+                self.joinable = was;
+                return;
+            }
         }
+        self.cp_seen[key] = Some(v);
     }
 
     fn bp_write(&mut self, bag: u32) {
-        self.regs.bp_set(bag);
         let addr = bag >> 24;
+        let old = self.regs.bp[addr as usize];
+        self.regs.bp_set(bag);
+        // Palette loads, texture invalidation, EFB copies and the write mask
+        // act on every write.
+        if self.bp_fresh[addr as usize]
+            && self.regs.bp[addr as usize] == old
+            && !matches!(addr, 0x52 | 0x65 | 0x66 | 0xFE)
+        {
+            return;
+        }
+        let was = std::mem::take(&mut self.joinable);
         let r = &self.regs;
         let v = r.bp[addr as usize] & 0x00FF_FFFF;
         use bp_register as bp;
@@ -1229,6 +1360,9 @@ impl Gx {
                     cull_mode::ALL,
                 ];
                 self.mat.set_cull_mode(hw[((v >> 14) & 3) as usize]);
+                // XF holds the texgen and channel counts too.
+                self.xf_seen[xf_register::XF_NUMCOLORS_ID as usize] = None;
+                self.xf_seen[xf_register::XF_NUMTEX_ID as usize] = None;
             }
             0xC0..=0xDF => {
                 let i = (addr - 0xC0) / 2;
@@ -1266,6 +1400,10 @@ impl Gx {
                     self.mat
                         .set_tev_k_alpha_sel(i, (if odd { v >> 19 } else { v >> 9 }) & 0x1F);
                 }
+                // Every TEV stage decodes its swap mode from these tables.
+                self.bp_fresh[0xC0..=0xDF].fill(false);
+                self.bp_fresh[0x28..=0x2F].fill(false);
+                self.bp_fresh[0x10..=0x1F].fill(false);
             }
             bp::RAS1_IREF_ID | 0x25 | 0x26 => {
                 for i in 0..4 {
@@ -1328,6 +1466,9 @@ impl Gx {
                 let addr = (r.bp[0x64] & 0x1F_FFFF) << 5;
                 self.tlut_loads
                     .insert(v & 0x3FF, (addr, ((v >> 10) & 0x7FF) * 16));
+                // Texture maps pick their palette up when their registers
+                // are written.
+                self.bp_fresh[0x80..=0xBB].fill(false);
             }
             0x66 => self.invalidate_tex_all(),
             0x80..=0x9B | 0xA0..=0xBB => {
@@ -1373,8 +1514,13 @@ impl Gx {
                     clear: v & 0x800 != 0,
                 });
             }
-            _ => *self.unhandled.entry((b'B', addr)).or_default() += 1,
+            _ => {
+                *self.unhandled.entry((b'B', addr)).or_default() += 1;
+                self.joinable = was;
+                return;
+            }
         }
+        self.bp_fresh[addr as usize] = true;
     }
 
     /// Texture map `i` from its BP registers (SETMODE0/1, SETIMAGE0/3, SETTLUT).

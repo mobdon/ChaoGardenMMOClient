@@ -121,8 +121,6 @@ $('#watch-toggle').addEventListener('click', () => {
 
 function action(name) {
   if (!player) { toast('Enter the garden to start your adventure.'); return; }
-  if (name.startsWith('train-') && nearNPC(INTERACTION_ANCHORS.trainer)) audio.speak('knuckles');
-  if (name === 'race' && nearNPC({ zone: 'hub', x: 12, z: 6, radius: 2 })) audio.speak('tails');
   if (name === 'school') { openSchool(); return; }
   if (name === 'shop') { openShop(); return; }
   send({ type: 'action', action: name });
@@ -437,7 +435,8 @@ function connect(token) {
   socket.onerror = () => connected(false);
 }
 
-async function join(name, token = sessionToken, card = null, owner = false) {
+// beforeEnter runs after the Chao exists and before the page leaves for the game; false keeps the player here.
+async function join(name, token = sessionToken, card = null, owner = false, beforeEnter = null) {
   if (joining) return;
   // The game needs the player's own files: the local server's, or ones picked on this page.
   if (!(await gameFilesReady())) { $('#join-error').textContent = 'Pick your game files first.'; $('#pick-steam').focus(); return; }
@@ -454,6 +453,7 @@ async function join(name, token = sessionToken, card = null, owner = false) {
     sessionCard = data.card || card;
     player = data.player;
     rememberChao();
+    if (beforeEnter && !(await beforeEnter())) { showTitle(); return; }
     // The game's own Chao Lobby is the hub now; ?oldhub keeps this page as a reference.
     if (!new URLSearchParams(location.search).has('oldhub')) { window.location.assign(token || card ? '/sa2/?stage=90' : '/sa2/?stage=90&hatch=1'); return; }
     welcome.close();
@@ -487,12 +487,15 @@ async function insertCard(code) {
 $('#join-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const account = { username: $('#signup-name').value.trim(), email: $('#signup-email').value.trim(), password: $('#signup-password').value };
-  await join($('#chao-name').value, null, null);
-  if (!sessionCard) return;
-  try {
-    const response = await fetch('/api/account/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...account, card: sessionCard }) });
-    if (!response.ok) toast(`${(await response.json()).error || 'Could not make your account.'} Your Chao is saved in this browser's slots.`, 'error');
-  } catch { toast('Could not reach the server to make your account.', 'error'); }
+  // The account is made before the page leaves for the game, or the request would be dropped.
+  await join($('#chao-name').value, null, null, false, async () => {
+    try {
+      const response = await fetch('/api/account/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...account, card: sessionCard, agree: $('#signup-agree').checked }) });
+      if (response.ok) return true;
+      toast(`${(await response.json().catch(() => ({}))).error || 'Could not make your account.'} Your Chao is saved in this browser's slots.`, 'error');
+    } catch { toast('Could not reach the server to make your account.', 'error'); }
+    return false;
+  });
   $('#signup-password').value = '';
 });
 // Log in / Sign up tabs: one form shows at a time.
@@ -661,7 +664,6 @@ $('#school-market').addEventListener('click',()=>{$('#school-dialog').close();op
 function openShop() {
   if(shopDialog.open)return;
   if (!player) { toast('Enter the garden first.'); return; }
-  if (nearNPC(INTERACTION_ANCHORS.shop)) audio.speak('amy');
   renderShop();
   shopDialog.showModal();
   updatePaused();

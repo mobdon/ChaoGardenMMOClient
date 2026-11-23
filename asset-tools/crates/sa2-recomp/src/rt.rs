@@ -219,15 +219,45 @@ pub fn backedge(c: &mut Cpu, m: &mut Mem) {
 
 /// Call the function at `addr` (bl, bctrl, blrl and tail calls all end here).
 pub fn call(c: &mut Cpu, m: &mut Mem, addr: u32) {
-    let n = CALLS.fetch_add(1, Relaxed);
+    // A plain load and store, not an atomic add: the count and the trace ring
+    // are diagnostics (crash reports, the call budget), and the locked add on
+    // shared memory for every guest call was ~5% of the game thread. Threads
+    // racing here may drop a count.
+    let n = CALLS.load(Relaxed);
+    CALLS.store(n.wrapping_add(1), Relaxed);
     RING[n as usize % TRACE].store(addr, Relaxed);
     if c.rt.budget != 0 && n >= c.rt.budget {
         panic!("sa2-recomp: call budget of {} reached at {addr:#010x}", c.rt.budget);
     }
     match c.rt.lookup(m, addr) {
         Some(f) => f(c, m),
-        None => panic!("sa2-recomp: no function at {addr:#010x} (lr {:#010x})", c.lr),
+        None => panic!("sa2-recomp: no function at {addr:#010x} (lr {:#010x}, {})", c.lr, module_at(m, c.lr)),
     }
+}
+
+/// The linked module and section holding `a` ("module 60 sec 1 +0x1b0a8"),
+/// for the panic above: a caller in a REL is only an address otherwise.
+/// Reads RAM directly and bounded, since the module list may be damaged.
+fn module_at(m: &Mem, a: u32) -> String {
+    let r = |p: u32| -> Option<u32> {
+        let o = p.checked_sub(0x8000_0000)? as usize;
+        Some(u32::from_be_bytes(m.ram.get(o..o.checked_add(4)?)?.try_into().ok()?))
+    };
+    let mut info = r(OS_MODULE_HEAD).unwrap_or(0);
+    for _ in 0..64 {
+        let (Some(id), Some(n), Some(tab)) = (r(info), r(info.wrapping_add(0xC)), r(info.wrapping_add(0x10))) else { break };
+        for s in 0..n.min(32) {
+            let e = tab.wrapping_add(s * 8);
+            if let (Some(at), Some(len)) = (r(e), r(e.wrapping_add(4))) {
+                let at = at & !1;
+                if at != 0 && (at..at.saturating_add(len)).contains(&a) {
+                    return format!("module {id} sec {s} +{:#x}", a - at);
+                }
+            }
+        }
+        info = r(info.wrapping_add(4)).unwrap_or(0);
+    }
+    "in no linked module".into()
 }
 
 /// OS module queue head (OSModuleInfo list linked by OSLink).
@@ -238,16 +268,38 @@ pub fn sec(m: &Mem, id: u32, sec: u32) -> u32 {
     let mut info = m.r32(OS_MODULE_HEAD);
     while info != 0 {
         if m.r32(info) == id {
-            LINKED.with_borrow_mut(|l| l.insert(id, info));
+            remember_linked(id, info);
             return m.r32(m.r32(info + 0x10) + sec * 8) & !1;
         }
         info = m.r32(info + 4);
     }
     // Unlinked but still in memory (the game runs a module's code after
     // OSUnlink, e.g. its epilog): its section table is still there.
-    match LINKED.with_borrow(|l| l.get(&id).copied()) {
+    match linked_info(id) {
         Some(info) => m.r32(m.r32(info + 0x10) + sec * 8) & !1,
         None => panic!("sa2-recomp: module {id} is not linked"),
+    }
+}
+
+/// Module ids below this keep their last OSModuleInfo in a lock-free slot:
+/// `sec` runs on every REL address and a mutex plus SipHash insert there
+/// cost ~9% of the game thread. 0 means none (the module list ends at 0).
+const FAST_IDS: usize = 256;
+static LINKED_FAST: [AtomicU32; FAST_IDS] = [const { AtomicU32::new(0) }; FAST_IDS];
+
+fn remember_linked(id: u32, info: u32) {
+    match LINKED_FAST.get(id as usize) {
+        Some(slot) => slot.store(info, Relaxed),
+        None => LINKED.with_borrow_mut(|l| {
+            l.insert(id, info);
+        }),
+    }
+}
+
+fn linked_info(id: u32) -> Option<u32> {
+    match LINKED_FAST.get(id as usize) {
+        Some(slot) => Some(slot.load(Relaxed)).filter(|&i| i != 0),
+        None => LINKED.with_borrow(|l| l.get(&id).copied()),
     }
 }
 
@@ -390,6 +442,19 @@ pub fn divwu(a: u32, b: u32) -> u32 {
 #[inline]
 pub fn rs(v: f64) -> f64 {
     v as f32 as f64
+}
+/// Fused `a * c + b` with one rounding, as fmadd and ps_madd compute it.
+/// On wasm `f64::mul_add` is a software libm `fma`. When `a` and `c` both
+/// hold f32 values (always so for paired singles) their product is exact
+/// in f64 (24 + 24 bits < 53, no overflow or underflow), so the plain
+/// add rounds once and matches `mul_add` bit for bit; NaN fails the check.
+#[inline]
+pub fn madd(a: f64, c: f64, b: f64) -> f64 {
+    if rs(a) == a && rs(c) == c {
+        a * c + b
+    } else {
+        a.mul_add(c, b)
+    }
 }
 #[inline]
 pub fn fctiw(v: f64, trunc: bool) -> f64 {
@@ -643,5 +708,28 @@ pub fn psq_store(c: &Cpu, m: &mut Mem, ea: u32, w: bool, i: usize, f: Fpr) {
             7 => m.w16(ea + 2 * k, q.clamp(-32768.0, 32767.0) as i16 as u16),
             _ => m.wf32(ea + 4 * k, v),
         }
+    }
+}
+
+#[cfg(test)]
+mod module_at_tests {
+    use super::*;
+
+    #[test]
+    fn names_the_module_section_and_offset_of_an_address() {
+        let mut m = Mem { ram: vec![0; 0x4000], lc: Vec::new(), io_read: |_, _| 0, io_write: |_, _, _| {} };
+        let mut w = |a: u32, v: u32| m.ram[(a - 0x8000_0000) as usize..][..4].copy_from_slice(&v.to_be_bytes());
+        // One module (id 60) at 0x80003200: 2 sections, table at 0x80003300.
+        w(OS_MODULE_HEAD, 0x8000_3200);
+        w(0x8000_3200, 60);
+        w(0x8000_320C, 2);
+        w(0x8000_3210, 0x8000_3300);
+        w(0x8000_3308, 0x8120_0001); // section 1: executable bit set
+        w(0x8000_330C, 0x2_0000);
+        assert_eq!(module_at(&m, 0x8121_B0A8), "module 60 sec 1 +0x1b0a8");
+        assert_eq!(module_at(&m, 0x85FE_73BE), "in no linked module");
+        // A damaged list (a link pointing outside RAM) ends the search.
+        m.ram[0x3204..0x3208].copy_from_slice(&0xDEAD_BEEFu32.to_be_bytes());
+        assert_eq!(module_at(&m, 0x9000_0000), "in no linked module");
     }
 }

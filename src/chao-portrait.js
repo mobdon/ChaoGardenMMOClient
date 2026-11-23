@@ -49,7 +49,9 @@ export function mountChaoPortrait(canvas, player) {
   return task;
 }
 
-async function drawChaoPortrait(canvas, player) {
+/** `player`'s Chao model in a scene of its own on `canvas`, standing as imported with the camera on
+ * its front; null when its asset is missing. Also draws the phone's picture sheet (src/tiny-sheet.js). */
+export async function openChaoScene(canvas, player, options = {}) {
   const B = await import('@babylonjs/core'); await import('@babylonjs/loaders/glTF/index.js');
   const load = async key => {
     const response = await fetch(`/api/assets/${key}.glb`).catch(() => null);
@@ -65,7 +67,7 @@ async function drawChaoPortrait(canvas, player) {
     }
     return container;
   };
-  const engine = new B.Engine(canvas, true, { alpha: true }), scene = new B.Scene(engine);
+  const engine = new B.Engine(canvas, true, { alpha: true, ...options }), scene = new B.Scene(engine);
   scene.clearColor = new B.Color4(0, 0, 0, 0);
   let open = true; // the page and the next mount may both clear it
   const dispose = () => { if (!open) return; open = false; engine.stopRenderLoop(); scene.dispose(); engine.dispose(); };
@@ -81,16 +83,15 @@ async function drawChaoPortrait(canvas, player) {
   // The family bodies are a local conversion; without them the original child model, as the hub falls back.
   if (!model && key.startsWith('chao-body-')) model = (own = await game(key = 'chao')) ? await parse(key, own) : await load(key);
   if (own) source = model;
-  if (!model) { dispose(); return () => {}; }
+  if (!model) { dispose(); return null; }
   const entries = model.instantiateModelsToScene(name => name, false);
   for (const group of entries.animationGroups) group.stop();
   const visual = entries.rootNodes[0];
-  visual.rotate(B.Axis.Y, TURN); // the select window's turn; the camera sits on the Chao's front (+z)
   if (key.startsWith('chao-body-')) {
     // As the hub does for a family body: server morph weights, native look, and the face with its lid motion.
     attachChaoBody(visual, entries.animationGroups, () => player.body);
     await Promise.all([loadChaoFaceManifest(), loadChaoLookManifest()]);
-    if (scene.isDisposed) return () => {};
+    if (scene.isDisposed) return null;
     applyChaoLook(visual, player.body);
     configureChaoFace(visual, player.body?.typeName);
     resetChaoFace(visual);
@@ -102,22 +103,29 @@ async function drawChaoPortrait(canvas, player) {
   }
   // Built from the game files: lit by the game's own Chao Select light. Without the files it stays unlit, as before.
   const lightRow = own && await gameChaoLight();
-  if (scene.isDisposed) return () => {};
+  if (scene.isDisposed) return null;
   if (lightRow) {
     const light = ninjaLight(lightRow);
     // Every frame: the face and the look swap in materials of their own while the Chao is shown.
     scene.onBeforeRenderObservable.add(() => { for (const mesh of visual.getChildMeshes(false)) applyNinjaLight(mesh.material, light); });
   }
-  const imported = { entries, visual };
-  const stand = own ? entries.animationGroups[0]
-    : source && cloneNativeMotion(imported, source, captureChaoPose(imported), 'alm_tati', 'Stand');
-  // The motion table's own PlaySpeed (native frames per 60 Hz tick); the clip's keys are one per native frame.
-  const speed = source?.extras?.chaoBehaviour?.clips?.find(row => row.nativeName === (own ? 'motion' : 'alm_tati'))?.tableProperties?.PlaySpeed;
-  stand?.start(true, Number.isFinite(speed) && speed > 0 ? speed : 1);
   const { min, max } = visual.getHierarchyBoundingVectors();
   const height = max.y - min.y;
   const camera = new B.ArcRotateCamera('camera', Math.PI / 2, Math.PI / 2.1, height * 2.4, new B.Vector3(0, min.y + height / 2, 0), scene);
   camera.minZ = 0.01;
+  return { B, engine, scene, camera, key, visual, imported: { entries, visual }, source, own, look, dispose };
+}
+
+async function drawChaoPortrait(canvas, player) {
+  const opened = await openChaoScene(canvas, player);
+  if (!opened) return () => {};
+  const { B, engine, scene, camera, key, visual, imported, source, own, look, dispose } = opened;
+  visual.rotate(B.Axis.Y, TURN); // the select window's turn; the camera sits on the Chao's front (+z)
+  const stand = own ? imported.entries.animationGroups[0]
+    : source && cloneNativeMotion(imported, source, captureChaoPose(imported), 'alm_tati', 'Stand');
+  // The motion table's own PlaySpeed (native frames per 60 Hz tick); the clip's keys are one per native frame.
+  const speed = source?.extras?.chaoBehaviour?.clips?.find(row => row.nativeName === (own ? 'motion' : 'alm_tati'))?.tableProperties?.PlaySpeed;
+  stand?.start(true, Number.isFinite(speed) && speed > 0 ? speed : 1);
   // The game's own head icon (ChaoMain.rel): AL_IconDrawSub 0x12B8C draws a quad +-0.55 wide, 0.3 up and 0.3 toward
   // the viewer in view space, squashed by k = 0.92 + 0.08*(1+sin phase), phase += 0x780/frame; AL_CalcShadowPos 0x100C
   // puts it at node 33 + 0.045*sin(psi), psi += 0x470/frame; colour by AL_CalcIconColor 0x14574 (chao-head-ball.js),
