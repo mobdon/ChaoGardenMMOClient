@@ -450,11 +450,9 @@ mod tests {
         let a = win(&mut p, &mut e, Class::Beginner, 3, 2, &row);
         assert_eq!(a.medal, Some((7, 2)));
         assert_eq!(a.emblems, vec![0]);
-        assert!(
-            win(&mut p, &mut e, Class::Beginner, 3, 2, &row)
-                .emblems
-                .is_empty()
-        );
+        assert!(win(&mut p, &mut e, Class::Beginner, 3, 2, &row)
+            .emblems
+            .is_empty());
     }
 }
 

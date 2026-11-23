@@ -1,6 +1,6 @@
 //! main.dol MOV_Control against the GameCube PowerPC (needs SA2_MAIN_DOL, the
 //! local Gekko tables and SA2_PPC_PYTHON; returns early when the oracle skips).
-use sa2_asset_tools::mov_control::{Mover, mov_control};
+use sa2_asset_tools::mov_control::{mov_control, Mover};
 use serde_json::Value;
 use std::{env, path::PathBuf, process::Command};
 
