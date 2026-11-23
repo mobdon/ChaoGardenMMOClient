@@ -460,7 +460,9 @@ function othersIn(m, token) {
     if (p.chaoRecordVersion !== undefined && recVersions.get(p.id) !== p.chaoRecordVersion) {
       recVersions.set(p.id, p.chaoRecordVersion);
       fetch(`/api/chao-record/${encodeURIComponent(p.id)}`, { headers: { Authorization: `Bearer ${token}` } })
-        .then((r) => (r.ok ? r.arrayBuffer() : null)).then((b) => b && recordIn(numId(p.id), new Uint8Array(b))).catch(() => {});
+        // A failed request forgets the version, so the next snapshot asks again
+        // (the game draws no remote Chao before its own record is in).
+        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject())).then((b) => recordIn(numId(p.id), new Uint8Array(b))).catch(() => recVersions.delete(p.id));
     }
   }
   const text = new TextEncoder().encode(lines.join('\n') + (lines.length ? '\n' : ''));
