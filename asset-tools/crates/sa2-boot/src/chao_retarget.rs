@@ -97,6 +97,13 @@ impl ChaoRest {
         self.verts[n].iter().map(move |&v| add(t, mv(&r, v)))
     }
 
+    /// Height of the rest model (its vertices' y range, model units).
+    pub fn height(&self) -> f32 {
+        let w = self.worlds(&[]);
+        let ys: Vec<f32> = (0..self.nodes.len()).flat_map(|n| self.world_verts(&w, n).map(|p| p[1]).collect::<Vec<_>>()).collect();
+        ys.iter().copied().fold(f32::MIN, f32::max) - ys.iter().copied().fold(f32::MAX, f32::min)
+    }
+
     fn centroid(&self, w: &[Xf], n: usize) -> V3 {
         let c = self.verts[n].len().max(1) as f32;
         mul(self.world_verts(w, n).fold([0.0; 3], add), 1.0 / c)
