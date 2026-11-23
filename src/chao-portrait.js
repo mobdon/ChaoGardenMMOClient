@@ -5,9 +5,9 @@
 import { captureChaoPose, cloneNativeMotion } from './chao-locomotion.js';
 import { gameChaoGlb, gameChaoLight, gameHeadBallTables, gameHeadIconTables, gameHeadIconUrls, gameTextureUrl } from './game-assets.js';
 import { haloPicture, headBallColour, headIcon } from './chao-head-ball.js';
-import { applyChunkDiffuse, applyNativeChaoMaterial, applyNinjaLight, ninjaLight } from './chao-materials.js';
+import { applyChunkDiffuse, applyNativeChaoMaterial, applyNinjaLight, ninjaLight, orderChaoStrips } from './chao-materials.js';
 import { attachChaoBody, bodyAssetFor } from './chao-body.js';
-import { configureChaoFace, loadChaoFaceManifest, resetChaoFace, stepChaoFace } from './chao-face.js';
+import { configureChaoFace, loadChaoFaceManifest, resetChaoFace, setChaoEyePicture, stepChaoFace } from './chao-face.js';
 import { applyChaoLook, loadChaoLookManifest } from './chao-look.js';
 
 // Asset key -> index in the game's own Chao model table (AL_RootObject).
@@ -100,6 +100,12 @@ export async function openChaoScene(canvas, player, options = {}) {
       frames += Math.min(engine.getDeltaTime(), 100) * 0.06;
       for (; frames >= 1; frames -= 1) stepChaoFace(visual);
     });
+  }
+  if (own) {
+    // A single model from the game files still names a body picture on its eyes; the game swaps in the type's own.
+    if (!key.startsWith('chao-body-') && await loadChaoFaceManifest() && !scene.isDisposed) setChaoEyePicture(visual, GAME_TYPE[key] ?? 2);
+    if (scene.isDisposed) return null;
+    orderChaoStrips(visual);
   }
   // Built from the game files: lit by the game's own Chao Select light. Without the files it stays unlit, as before.
   const lightRow = own && await gameChaoLight();
