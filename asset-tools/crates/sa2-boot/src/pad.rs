@@ -252,6 +252,11 @@ pub fn opened(name: &str) {
         .push((name.to_lowercase(), frame));
 }
 
+/// This frame's port 0, as the game's PADRead will see it.
+pub fn port0() -> PadStatus {
+    PADS.get()[0]
+}
+
 /// Controller port 0 only (the others stay disconnected).
 pub fn set_port0(p: PadStatus) {
     record(p);

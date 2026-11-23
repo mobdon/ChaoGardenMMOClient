@@ -121,8 +121,6 @@ $('#watch-toggle').addEventListener('click', () => {
 
 function action(name) {
   if (!player) { toast('Enter the garden to start your adventure.'); return; }
-  if (name.startsWith('train-') && nearNPC(INTERACTION_ANCHORS.trainer)) audio.speak('knuckles');
-  if (name === 'race' && nearNPC({ zone: 'hub', x: 12, z: 6, radius: 2 })) audio.speak('tails');
   if (name === 'school') { openSchool(); return; }
   if (name === 'shop') { openShop(); return; }
   send({ type: 'action', action: name });
@@ -666,7 +664,6 @@ $('#school-market').addEventListener('click',()=>{$('#school-dialog').close();op
 function openShop() {
   if(shopDialog.open)return;
   if (!player) { toast('Enter the garden first.'); return; }
-  if (nearNPC(INTERACTION_ANCHORS.shop)) audio.speak('amy');
   renderShop();
   shopDialog.showModal();
   updatePaused();

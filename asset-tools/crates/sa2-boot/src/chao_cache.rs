@@ -26,6 +26,8 @@ use std::time::{Duration, Instant};
 /// 0x82F0_2A00), page-aligned; it runs to the top of MEM1 (SA2_MEM1_MB:
 /// about 1 MB at 48 MB, enough for hundreds of 0x800-byte records).
 pub const BASE: u32 = 0x82F0_4000;
+/// The region's end: chao_player's remote-Chao heap starts here.
+pub const END: u32 = 0x8300_0000;
 /// The save info record CreateChaoExtra takes.
 pub const INFO_SIZE: u32 = 0x800;
 /// An offline player's Chao stays cached this long before eviction.
@@ -84,7 +86,8 @@ thread_local! {
 
 fn with<R>(f: impl FnOnce(&mut Cache) -> R) -> R {
     CACHE.with_borrow_mut(|c| f(c.get_or_insert_with(|| {
-        let end = sa2_recomp::rt::mem1() | 0x8000_0000;
+        // Up to the remote Chao heap at 0x83000000 (chao_player).
+        let end = (sa2_recomp::rt::mem1() | 0x8000_0000).min(END);
         if end <= BASE {
             eprintln!("chao-cache: disabled, MEM1 ends at {end:#x} below its region {BASE:#x} (raise SA2_MEM1_MB)");
             return Cache { region: Region::new(BASE, BASE), ..Default::default() };

@@ -188,3 +188,172 @@ fn unknown_bytes_are_skipped() {
     f.write(&s, &Ram(&[]));
     assert_eq!(f.gx.take_frame().draws.len(), 1);
 }
+
+/// One more triangle in the format `triangle` set up.
+fn another(s: &mut Vec<u8>) {
+    s.extend([0x90, 0, 3]);
+    for v in [[2.0f32, 0.0, 0.0], [3.0, 0.0, 0.0], [2.0, 1.0, 0.0]] {
+        for c in v {
+            s.extend(c.to_be_bytes());
+        }
+    }
+}
+
+/// A view matrix that is neither the identity nor the HUD's pixel scale.
+fn view_3d(s: &mut Vec<u8>) {
+    let m = [
+        1.0f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, -10.0,
+    ];
+    xf(s, 0, &m.map(f32::to_bits));
+}
+
+#[test]
+fn draws_with_no_state_change_between_them_join() {
+    let mut f = GxFifo::default();
+    let mut s = Vec::new();
+    view_3d(&mut s);
+    s.extend(triangle());
+    another(&mut s);
+    another(&mut s);
+    f.write(&s, &Ram(&[]));
+    let frame = f.gx.take_frame();
+    assert_eq!(frame.draws.len(), 1);
+    let d = &frame.draws[0];
+    assert_eq!(d.indices, [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(d.vertices.len(), 9 * d.layout.stride);
+    // The second triangle's first vertex is its own (x = 2), after the first's three.
+    let x =
+        |v: usize| f32::from_le_bytes(d.vertices[v * d.layout.stride..][..4].try_into().unwrap());
+    assert_eq!([x(0), x(3), x(6)], [0.0, 2.0, 2.0]);
+}
+
+#[test]
+fn a_state_change_or_a_2d_draw_starts_a_new_draw() {
+    // A register write between two 3D draws.
+    let mut f = GxFifo::default();
+    let mut s = Vec::new();
+    view_3d(&mut s);
+    s.extend(triangle());
+    xf(&mut s, 11, &[(-20.0f32).to_bits()]);
+    another(&mut s);
+    f.write(&s, &Ram(&[]));
+    assert_eq!(f.gx.take_frame().draws.len(), 2);
+    // View-space draws (identity matrix: 2D quads) are placed one by one.
+    let mut f = GxFifo::default();
+    let mut s = triangle();
+    another(&mut s);
+    f.write(&s, &Ram(&[]));
+    assert_eq!(f.gx.take_frame().draws.len(), 2);
+    // A new frame starts its own draws.
+    let mut f = GxFifo::default();
+    let mut s = Vec::new();
+    view_3d(&mut s);
+    s.extend(triangle());
+    f.write(&s, &Ram(&[]));
+    assert_eq!(f.gx.take_frame().draws.len(), 1);
+    let mut s = Vec::new();
+    another(&mut s);
+    f.write(&s, &Ram(&[]));
+    assert_eq!(f.gx.take_frame().draws.len(), 1);
+}
+
+/// Two 3D triangles with `between` written between them.
+fn draws_around(between: &[u8]) -> usize {
+    let mut f = GxFifo::default();
+    let mut s = Vec::new();
+    view_3d(&mut s);
+    s.extend(triangle());
+    s.extend(between);
+    another(&mut s);
+    f.write(&s, &Ram(&[]));
+    f.gx.take_frame().draws.len()
+}
+
+#[test]
+fn writes_that_change_nothing_do_not_split_a_draw() {
+    // The state the first draw already had, written again in each family.
+    let mut same = Vec::new();
+    view_3d(&mut same);
+    for _ in 0..2 {
+        bp(&mut same, 0x4000_0017); // z mode
+        cp(&mut same, 0xA0, 0x1234); // array base
+        xf(&mut same, 0x1018, &[0]); // matrix index
+    }
+    // The first of each is new; the repeats are not.
+    let mut f = GxFifo::default();
+    let mut s = same.clone();
+    s.extend(triangle());
+    s.extend(&same);
+    another(&mut s);
+    s.extend([0x98, 0, 0]); // a draw of no vertices
+    another(&mut s);
+    f.write(&s, &Ram(&[]));
+    assert_eq!(f.gx.take_frame().draws.len(), 1);
+    // A register this decoder doesn't model changes nothing a draw reads.
+    let mut unmodelled = Vec::new();
+    bp(&mut unmodelled, 0x3000_0001);
+    cp(&mut unmodelled, 0x30, 1);
+    xf(&mut unmodelled, 0x1008, &[1]);
+    assert_eq!(draws_around(&unmodelled), 1);
+}
+
+#[test]
+fn the_first_write_of_a_value_and_acting_registers_count() {
+    for between in [
+        {
+            let mut b = Vec::new();
+            bp(&mut b, 0x4000_0017);
+            b
+        },
+        {
+            let mut b = Vec::new();
+            cp(&mut b, 0xA0, 0x1234);
+            b
+        },
+        {
+            let mut b = Vec::new();
+            xf(&mut b, 0x1018, &[3]);
+            b
+        },
+    ] {
+        assert_eq!(draws_around(&between), 2, "{between:x?}");
+    }
+    // Texture invalidation acts each time it is written.
+    let mut f = GxFifo::default();
+    let mut s = Vec::new();
+    view_3d(&mut s);
+    bp(&mut s, 0x6600_0000);
+    s.extend(triangle());
+    bp(&mut s, 0x6600_0000);
+    another(&mut s);
+    f.write(&s, &Ram(&[]));
+    assert_eq!(f.gx.take_frame().draws.len(), 2);
+}
+
+#[test]
+fn a_repeat_decodes_again_when_what_it_reads_changed() {
+    // GEN_MODE and XF both hold the channel count: the last write wins,
+    // also when it repeats that register's own last value.
+    let mut f = GxFifo::default();
+    let mut s = Vec::new();
+    view_3d(&mut s);
+    xf(&mut s, 0x1009, &[1]);
+    bp(&mut s, 0x0000_0020); // GEN_MODE: two channels
+    xf(&mut s, 0x1009, &[1]);
+    s.extend(triangle());
+    f.write(&s, &Ram(&[]));
+    let with = f.gx.take_frame();
+    let mut f = GxFifo::default();
+    let mut s = Vec::new();
+    view_3d(&mut s);
+    bp(&mut s, 0x0000_0020);
+    xf(&mut s, 0x1009, &[1]);
+    s.extend(triangle());
+    f.write(&s, &Ram(&[]));
+    let without = f.gx.take_frame();
+    assert!(
+        std::sync::Arc::ptr_eq(&with.draws[0].material, &without.draws[0].material)
+            || format!("{:?}", with.draws[0].material)
+                == format!("{:?}", without.draws[0].material)
+    );
+}

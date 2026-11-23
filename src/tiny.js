@@ -3,8 +3,11 @@ import { createSaveSlots } from './save-slots.js';
 import { createStatRow, updateStatRow } from './stat-ui.js';
 import { chaosVariant, chaoFormLabel, drawTinyAvatar, nativeDirection, setOwnAtlas } from './tiny-avatar.js';
 import { createTinyWatch } from './tiny-watch.js';
-import { createTinyTraining } from './tiny-training.js';
+// The panel that speaks the server's training (care envelope, adapted-afk-training); tiny-training.js
+// waits for a capability the Rust server never sends.
+import { createTinyTraining } from './tiny-afk-training.js';
 import { createTinyItems } from './tiny-items.js';
+import { createTinyResident } from './tiny-resident.js';
 import { durableTinyResult, readTinyCache, writeTinyCache, observedTime } from './tiny-state.js';
 import { createTinyAccount, supportsTinyAccounts } from './tiny-account.js';
 import { tinyLogin } from './tiny-login.js';
@@ -77,6 +80,7 @@ const statRows = new Map();
 const gardenWatch = createTinyWatch({ send });
 const training = createTinyTraining({ root: $('#tiny-training-panel'), send });
 const items = createTinyItems({ root: $('#tiny-items-panel'), send });
+const resident = createTinyResident({ send });
 const account = createTinyAccount({
   transmit: rawSend,
   onState(state) { accountReady = state.ready; renderGame(); },
@@ -340,8 +344,14 @@ function metricItems(values) {
   $('#tiny-game-metrics').replaceChildren(...values.map(value => { const span = document.createElement('span'); span.textContent = value; return span; }));
 }
 
+// A Tiny Garden resident is watched by the server yet may still play: the server
+// takes tiny-start from it. Any other watch needs control taken first.
+function watchBlocks() { return !!player?.watch && careState?.tinyResident?.enabled !== true; }
+
 function renderGame() {
-  training.update(player, { connected: mayAct(), reconciled: connected, busy: !!tinyGame || pendingStart || !!player?.watch || (accountV2 && account.pending), capabilities, serverTime });
+  // Opts the Chao into the Tiny Garden; the server refuses training with tiny-entry-required until then.
+  resident.update(player, { connected: mayAct(), care: careState, capabilities, accountsV2: accountV2 });
+  training.update(player, { connected: mayAct(), reconciled: connected, busy: !!tinyGame || pendingStart || watchBlocks() || (accountV2 && account.pending), capabilities, serverTime, care: careState });
   gardenWatch.update(player, { connected: mayAct(), reconciled: connected, busy: !!tinyGame || pendingStart || training.blocksActivity || (accountV2 && account.pending) });
   items.update(player, { connected: mayAct(), care: careState, accountsV2: accountV2, serverTime,
     careMutations: !accountV2 && careState?.rulesVersion === 'adapted-care-v1' });
@@ -366,8 +376,8 @@ function renderGame() {
   $('#tiny-stop').hidden = !hasGame;
   $('#tiny-stop').disabled = !mayAct() || pendingStop || waiting || saved;
   renderRoundShortcut();
-  $('#tiny-start').disabled = !mayAct() || !player || hasGame || pendingStart || connecting || !!player?.watch || training.blocksActivity;
-  $('#tiny-start').textContent = pendingStart ? 'Starting your round…' : !connected ? 'Connect a saved Chao' : player?.watch ? 'Take control to play' : hasGame ? (saved ? 'Round complete' : waiting ? 'Saving result…' : 'Round in progress') : `Play ${definition.title}`;
+  $('#tiny-start').disabled = !mayAct() || !player || hasGame || pendingStart || connecting || watchBlocks() || training.blocksActivity;
+  $('#tiny-start').textContent = pendingStart ? 'Starting your round…' : !connected ? 'Connect a saved Chao' : watchBlocks() ? 'Take control to play' : hasGame ? (saved ? 'Round complete' : waiting ? 'Saving result…' : 'Round in progress') : `Play ${definition.title}`;
   $('#tiny-phase').textContent = pendingStop ? 'Stopping round…' : saved ? 'Result saved' : waiting ? 'Saving result…' : !hasGame ? 'Ready when you are' : 'Playing';
   $('#tiny-cover-title').textContent = connected ? definition.title : 'A little challenge awaits.';
   $('#tiny-cover-copy').textContent = connected ? 'Tap Play to start a fresh round.' : 'Connect your saved Chao and start a round.';
@@ -463,6 +473,7 @@ function openSocket(activeToken, generation) {
     if (message.type === 'notice') { gardenWatch.handleNotice?.(message); training.handleEvent(message); pendingStart = false; pendingStop = false; if (message.kind === 'error' && pendingSave) { clearTimeout(saveTimer); pendingSave = false; returnAfterSave = false; } notice(message.text || 'The server could not complete that action.', message.kind === 'error'); renderGame(); }
     if (message.type === 'event') {
       training.handleEvent(message);
+      resident.handleEvent(message);
       if (items.handleEvent(message) && message.accepted === true) lastSavedAt = Date.now();
       if (message.kind === 'watch-saved' && message.accepted === true) lastSavedAt = Date.now();
       if (message.kind === 'saved' && message.playerId === player?.id && pendingSave && connected) {
@@ -589,7 +600,7 @@ $('#tiny-games').addEventListener('click', event => {
   selectedGame = button.dataset.game; $('#tiny-result').hidden = true; notice(''); renderGame();
 });
 $('#tiny-start').addEventListener('click', async () => {
-  if (!mayAct() || !player || tinyGame || pendingStart || player.watch || training.blocksActivity) return;
+  if (!mayAct() || !player || tinyGame || pendingStart || watchBlocks() || training.blocksActivity) return;
   pendingStart = true; $('#tiny-result').hidden = true; notice('');
   const sent = send({ type: 'action', action: 'tiny-start', gameId: selectedGame }); renderGame();
   clearTimeout(pendingTimer); pendingTimer = setTimeout(() => { if (pendingStart) { pendingStart = false; notice('The server has not started the round yet. Try again once connected.', true); renderGame(); } }, 8_000);

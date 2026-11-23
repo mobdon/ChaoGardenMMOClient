@@ -14,8 +14,8 @@ const DISC_BLOCK = 128 << 10;
 const blockSize = (path) => (isPicked(path) && picked.get(path.toLowerCase())?.read ? DISC_BLOCK : BLOCK);
 // Fixed numbers for the devices, the same in every thread (a file opened on
 // one game thread may be written on another, as the sound file is).
-const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12, DEV_CARD = 13, DEV_AREA = 14, DEV_GXPAGES = 15, DEV_EXTRAS = 16;
-const DEVICES = { 'dev/audio': DEV_AUDIO, 'dev/gx': DEV_GX, 'dev/pad': DEV_PAD, 'dev/card': DEV_CARD, 'dev/area': DEV_AREA, 'dev/gxpages': DEV_GXPAGES, 'dev/extras': DEV_EXTRAS };
+const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12, DEV_CARD = 13, DEV_AREA = 14, DEV_GXPAGES = 15, DEV_EGG = 16, DEV_EXTRAS = 17;
+const DEVICES = { 'dev/audio': DEV_AUDIO, 'dev/gx': DEV_GX, 'dev/pad': DEV_PAD, 'dev/card': DEV_CARD, 'dev/area': DEV_AREA, 'dev/gxpages': DEV_GXPAGES, 'dev/egg': DEV_EGG, 'dev/extras': DEV_EXTRAS };
 const isDevice = (fd) => fd >= DEV_AUDIO && fd <= DEV_EXTRAS;
 // /dev/gxpages as read since it was opened: the decoder's page bits (main.js sh.pages).
 const gxPages = { bytes: new Uint8Array(0), pos: 0 };
@@ -260,10 +260,11 @@ function cardSend() {
 
 // ---- MMO files (sa2-boot chao_player.rs) ----------------------------------
 // The other players' Chao: the game writes its own pose and record to
-// /mmo/pose-out and /mmo/record-out and reads the others' from /mmo/pose-in
+// /mmo/pose-out and /mmo/record-out (and its Chao's name tag spots to
+// /mmo/tags-out, the Tiny Garden tree icon to /mmo/tree-icon) and reads the others' from /mmo/pose-in
 // and /mmo/rec/<id>. They live in a buffer the page shares (main.js, MMO):
 // the page sends and fetches them over the MMO server.
-const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32 };
+const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472, SKILLS: 156476, INFO: 156508, INFO_MAX: 256, OWN: 156772 };
 function mmoI32(at) { return new Int32Array(sh.mmo.buffer, at, 2); }
 // Bytes of a file the game reads, or null when it doesn't exist.
 function mmoRead(path) {
@@ -271,6 +272,41 @@ function mmoRead(path) {
   if (path === 'mmo/pose-in') {
     const len = Math.min(Atomics.load(mmoI32(MMO.POSE_IN), 1), MMO.POSE_IN_MAX);
     return { bytes: b.slice(MMO.POSE_IN + 8, MMO.POSE_IN + 8 + len), ver: 0 };
+  }
+  // Chao Karate (sa2-boot karate.rs): the page's [press counter, button].
+  if (path === 'mmo/karate-in') return { bytes: b.slice(MMO.KARATE, MMO.KARATE + 2), ver: 0 };
+  // The player's Chao's name (sa2-boot kinder_chart.rs): 7 bytes, 0 ends; then the count of eggs received (card_box.rs).
+  if (path === 'mmo/name-in') return { bytes: b.slice(MMO.NAME, MMO.NAME + 8), ver: 0 };
+  // The server's skill numbers for the player's Chao (sa2-boot chao_player.rs
+  // take_skills): 7 x [level, progress, points u16 big-endian]; no file until
+  // the server has answered a record upload.
+  if (path === 'mmo/skills-in') return b[MMO.SKILLS] ? { bytes: b.slice(MMO.SKILLS + 1, MMO.SKILLS + 29), ver: 0 } : null;
+  // The signed-in Chao's server record (sa2-boot chao_player.rs create); no file until the page has it.
+  if (path === 'mmo/own-record') return b[MMO.OWN] ? { bytes: b.slice(MMO.OWN + 4, MMO.OWN + 4 + MMO.REC), ver: 0 } : null;
+  // The player's rings for the card box (sa2-boot card_box.rs): 4 bytes, little endian.
+  if (path === 'mmo/rings-in') return { bytes: b.slice(MMO.RINGS, MMO.RINGS + 4), ver: 0 };
+  // The stages the server lets this card start (sa2-boot story.rs); no file
+  // until the page has the server's list, so the game keeps its own flags.
+  if (path === 'mmo/story-in') {
+    const h = mmoI32(MMO.STORY);
+    if (!Atomics.load(h, 0)) return null;
+    return { bytes: b.slice(MMO.STORY + 8, MMO.STORY + 8 + Math.min(Atomics.load(h, 1), MMO.STORY_MAX)), ver: 0 };
+  }
+  // ?geartune=1 (debug): the gear tuner's per-piece offsets (chao_player.rs).
+  if (path === 'mmo/gear-tune') {
+    const h = mmoI32(MMO.GEAR);
+    if (!Atomics.load(h, 0)) return null;
+    return { bytes: b.slice(MMO.GEAR + 8, MMO.GEAR + 8 + Math.min(Atomics.load(h, 1), MMO.GEAR_MAX)), ver: 0 };
+  }
+  // The chart's breeding page (sa2-boot kinder_chart.rs).
+  if (path === 'mmo/breed-in') {
+    const len = Math.min(Atomics.load(mmoI32(MMO.BREED), 1), MMO.BREED_MAX);
+    return { bytes: b.slice(MMO.BREED + 8, MMO.BREED + 8 + len), ver: 0 };
+  }
+  // The memory card's Chao for the Chao Transporter (sa2-boot tiny_transporter.rs).
+  if (path === 'mmo/card-chao') {
+    const len = Math.min(Atomics.load(mmoI32(MMO.CARD), 1), MMO.CARD_MAX);
+    return { bytes: b.slice(MMO.CARD + 8, MMO.CARD + 8 + len), ver: 0 };
   }
   const m = /^mmo\/rec\/(\d+)$/.exec(path);
   if (!m) return null;
@@ -286,7 +322,9 @@ function mmoSlot(id) {
 }
 // A file the game wrote, on close.
 function mmoWrite(path, bytes) {
-  const out = path === 'mmo/pose-out' ? [MMO.POSE_OUT, MMO.POSE_OUT_MAX] : path === 'mmo/record-out' ? [MMO.REC_OUT, MMO.REC] : null;
+  if (path === 'mmo/karate-out') return void sh.mmo.set(bytes.subarray(0, 3), MMO.KARATE + 4); // [strong moves unlocked, press that is done, bout on]
+  const out = { 'mmo/pose-out': [MMO.POSE_OUT, MMO.POSE_OUT_MAX], 'mmo/record-out': [MMO.REC_OUT, MMO.REC],
+    'mmo/tags-out': [MMO.TAGS, MMO.TAGS_MAX], 'mmo/tree-icon': [MMO.TREE, MMO.TREE_MAX], 'mmo/tiny-pick': [MMO.PICK, MMO.PICK_MAX], 'mmo/breed-out': [MMO.BREED_OUT, MMO.BREED_OUT_MAX], 'mmo/story-out': [MMO.STORY_OUT, MMO.STORY_OUT_MAX], 'mmo/info-out': [MMO.INFO, MMO.INFO_MAX] }[path] || null;
   if (!out) return;
   const n = Math.min(bytes.length, out[1]);
   sh.mmo.set(bytes.subarray(0, n), out[0] + 8);
@@ -448,10 +486,27 @@ const wasi = {
       dv().setUint32(nr, total, true);
       return 0;
     }
+    // /dev/egg: named eggs queued by the page (main.js sa2HatchEgg), taken by this
+    // read: a u32 count, then that many 0xA8-byte slots.
+    if (fd === DEV_EGG) {
+      const [[p, len] = []] = iovs(iov, n);
+      let total = 0;
+      const count = new Int32Array(sh.egg.buffer, 0, 1), k = Math.min(Atomics.load(count, 0), 8);
+      if (len >= 4 + k * 0xa8) {
+        u8().set(sh.egg.subarray(4, 4 + k * 0xa8), p + 4);
+        dv().setUint32(p, k, true);
+        Atomics.sub(count, 0, k);
+        // Anything queued while reading moves down to the front.
+        sh.egg.copyWithin(4, 4 + k * 0xa8);
+        total = 4 + k * 0xa8;
+      }
+      dv().setUint32(nr, total, true);
+      return 0;
+    }
     if (fd === DEV_PAD) {
       let total = 0;
       for (const [p, len] of iovs(iov, n)) {
-        const k = Math.min(len, 16 - total);
+        const k = Math.min(len, sh.pad.length - total);
         u8().set(sh.pad.subarray(total, total + k), p);
         total += k;
       }
@@ -695,7 +750,7 @@ onmessage = (ev) => {
   const m = ev.data;
   if (m.init) {
     mem = m.memory;
-    sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), card: new Uint8Array(m.card), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)), mmo: new Uint8Array(m.mmo), pages: new Int32Array(m.pages) };
+    sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), egg: new Uint8Array(m.egg), card: new Uint8Array(m.card), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)), mmo: new Uint8Array(m.mmo), pages: new Int32Array(m.pages) };
     args = m.args;
     env = m.env;
     if (m.picked && m.picked.length) pick(m.picked);
