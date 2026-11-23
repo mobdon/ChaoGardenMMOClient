@@ -269,12 +269,12 @@ function joinRoom(token, zone) {
       if (self) firstSheet(self, token);
       showCard(self); overlay?.snapshot(m); othersIn(m, token); tagNames(m); breedSnapshot(m);
     }
-    if (m.type === 'event') { overlay?.event(m); breedEvent(m); if (m.kind === 'staff-goto') staffGoto(m); }
+    if (m.type === 'event') { overlay?.event(m); breedEvent(m); queueEvent(m); if (m.kind === 'staff-goto') staffGoto(m); }
     if (m.kind === 'chat') chatLine(m); else if (m.kind === 'voice') voicePlay(m);
     else if (m.kind === 'chat-delete') chatLog.querySelector(`[data-line="${Number(m.line)}"]`)?.remove(); // removed by staff
   };
   // 4001: this card's Chao went out somewhere else; don't fight over it.
-  ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, room.zone), 3000); };
+  ws.onclose = ({ code }) => { queue.sent = 0; if (code !== 4001) setTimeout(() => joinRoom(token, room.zone), 3000); };
 }
 // Staff go-to and follow (the admin panel, server panel_goto): the game puts
 // its own Chao in that player's room and place (/mmo/goto-in).
@@ -399,6 +399,7 @@ function mmoTick(token) {
   // The canvas aspect for the game's card box (pad bytes 20..22, also set per click).
   new DataView(sh.pad).setUint16(20, Atomics.load(ctl, 8), true);
   karateLocks();
+  queueTick();
   breedPick();
   storyCleared(token);
   const pose = mmoHead(MMO.POSE_OUT), seq = Atomics.load(pose, 0);
@@ -574,6 +575,7 @@ function cover(on) {
 // The game changed Chao World area (its own teleporters): follow it into that room.
 function roomArea(area) {
   karateButtons(area === 10 || area === 11);
+  queueRanked(area === 10 || area === 11);
   const zone = roomZones[area === 0 ? '' : area];
   // Arrived in Chao World from a level (the pause menu's EXIT): no room yet.
   if (!room && zone && mmoToken()) return joinRoom(mmoToken(), zone);
@@ -609,6 +611,48 @@ function karateButtons(on) {
   if (bar) bar.dataset.area = on ? '1' : ''; // karateLocks shows it once a bout is on
 }
 // Keys 1 to 5 press the buttons while they show (1 and 3 are the game's L and R elsewhere).
+// ---- PvP Karate queue (sa2-boot karate.rs queue mark, server queue.rs) ----
+const queue = { sent: 0, ranked: false, names: {} };
+const queueSay = (text) => chatLine({ channel: 'room', fromName: 'Queue', text });
+function queueTick() {
+  const now = mmoBytes[MMO.KARATE + 7];
+  if (now === queue.sent || room?.ws.readyState !== 1) return;
+  const send = (m) => room.ws.send(JSON.stringify({ type: 'action', ...m }));
+  if (!now) send({ action: 'queue-leave' });
+  else {
+    if (!queue.sent) send({ action: 'queue-join', event: 'chao-karate', ranked: queue.ranked });
+    if (now === 2 || queue.sent === 2) send({ action: 'queue-ready', ready: now === 2 });
+  }
+  queue.sent = now;
+}
+function queueEvent(m) {
+  const name = (id) => queue.names[id] || 'A player';
+  if (m.kind === 'queue') {
+    if (m.group == null) return queueSay('You are out of the queue.');
+    for (const p of m.members) queue.names[p.id] = p.name;
+    const who = m.members.map((p) => `${name(p.id)}${p.ready ? ' (ready)' : ''}`).join(', ');
+    queueSay(`${m.ranked ? 'Ranked' : 'Unranked'} ${m.event === 'chao-race' ? 'race' : 'Karate'}: ${who}.${m.started ? ' All ready: the match starts.' : ''}`);
+  } else if (m.kind === 'queue-result') {
+    // The server ran the bout itself (run false: it could not).
+    if (!m.run) return queueSay('The server could not run this bout.');
+    const r = m.result || {}, how = r.reason === 'knockout' ? 'knockout' : 'time limit';
+    const records = Object.entries(m.records || {}).map(([id, v]) => ` ${name(id)}: ${v.wins}-${v.losses}-${v.draws}.`).join('');
+    queueSay(`${m.winner ? `${name(m.winner)} wins` : 'Draw'} by ${how} after ${Math.round((r.frames || 0) / 60)} s, HP ${(r.hp || []).join(' to ')}.${m.ranked ? records : ''}`);
+  }
+}
+// Ranked or not has no place in the game's menu: an MMO page control, read when the entry is picked.
+function queueRanked(on) {
+  let box = document.getElementById('queue-ranked');
+  if (!box && on) {
+    box = Object.assign(document.createElement('label'), { id: 'queue-ranked' });
+    box.style.cssText = 'position:fixed;right:1rem;top:1rem;z-index:4;padding:.3rem .7rem;border-radius:1rem;background:#0008;color:#fff;font-weight:700';
+    const cb = Object.assign(document.createElement('input'), { type: 'checkbox' });
+    cb.onchange = () => { queue.ranked = cb.checked; canvas.focus(); };
+    box.append(cb, ' MMO: ranked 2-player match');
+    document.body.append(box);
+  }
+  if (box) box.style.display = on ? '' : 'none';
+}
 function karateKey(e) {
   const bar = document.getElementById('karate'), n = '12345'.indexOf(e.key);
   if (!bar || bar.style.display === 'none' || n < 0 || e.ctrlKey || e.altKey || e.metaKey) return false;
