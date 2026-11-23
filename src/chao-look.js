@@ -40,7 +40,8 @@ export function loadChaoLookManifest(fetcher = fetch) {
   return manifestTask;
 }
 
-// TEXMTX9: view-space normal x scale(0.5, -0.5) + 0.5.
+// TEXMTX9 (fn_60_51240, ChaoMain .text 0x51354): Trans(0.5, 0.5) x Scale(-0.5, -0.5) x view-space normal, so a
+// normal facing screen right reads the picture's left edge and one facing up its top row.
 export class ChaoLookEnvironment extends MaterialPluginBase {
   constructor(material) {
     super(material, 'ChaoLookEnvironment', 210, { CHAO_LOOK_ENV: false, CHAO_LOOK_ADD: false }, true, false);
@@ -71,7 +72,7 @@ export class ChaoLookEnvironment extends MaterialPluginBase {
 
   getCustomCode(shaderType) {
     if (shaderType !== 'fragment') return null;
-    const uv = 'normalize(vec3(view * vec4(normalW, 0.0))).xy * vec2(0.5, -0.5) + 0.5';
+    const uv = 'normalize(vec3(view * vec4(normalW, 0.0))).xy * vec2(-0.5, -0.5) + 0.5';
     return {
       CUSTOM_FRAGMENT_DEFINITIONS: '#ifdef CHAO_LOOK_ENV\nuniform sampler2D chaoLookSampler;\n#endif',
       CUSTOM_FRAGMENT_BEFORE_LIGHTS: `#if defined(CHAO_LOOK_ENV) && !defined(CHAO_LOOK_ADD)
@@ -79,7 +80,7 @@ export class ChaoLookEnvironment extends MaterialPluginBase {
       #endif`,
       CUSTOM_FRAGMENT_BEFORE_FRAGCOLOR: `#ifdef CHAO_LOOK_ADD
         vec4 chaoShine = texture2D(chaoLookSampler, ${uv});
-        finalColor.rgb += toLinearSpace(chaoShine.rgb) * chaoShine.a;
+        finalColor.rgb += chaoShine.rgb * chaoShine.a; // onto the finished screen colour, as the game's second stage adds bytes
       #endif`,
     };
   }
@@ -206,7 +207,8 @@ export function applyChaoLook(root, body) {
       material.metadata = { ...(material.metadata || {}) };
       material.metadata.nativeAlbedoColor ??= material.albedoColor.clone();
       material.metadata.nativeAlbedo ??= material.albedoTexture;
-      material.albedoColor = colour ? new Color3(colour[0], colour[1], colour[2]) : material.metadata.nativeAlbedoColor.clone();
+      // The engine multiplies this colour before its screen curve; the game multiplies bytes.
+      material.albedoColor = colour ? new Color3(colour[0], colour[1], colour[2]).toLinearSpace() : material.metadata.nativeAlbedoColor.clone();
       if (!bodyNode) return;
       // Monotone and jewel draw without the body texture.
       material.albedoTexture = plan.monotone || (environment && !plan.additive) ? null : material.metadata.nativeAlbedo;
