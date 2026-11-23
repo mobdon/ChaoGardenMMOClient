@@ -457,7 +457,7 @@ async function join(name, token = sessionToken, card = null, owner = false, befo
     rememberChao();
     if (beforeEnter && !(await beforeEnter())) { showTitle(); return; }
     // The game's own Chao Lobby is the hub now; ?oldhub keeps this page as a reference.
-    if (!new URLSearchParams(location.search).has('oldhub')) { window.location.assign(token || card ? '/sa2/?stage=90' : '/sa2/?stage=90&hatch=1'); return; }
+    if (!new URLSearchParams(location.search).has('oldhub')) { window.location.assign((token || card ? '/sa2/?stage=90' : '/sa2/?stage=90&hatch=1') + (new URLSearchParams(location.search).get('geartune') === '1' ? '&geartune=1' : '')); return; } // test site only: the debug flag goes through to the game
     welcome.close();
     connect(sessionToken);
     updatePaused();

@@ -29,20 +29,9 @@ function glbExtras(bytes) {
   } catch { return null; }
 }
 
-// One Chao per canvas at a time: a mount that starts while another is still loading would put two engines
-// on one canvas, and neither draws. Each mount waits for the one before it, clears it, and gives way to a newer one.
-const mounts = new WeakMap();
-
-/** Render `player`'s Chao into `canvas`. Returns a dispose function; a missing asset leaves the canvas empty. */
-export function mountChaoPortrait(canvas, player) {
-  const before = mounts.get(canvas) || Promise.resolve(() => {});
-  const task = before.then(dispose => { dispose(); return mounts.get(canvas) === task ? drawChaoPortrait(canvas, player) : () => {}; })
-    .catch(() => () => {});
-  mounts.set(canvas, task);
-  return task;
-}
-
-async function drawChaoPortrait(canvas, player) {
+/** `player`'s Chao model in a scene of its own on `canvas`, standing as imported with the camera on
+ * its front; null when its asset is missing. */
+export async function openChaoScene(canvas, player, options = {}) {
   const B = await import('@babylonjs/core'); await import('@babylonjs/loaders/glTF/index.js');
   const load = async key => {
     const response = await fetch(`/api/assets/${key}.glb`).catch(() => null);
@@ -57,24 +46,22 @@ async function drawChaoPortrait(canvas, player) {
     }
     return container;
   };
-  const engine = new B.Engine(canvas, true, { alpha: true }), scene = new B.Scene(engine);
+  const engine = new B.Engine(canvas, true, { alpha: true, ...options }), scene = new B.Scene(engine);
   scene.clearColor = new B.Color4(0, 0, 0, 0);
-  let open = true; // the page and the next mount may both clear it
-  const dispose = () => { if (!open) return; open = false; engine.stopRenderLoop(); scene.dispose(); engine.dispose(); };
+  const dispose = () => { engine.stopRenderLoop(); scene.dispose(); engine.dispose(); };
   let key = portraitAsset(player);
   let [model, source] = await Promise.all([load(key), load('chao-behaviour')]);
   // The family bodies are a local conversion; without them the original child model, as the hub falls back.
   if (!model && key.startsWith('chao-body-')) model = await load(key = 'chao');
-  if (!model) { dispose(); return () => {}; }
+  if (!model) { dispose(); return null; }
   const entries = model.instantiateModelsToScene(name => name, false);
   for (const group of entries.animationGroups) group.stop();
   const visual = entries.rootNodes[0];
-  visual.rotate(B.Axis.Y, TURN); // the select window's turn; the camera sits on the Chao's front (+z)
   if (key.startsWith('chao-body-')) {
     // As the hub does for a family body: server morph weights, native look, and the face with its lid motion.
     attachChaoBody(visual, entries.animationGroups, () => player.body);
     await Promise.all([loadChaoFaceManifest(), loadChaoLookManifest()]);
-    if (scene.isDisposed) return () => {};
+    if (scene.isDisposed) return null;
     applyChaoLook(visual, player.body);
     configureChaoFace(visual, player.body?.typeName);
     resetChaoFace(visual);
@@ -84,19 +71,43 @@ async function drawChaoPortrait(canvas, player) {
       for (; frames >= 1; frames -= 1) stepChaoFace(visual);
     });
   }
-  const imported = { entries, visual };
-  const stand = source && cloneNativeMotion(imported, source, captureChaoPose(imported), 'alm_tati', 'Stand');
-  // The motion table's own PlaySpeed (native frames per 60 Hz tick); the clip's keys are one per native frame.
-  const speed = source?.extras?.chaoBehaviour?.clips?.find(row => row.nativeName === 'alm_tati')?.tableProperties?.PlaySpeed;
-  stand?.start(true, Number.isFinite(speed) && speed > 0 ? speed : 1);
   const { min, max } = visual.getHierarchyBoundingVectors();
   const height = max.y - min.y;
   const camera = new B.ArcRotateCamera('camera', Math.PI / 2, Math.PI / 2.1, height * 2.4, new B.Vector3(0, min.y + height / 2, 0), scene);
   camera.minZ = 0.01;
-  // The game's own head ball for a default child (ChaoMain.rel): AL_IconDrawSub 0x12B8C quad +-0.55, +0.3 up in view,
-  // squash k = 0.92 + 0.08*(1+sin phase), phase += 0x780/frame; AL_CalcShadowPos 0x100C node 33 + 0.045*sin(psi),
-  // psi += 0x470/frame; AL_CalcIconColor 0x14574 zero-evolution child colour 255,255,76.
-  // shortcut: other body types' ball colours and ring branches are not ported; add them when the portrait shows evolved Chao.
+  return { B, engine, scene, visual, imported: { entries, visual }, source, dispose, key, camera };
+}
+
+// One Chao per canvas at a time: a mount that starts while another is still loading would put two engines
+// on one canvas, and neither draws. Each mount waits for the one before it, clears it, and gives way to a newer one.
+const mounts = new WeakMap();
+
+/** Render `player`'s Chao into `canvas`. Returns a dispose function; a missing asset leaves the canvas empty. */
+export function mountChaoPortrait(canvas, player) {
+  const before = mounts.get(canvas) || Promise.resolve(() => {});
+  const task = before.then(dispose => { dispose(); return mounts.get(canvas) === task ? drawChaoPortrait(canvas, player) : () => {}; })
+    .catch(() => () => {});
+  mounts.set(canvas, task);
+  return task;
+}
+
+async function drawChaoPortrait(canvas, player) {
+  const opened = await openChaoScene(canvas, player);
+  if (!opened) return () => {};
+  const { B, engine, scene, visual, imported, source, key, camera } = opened;
+  let open = true;
+  const dispose = () => { if (open) { open = false; opened.dispose(); } }; // the page and the next mount may both clear it
+  visual.rotate(B.Axis.Y, TURN); // the select window's turn; the camera sits on the Chao's front (+z)
+  const stand = source && cloneNativeMotion(imported, source, captureChaoPose(imported), 'alm_tati', 'Stand');
+  // The motion table's own PlaySpeed (native frames per 60 Hz tick); the clip's keys are one per native frame.
+  const speed = source?.extras?.chaoBehaviour?.clips?.find(row => row.nativeName === 'alm_tati')?.tableProperties?.PlaySpeed;
+  stand?.start(true, Number.isFinite(speed) && speed > 0 ? speed : 1);
+  // The head ball as ChaoMain.rel (GSNE8P) draws it for a child with no evolution; other types are not covered yet.
+  // AL_IconDrawSub 0x12B8C: quad +-0.55 (rodata F90/F94), view-space y +0.3 (F98), AL_ICON tex 0, scale (k, 2-k),
+  // k = 0.92 + 0.08*(1 + sin phase), phase += 0x780/frame (fn_60_13340); SRC_ALPHA/INV_SRC_ALPHA.
+  // AL_CalcShadowPos 0x100C: base = node 33 translation, y + 0.045*sin(psi), psi += 0x470/frame.
+  // AL_CalcIconColor 0x14574: child with zero evolution = .data 0x2FDC = (255, 255, 76).
+  // shortcut: the quad's view-space z 0.3 and the follow spring are left out (a standing Chao), port them for a moving one.
   const node33 = visual.getDescendants(false).find(node => /^033_object/.test(node.name));
   if (key.startsWith('chao-body-') && node33) {
     const ball = B.MeshBuilder.CreatePlane('native-head-ball', { size: 1.1 }, scene);
