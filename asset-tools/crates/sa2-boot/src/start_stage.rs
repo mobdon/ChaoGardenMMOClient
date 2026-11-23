@@ -527,7 +527,8 @@ fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8
     // egg's state to 3. Read from the disassembly. Inferred, unverified until a
     // run: that state 3 (AL_EggJump by the exec's call order) leads to the
     // hatch (CreateChaoFromEgg is called from AL_EggCrash, 0x9914).
-    if hatch_now && egg != 0 {
+    // No work block: nothing to set (a write there would land at guest address 0x14).
+    if hatch_now && egg != 0 && m.r32(egg + 0x40) != 0 {
         m.w32(m.r32(egg + 0x40) + EGG_WAIT, 0);
         eprintln!("tutorial: egg task {egg:#x}, its wait set to 0");
     }
