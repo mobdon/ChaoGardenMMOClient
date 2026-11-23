@@ -252,11 +252,12 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     if stage == CHAO_WORLD {
         // Character 0 (Sonic): the Chao World branch takes the cursor's
         // character; any character enters the same Chao World.
-        // MMO glue: Shadow (character 1) rides, so a Chao in Shadow's shoes walks
-        // and skates with Shadow's own motions (SA2_CHAO_RIDER=n overrides; debug).
-        // shortcut: character number 1 = Shadow is unverified against the
-        // character table; the headless run checks the rider's model.
-        let rider = std::env::var("SA2_CHAO_RIDER").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(1);
+        // MMO glue: Sonic (character 0) is the hidden character, as in his own
+        // levels: the Chao runs like him, or skates like Shadow while it wears
+        // Shadow's Air Shoes (chao_player shadow_moves swaps his action table
+        // live). Until 2026-11-23 Shadow himself (character 1) rode here.
+        // SA2_CHAO_RIDER=n overrides (debug; 1 = Shadow).
+        let rider = std::env::var("SA2_CHAO_RIDER").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
         PENDING.set(Some((CHAO_WORLD, rider)));
         SHOWN.set(Some(u32::MAX));
         c.rt.set_override(TOP_LEVEL, top_level);

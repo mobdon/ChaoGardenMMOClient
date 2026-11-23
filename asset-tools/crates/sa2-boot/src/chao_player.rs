@@ -2939,8 +2939,12 @@ fn try_on(c: &mut Cpu, m: &mut Mem) {
         let (obj, tex) = match file {
             b'K' => (knux_obj(m, slot), KNUX_TEX.get()),
             b'T' => (shadow_obj(m, slot), SHADOW_TEX.get()),
-            _ => (SONIC_MODELS.with_borrow(|s| s.get(&slot).copied()).unwrap_or(0), SONIC_TEX.get()),
+            // Sonic's file loaded by this module, or, when he is the stage's own
+            // character (the load then fills no slot), his models in the game's table.
+            _ => (SONIC_MODELS.with_borrow(|s| if s.is_empty() { Some(model_obj(m, slot)) } else { s.get(&slot).copied() }).unwrap_or(0), SONIC_TEX.get()),
         };
+        // The Light Shoes come from their own shoe file, not a model slot.
+        let obj = if key.starts_with("lshoe") { 0x8000_0000 } else { obj };
         let Some(at) = NODE_MATS.with_borrow(|n| n.get(&node).copied()) else { continue };
         let (Some(tex), true) = (tex.filter(|&t| t != 0), (0x8000_0000..0x8C00_0000).contains(&obj)) else { continue };
         let half: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if i == j { 0.5 } else { 0.0 }));
@@ -3963,9 +3967,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // Physics stays native for Knuckles and Rouge (mob's rules).
         if addr == SONIC_EXEC {
             physics_row(m);
-            if !chao_world(m) {
-                shadow_moves(c, m);
-            }
+            shadow_moves(c, m);
             force_sonic_state(m);
         } else if addr == KNUX_EXEC {
             knuckles_rules(c, m, chao);
@@ -4074,12 +4076,27 @@ const MIXED_ACTIONS: u32 = 0x82F0_2000;
 
 thread_local! {
     static SHADOW_MOVES: Cell<bool> = const { Cell::new(false) };
+    static SHADOW_STYLE: Cell<Option<bool>> = const { Cell::new(None) };
 }
 
-/// Off the board in Sonic's levels the owner's Chao moves
-/// like Shadow (physics stays Metal's row). Every state whose Shadow row plays
-/// a different motion number takes Shadow's row (motion, blend, speed; Sonic's
-/// model field kept), from Shadow's own motion file loaded once.
+/// The Chao's movement follows the shoes it wears (mob 2026-11-23), in Chao
+/// World and off the board in Sonic's levels, where the hidden character is
+/// Sonic: with Shadow's Air Shoes shown it moves like Shadow (skate), with
+/// only Sonic's Light Shoes or no shoes it runs like Sonic. Both pairs on:
+/// the Air Shoes count. Switched live, by the action table his exec reads.
+/// SA2_LOBBY_CHAR=sonic|shadow (debug) forces one.
+fn shadow_style() -> bool {
+    match std::env::var("SA2_LOBBY_CHAR").as_deref() {
+        Ok("sonic") => false,
+        Ok("shadow") => true,
+        _ => !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") && !debug_off("shoes"),
+    }
+}
+
+/// Moving like Shadow (physics stays Metal's row): every state whose Shadow
+/// row plays a different motion number takes Shadow's row (motion, blend,
+/// speed; Sonic's model field kept), from Shadow's own motion file loaded
+/// once, into the gear's heap (Chao World's own heap has no room).
 fn shadow_moves(c: &mut Cpu, m: &mut Mem) {
     let obj2 = m.r32(P1_OBJ2);
     if !(0x8000_0000..0x8C00_0000).contains(&obj2) || m.r8(obj2 + 1) != 0 || std::env::var("SA2_SHADOW_MOVES").is_ok_and(|v| v == "0") {
@@ -4090,7 +4107,11 @@ fn shadow_moves(c: &mut Cpu, m: &mut Mem) {
         let need: Vec<u32> = rows.iter().map(|&i| u32::from(m.r16(SHADOW_ACTIONS + 0x10 * i))).collect();
         // Keep every motion Sonic already has; take only Shadow's own ones.
         let keep: Vec<u32> = (0..0x960).step_by(4).map(|o| m.r32(MOTIONS + o)).collect();
+        let heap_var = c.r[13].wrapping_sub(SY_HEAP_SDA);
+        let keep_heap = m.r32(heap_var);
+        m.w32(heap_var, GEAR_HEAP);
         let mtn = call(c, m, LOAD_MTN, &[SHADOW_MTN_NAME]);
+        m.w32(heap_var, keep_heap);
         for (k, o) in (0..0x960u32).step_by(4).enumerate() {
             if !need.contains(&(o / 8)) {
                 m.w32(MOTIONS + o, keep[k]);
@@ -4110,7 +4131,11 @@ fn shadow_moves(c: &mut Cpu, m: &mut Mem) {
     }
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
     let board = BOARD.with_borrow(|b| b.as_ref().is_some_and(|b| f <= b.0 + 2));
-    m.w32(obj2 + OBJ2_PLACTPTR, if board { SONIC_ACTIONS } else { MIXED_ACTIONS });
+    let shadow = shadow_style();
+    if SHADOW_STYLE.replace(Some(shadow)) != Some(shadow) {
+        eprintln!("chao-player: the Chao moves like {} (Air Shoes shown: {shadow})", if shadow { "Shadow" } else { "Sonic" });
+    }
+    m.w32(obj2 + OBJ2_PLACTPTR, if board || !shadow { SONIC_ACTIONS } else { MIXED_ACTIONS });
 }
 
 /// SA2_FORCE_FROM=frame (debug): forced states start at this frame, so the
