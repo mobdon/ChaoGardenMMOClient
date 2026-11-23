@@ -12,3 +12,8 @@ Nothing here is imported, built, tested or served. It is kept for history only.
 
 Everything was moved as it was, so imports of files that stayed (`./chao-locomotion.js`,
 `../shared/constants.js`, ...) and the `scripts/...` paths in `docs/` still name the old place.
+
+Second sweep:
+- `src/hub-leftover.css`: the hub's rules cut out of `src/style.css` and `src/sonic.css`. The rules
+  still in use were joined into `src/shared-ui.css`.
+- `docs/`: notes about hub features whose code is gone or archived here.
