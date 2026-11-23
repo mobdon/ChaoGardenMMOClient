@@ -1,6 +1,11 @@
-//! Play walker stages as the Chao Walkers: SA2_CHAO_WALKER=1. Eggman's stages
-//! (Iron Gate) load the Dark Chao Walker, Tails's the Chao Walker: one walker
-//! each, through the game's own branch. Tails's and Eggman's walker loaders
+//! Play walker stages as the Chao Walkers: SA2_CHAO_WALKER=1. The walker
+//! follows the player's own Chao in every walker stage: a Dark Chao (record
+//! type TYPE_D_*, al_chao_info.h) loads the Dark Chao Walker, any other the
+//! Chao Walker. The type is read from the Chao player's record once that Chao
+//! is live, else from the server's copy of the record (SA2_OWN_RECORD_IN, the
+//! file chao_player reads). With no record, Eggman's stages (Iron Gate) load
+//! the Dark Chao Walker and Tails's the Chao Walker. One walker each, through
+//! the game's own branch. Tails's and Eggman's walker loaders
 //! (0x800B5AC0, 0x800B5D2C) call the Chao Walker loader (0x800B58D4, physics
 //! row 13) or the Dark Chao Walker loader (0x800B56E8, row 14) when the 2P flag
 //! (+0x1E) and that player's alt-character flag (+0x55 + player) of the game
@@ -82,10 +87,38 @@ fn eggman(c: &mut Cpu, m: &mut Mem) {
     load(c, m, EGGMAN_WALKER, 7);
 }
 
+/// A Dark Chao by its record's type byte (CHAO_PARAM_GC +0x80): TYPE_D_NORMAL
+/// 7, then every third type up to TYPE_D_CHAOS 0x16 (al_chao_info.h).
+fn dark_type(t: u8) -> bool {
+    (5..=0x16).contains(&t) && (t - 5) % 3 == 2
+}
+
+/// The player's own Chao's type, if a hatched Chao's record is at hand.
+fn own_type(m: &Mem) -> Option<u8> {
+    let file = || {
+        let b = std::fs::read(std::env::var_os("SA2_OWN_RECORD_IN")?).ok()?;
+        (b.len() == 0x800).then_some(b)
+    };
+    let t = crate::chao_player::player_record(m).or_else(file)?[0x80];
+    (t >= 2).then_some(t)
+}
+
+/// The stage's loader, or the one for the player's own Chao when it is known.
+fn pick(asked: u32, own: Option<u8>) -> u32 {
+    match own {
+        Some(t) if dark_type(t) => EGGMAN_WALKER,
+        Some(_) => TAILS_WALKER,
+        None => asked,
+    }
+}
+
 fn load(c: &mut Cpu, m: &mut Mem, asked: u32, mech_row: u32) {
     if c.r[3] != 0 {
         return original(c, m, asked);
     }
+    let own = own_type(m);
+    let asked = pick(asked, own);
+    eprintln!("chao-walker: own Chao type {own:x?}, loader {asked:#x}, mech row {mech_row}");
     let saved = (m.r8(TWO_PLAYER), m.r8(ALT_CHARACTER));
     m.w8(TWO_PLAYER, 1);
     m.w8(ALT_CHARACTER, 1);
@@ -177,6 +210,27 @@ mod tests {
         eggman(&mut c, &mut m);
         assert_eq!((c.r[4], c.r[5]), (7, 0), "player 2 untouched");
         assert_eq!(m.r32(OBJ2 + 0xC0), 0x1414_1414, "player 2 keeps row 14");
+    }
+
+    #[test]
+    fn the_walker_follows_the_own_chaos_type() {
+        // al_chao_info.h: child 2, N/H/D normal 5/6/7 .. N/H/D chaos 0x14/0x15/0x16, Tails 0x17.
+        for t in [7, 0xA, 0xD, 0x10, 0x13, 0x16] {
+            assert_eq!(
+                pick(TAILS_WALKER, Some(t)),
+                EGGMAN_WALKER,
+                "dark type {t:#x}"
+            );
+        }
+        for t in [2, 5, 6, 8, 9, 0x14, 0x15, 0x17, 0x19] {
+            assert_eq!(pick(EGGMAN_WALKER, Some(t)), TAILS_WALKER, "type {t:#x}");
+        }
+        assert_eq!(
+            pick(EGGMAN_WALKER, None),
+            EGGMAN_WALKER,
+            "no record: the stage's"
+        );
+        assert_eq!(pick(TAILS_WALKER, None), TAILS_WALKER);
     }
 
     #[test]
