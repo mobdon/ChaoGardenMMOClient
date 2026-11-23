@@ -23,7 +23,7 @@ test('standalone client serves public modules while private directories stay ina
     const port = frontend.httpServer.address().port;
     const main = await request(port, '/src/main.js');
     assert.equal(main.status, 200);
-    assert.match(main.body, /shared\/constants\.js/);
+    assert.match(main.body, /save-slots\.js/);
     assert.doesNotMatch(main.body, /from\s+['"][^'"]*server\//);
     assert.equal((await request(port, '/shared/constants.js')).status, 200);
     assert.equal((await request(port, '/')).status, 200);
