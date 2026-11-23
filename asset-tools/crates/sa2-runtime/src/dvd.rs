@@ -253,6 +253,11 @@ impl<F: GameFiles> Dvd<F> {
                 continue;
             };
             if let Some(name) = rel.rsplit('/').next() {
+                // The Steam release keeps a second copy of the message
+                // files (MessageK); the game's bare names mean Message.
+                if rel.starts_with("message/") {
+                    index.insert(name.to_string(), p.clone());
+                }
                 names
                     .entry(name.to_string())
                     .and_modify(|v| *v = None)
@@ -319,6 +324,16 @@ mod tests {
         f.0.insert("resource/gd_PC/y/dup.bin".into(), vec![]);
         f.0.insert("sonic2app.exe".into(), vec![]);
         Dvd::new(f)
+    }
+
+    #[test]
+    fn a_bare_message_name_means_the_message_folder() {
+        let mut f = MemFiles::default();
+        f.0.insert("resource/gd_PC/MessageK/MsgAlKinderHe_e.prs".into(), vec![2; 2]);
+        f.0.insert("resource/gd_PC/Message/MsgAlKinderHe_e.prs".into(), vec![1]);
+        let mut d = Dvd::new(f);
+        let e = d.entry("MsgAlKinderHe_e.prs").unwrap();
+        assert_eq!(d.path(e), Some("resource/gd_PC/Message/MsgAlKinderHe_e.prs"));
     }
 
     #[test]

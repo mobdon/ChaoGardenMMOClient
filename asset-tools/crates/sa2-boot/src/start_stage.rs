@@ -33,6 +33,13 @@ const PAGE_COVER: u32 = 254;
 const PAGE_UNCOVER: u32 = 253;
 /// The page is covering the logos.
 static LOGOS_HIDDEN: Global<bool> = global!(false);
+
+/// The boot logos are running behind the page's cover before an MMO start:
+/// the host may run those frames as fast as it can (their own timer still
+/// counts every frame, so the game's own path out of them is unchanged).
+pub fn logos_hidden() -> bool {
+    LOGOS_HIDDEN.get()
+}
 /// The Stage Select's start code reads its stage/character table through the
 /// relocation at advertiseD section 1 + 0x10246 (`lis r3` at 0x10244).
 const TABLE_RELOC: (u8, u32) = (1, 0x10246);
@@ -62,11 +69,25 @@ const SAVE_SLOT: u32 = 0x2C30;
 const AL_GENE_CREATE: u32 = 0x1_218C;
 const CREATE_EGG: u32 = 0x8F20;
 const GENE_SIZE: u32 = 0xC0;
+/// AL_GENE (al_chao_info.h, 0xA4 bytes; CHAO_PARAM_GC +0x438..+0x4DC).
+const GENE_BYTES: usize = 0xA4;
+/// The AL_GENE byte ranges the server's egg carries (EggColor; Abl for its 7
+/// stats; LifeTime; Personality through Multi). The rest keeps AL_GeneCreate's.
+/// The layout is the SAMT (PC) header's; unverified on GC until a live hatch.
+const SERVER_GENE: [(u32, u32); 4] = [(0x01, 0x02), (0x5C, 0x6A), (0x6C, 0x6E), (0x74, 0x9C)];
 /// MMO hub residents: the game's own character Chao (al_chao_info.h TYPE_TAILS
 /// 0x17, TYPE_KNUCKLES 0x18, TYPE_AMY 0x19), made with `CreateChaoExtra`
 /// (see CREATE_CHAO_EXTRA). Offsets from the player in the lobby are
 /// the old web hub's NPC spots (src/scene.js addNPC), an MMO choice.
-const RESIDENTS: [(u8, f32, f32); 3] = [(0x18, 7.0, 2.0), (0x17, 12.0, 6.0), (0x19, -4.0, 8.0)];
+const RESIDENTS: [(u8, f32, f32); 3] = [(0x18, 7.0, 2.0), (0x17, 3.0, 3.0), (0x19, -4.0, 8.0)];
+/// Tails (RESIDENTS[1]) stands still by the arrival teleporter as the guide:
+/// no Chao AI, the native stand motion (ChaoMain AL_SetMotionLink 0x1B504,
+/// motion 1 as chao_player uses it). Its offset from the arrival point is an
+/// MMO placement choice.
+const STANDING: usize = 1;
+const AL_BEHAVIOR_CONTROL: u32 = 0xF8;
+const AL_SET_MOTION_LINK: u32 = 0x1_B504;
+const STAND_MOTION: u32 = 1;
 /// ChaoMain `CreateChaoExtra` 0x3148C (chao.h): (param, IsParamCopy, element,
 /// &pos, angy). IsParamCopy=1 keeps them out of every save.
 const CREATE_CHAO_EXTRA: u32 = 0x3_148C;
@@ -131,10 +152,61 @@ static HATCH: Global<bool> = global!(false);
 static STARTED: Global<bool> = global!(false);
 /// The pause menu's EXIT asked for the lobby ([`go_lobby`]).
 static TO_LOBBY: Global<bool> = global!(false);
+/// The lobby exit was walked into (chao_player): leave for the game's own
+/// Stage Select instead of starting Chao World again.
+static TO_STAGE_SELECT: Global<bool> = global!(false);
+/// advertiseD (module 91): .bss 0x62054 is the menu screen its dispatcher
+/// fn_91_30818 switches on (jump table .data 0x9DE60); screen 3 runs
+/// fn_91_2BC44, the Stage Select (its confirm is fn_91_101E0, as `start`).
+/// The menu's own transitions write the next screen at +4.
+const ADVERTISE: u32 = 91;
+const MENU_SCREEN: u32 = 0x6_2054;
+const SCREEN_STAGE_SELECT: u32 = 3;
+/// Game state byte advertiseD reads to open its menu instead of the title.
+const GO_TO_MENU: u32 = 0x5B;
+static MENU_SEEN: Global<(u32, u32, u32)> = global!((u32::MAX, u32::MAX, u32::MAX));
+
+pub(crate) fn to_stage_select() {
+    TO_STAGE_SELECT.set(true);
+}
+
+/// Leaving for the Stage Select: the player's Chao is not made again meanwhile.
+pub(crate) fn to_stage_select_pending() -> bool {
+    TO_STAGE_SELECT.get()
+}
+
+/// While going to the Stage Select: once the menu module is up, ask its
+/// screen dispatcher for the Stage Select, and log its top state and screen.
+/// Unverified: that the request field is honoured from the title state; the
+/// log shows which top state the menu is in when the request lands.
+fn stage_select_frame(m: &mut Mem) {
+    let Some(bss) = module_section(m, ADVERTISE, 6) else { return };
+    let now = (m.r32(bss), m.r32(bss + MENU_SCREEN), m.r32(bss + MENU_SCREEN + 4));
+    if MENU_SEEN.replace(now) != now {
+        eprintln!("start-stage: menu state {} screen {} next {}", now.0, now.1, now.2);
+    }
+    // The menu's own transitions do not take the next field from just any
+    // screen (build 11: "screen 7 next 3" stayed on 7, the screen menu init
+    // fn_91_30A0C leads to). Set the current screen instead, once, while the
+    // screen struct is fresh from that init, so the Stage Select's exec
+    // (fn_91_2BC44) starts from its own first step.
+    // Unverified: that the Stage Select needs nothing from screen 7 first.
+    if now.1 == SCREEN_STAGE_SELECT {
+        TO_STAGE_SELECT.set(false);
+    } else {
+        m.w32(bss + MENU_SCREEN, SCREEN_STAGE_SELECT);
+        m.w32(bss + MENU_SCREEN + 4, 0);
+    }
+}
 /// The lobby's residents are out (cleared when the game leaves the lobby).
 static RESIDENTS_OUT: Global<bool> = global!(false);
 /// The residents' taskwks, so their Chao sounds stay silent.
 static RESIDENT_TWP: Global<[u32; 3]> = global!([0; 3]);
+/// The residents' tasks, and how many frames each has been walking out (0: staying).
+static RESIDENT_TASK: Global<[u32; 3]> = global!([0; 3]);
+static LEAVING: Global<[u32; 3]> = global!([0; 3]);
+/// Where the player arrived in this area: residents come in and go out there.
+static ENTRY: Global<[f32; 3]> = global!([0.0; 3]);
 /// The new player's Chao save slot while the tutorial runs (0 = no tutorial).
 static TUTORIAL_SLOT: Global<u32> = global!(0);
 /// Cocoon timers (section 5 + 0x2A50, read by `ALBHV_Mayu` 0x3AE44) and its
@@ -147,6 +219,8 @@ const COCOON_HOLD: u32 = 1300;
 static COCOON_RESTORE: Global<(u32, [u32; 3], u32)> = global!((0, [0; 3], 0));
 /// The new Chao's (save slot, type, growth bits) last logged, and frames the tutorial has run.
 static SLOT_SEEN: Global<(u32, u8, u32)> = global!((0, 0, 0));
+/// The save slot of the egg laid for a new player (0 = none laid).
+static EGG_SLOT: Global<u32> = global!(0);
 static LOG_FRAMES: Global<u32> = global!(0);
 /// Next guide line to show and frames until it shows.
 static LINE: Global<(usize, u32)> = global!((0, 0));
@@ -166,7 +240,12 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     if stage == CHAO_WORLD {
         // Character 0 (Sonic): the Chao World branch takes the cursor's
         // character; any character enters the same Chao World.
-        PENDING.set(Some((CHAO_WORLD, 0)));
+        // MMO glue: Shadow (character 1) rides, so a Chao in Shadow's shoes walks
+        // and skates with Shadow's own motions (SA2_CHAO_RIDER=n overrides; debug).
+        // shortcut: character number 1 = Shadow is unverified against the
+        // character table; the headless run checks the rider's model.
+        let rider = std::env::var("SA2_CHAO_RIDER").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(1);
+        PENDING.set(Some((CHAO_WORLD, rider)));
         SHOWN.set(Some(u32::MAX));
         c.rt.set_override(TOP_LEVEL, top_level);
         AREA.set(
@@ -179,6 +258,13 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
             TP_ARRIVE.set(true);
         }
         HATCH.set(std::env::var("SA2_HATCH_EGG").is_ok_and(|v| v.trim() == "1"));
+        return;
+    }
+    if crate::combat::wanted(stage) {
+        // The combat area (combat.rs): Big Foot's stage, not looked up in the
+        // Stage Select table. Character 0 (Sonic), whose boss it is.
+        PENDING.set(Some((stage, 0)));
+        c.rt.set_override(TOP_LEVEL, top_level);
         return;
     }
     let Some(rel) = crate::dvd::read_file("advertiseD.rel") else {
@@ -230,7 +316,22 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             start(c, m, stage, ch);
         }
     }
-    if mode == MD_LEFT_STAGE && STARTED.get() {
+    if SHOWN.get().is_some() {
+        crate::tiny_transporter::frame(c, m);
+    }
+    if TO_STAGE_SELECT.get() {
+        stage_select_frame(m);
+    }
+    if mode == MD_LEFT_STAGE && STARTED.get() && TO_STAGE_SELECT.get() {
+        // The game's own way on from here is its title and menus. advertiseD's
+        // start (.text 0x1DD4..0x1E04) skips the title for its menu (init
+        // fn_91_30A0C, exec fn_91_30AE4) while game state +0x5B is non-zero;
+        // with it 0 it picks by +0x45, and the title demo ran (test build 9).
+        if m.r8(GAME + GO_TO_MENU) == 0 {
+            eprintln!("start-stage: left Chao World by the lobby exit; on to the game's menu");
+            m.w8(GAME + GO_TO_MENU, 1);
+        }
+    } else if mode == MD_LEFT_STAGE && STARTED.get() {
         // MMO glue: the title never shows. The game left the stage it was
         // started in (a level's EXIT, Chao World's own way out): Chao World
         // again, as at boot. Unverified: an exit that skips this mode (the
@@ -269,14 +370,29 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         }
         if HATCH.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
             HATCH.set(false);
-            lay_egg(c, m, text);
+            // Only a new player's egg: an egg an existing player picked is not their own Chao.
+            EGG_SLOT.set(lay_egg_with(c, m, text, None));
         }
-        if now != LOBBY {
+        // Eggs the player picked and named on the page hatch here too.
+        if !TP_ARRIVE.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
+            for gene in picked_eggs() {
+                lay_egg_with(c, m, text, gene.as_ref());
+            }
+        }
+        if now != shown {
             RESIDENTS_OUT.set(false);
             RESIDENT_TWP.set([0; 3]);
-        } else if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
+            RESIDENT_TASK.set([0; 3]);
+            LEAVING.set([0; 3]);
+            STANDING_TASK.set(0);
+        }
+        if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
             RESIDENTS_OUT.set(true);
-            residents(c, m, text);
+            let at = m.r32(PLAYERTWP) + 0x14;
+            ENTRY.set([0, 4, 8].map(|o| f32::from_bits(m.r32(at + o))));
+            residents(c, m, text, now, &[0, 1, 2]);
+        } else if RESIDENTS_OUT.get() {
+            roam_live(c, m, text, now);
         }
         restore_cocoon(m);
         watch_slot(m);
@@ -291,7 +407,31 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
     }
     crate::race_control::frame(c, m);
     crate::race_probe::frame(c, m);
+    crate::karate::frame(c, m);
+    crate::story::frame(c, m);
     original(c, m, TOP_LEVEL);
+}
+
+/// Named eggs the page queued since the last read (/dev/egg: a u32 count,
+/// then per egg a u32 "has gene" flag and an AL_GENE; absent outside the
+/// browser). Each is the server egg's gene, or None for the game's own.
+fn picked_eggs() -> Vec<Option<Vec<u8>>> {
+    use std::io::Read;
+    const SLOT: usize = 4 + GENE_BYTES;
+    let mut b = vec![0u8; 4 + 8 * SLOT];
+    let Ok(n) = std::fs::File::open("/dev/egg").and_then(|mut f| f.read(&mut b)) else {
+        return Vec::new();
+    };
+    if n < 4 {
+        return Vec::new();
+    }
+    let count = (u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize).min((n - 4) / SLOT);
+    (0..count)
+        .map(|i| {
+            let s = &b[4 + i * SLOT..4 + (i + 1) * SLOT];
+            (s[..4] != [0; 4]).then(|| s[4..].to_vec())
+        })
+        .collect()
 }
 
 /// The Chao World area the player is in ([`LOBBY`] = lobby, 0 while loading),
@@ -309,11 +449,12 @@ pub(crate) fn go_lobby() {
 
 /// The game's own egg at the player's feet, with guest scratch for the gene
 /// and position on a lowered stack (as the native caller keeps them).
-fn lay_egg(c: &mut Cpu, m: &mut Mem, text: u32) {
+/// Returns the egg's save slot (0 = none was free).
+fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8>>) -> u32 {
     let slot = guest_call(c, m, text + SAVE_SLOT, &[]);
     if slot == 0 {
         eprintln!("start-stage: no free Chao save slot; no egg");
-        return;
+        return 0;
     }
     let sp = c.r[1];
     c.r[1] = sp - 0x100 - GENE_SIZE;
@@ -323,15 +464,150 @@ fn lay_egg(c: &mut Cpu, m: &mut Mem, text: u32) {
         m.w32(pos + i * 4, m.r32(player + i * 4));
     }
     guest_call(c, m, text + AL_GENE_CREATE, &[gene]);
+    if let Some(bytes) = from_server {
+        for (from, to) in SERVER_GENE {
+            for o in from..to {
+                m.w8(gene + o, bytes[o as usize]);
+            }
+        }
+    }
     guest_call(c, m, text + CREATE_EGG, &[gene, slot, 0, pos, 3]);
     c.r[1] = sp;
     eprintln!("tutorial: egg laid, save slot {slot:#x}");
-    SLOT_SEEN.set((slot, 0, 0));
-    TUTORIAL_SLOT.set(slot);
+    // The tutorial runs only with SA2_TUTORIAL=1: a start with the egg crashed the lobby on arrival.
+    if std::env::var("SA2_TUTORIAL").is_ok_and(|v| v.trim() == "1") {
+        SLOT_SEEN.set((slot, 0, 0));
+        TUTORIAL_SLOT.set(slot);
+    }
+    slot
 }
 
 /// The hub's character Chao, with normal Chao AI, near where the player arrives.
-fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
+/// The residents' round: a garden, back to the lobby, then the next garden.
+const ROAM: [u32; 6] = [1, LOBBY, 2, LOBBY, 3, LOBBY];
+/// Where resident `n` is now. Each stays a random 2 to 5 minutes, then moves on
+/// along ROAM. The waits come from a hash of the day, the Chao and the hop, so
+/// every client reads the same schedule from the wall clock.
+fn roam_area(n: usize) -> u32 {
+    // The guide stays in the lobby by the arrival teleporter.
+    if n == STANDING {
+        return LOBBY;
+    }
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    ROAM[roam_hop(n as u64, t) % ROAM.len()]
+}
+
+/// The hop resident `n` is on at unix time `t` (restarts each UTC day).
+fn roam_hop(n: u64, t: u64) -> usize {
+    let (day, mut left) = (t / 86_400, t % 86_400);
+    let mut hop = 0u64;
+    loop {
+        // splitmix64 of (day, n, hop): 120..=300 s.
+        let mut z = (day << 20 ^ n << 16 ^ hop).wrapping_add(0x9E37_79B9_7F4A_7C15);
+        z = (z ^ z >> 30).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ z >> 27).wrapping_mul(0x94D0_49BB_1331_11EB);
+        let wait = 120 + (z ^ z >> 31) % 181;
+        if left < wait {
+            return (hop + n * 2 + day) as usize;
+        }
+        left -= wait;
+        hop += 1;
+    }
+}
+
+#[test]
+fn walking_out_steps_toward_the_way_out_and_stops_there() {
+    let (x, z, yaw) = walk_step([0.0, 5.0, 0.0], [0.0, 0.0, 10.0]).unwrap();
+    assert_eq!((x, z, yaw), (0.0, WALK_OUT_SPEED, 0));
+    let (x, _, yaw) = walk_step([0.0, 0.0, 0.0], [10.0, 0.0, 0.0]).unwrap();
+    assert_eq!((x, yaw), (WALK_OUT_SPEED, 0x4000));
+    assert_eq!(walk_step([0.0, 0.0, 9.5], [0.0, 3.0, 10.0]), None);
+}
+
+#[test]
+fn roam_waits_two_to_five_minutes() {
+    let mut last = roam_hop(1, 0);
+    let mut since = 0;
+    for t in 1..86_400 {
+        let h = roam_hop(1, t);
+        since += 1;
+        if h != last {
+            assert!((120..=300).contains(&since), "{since}");
+            (last, since) = (h, 0);
+        }
+    }
+}
+
+/// A walking-out resident's step (an MMO choice, under the 1.0 a frame where
+/// chao_player's gait turns to a run), the reach that counts as the way out,
+/// and the frames after which it leaves wherever it is.
+const WALK_OUT_SPEED: f32 = 0.5;
+const WALK_OUT_REACH: f32 = 1.0;
+const WALK_OUT_FRAMES: u32 = 20 * 60;
+/// AL_motion_table 578 alm_aruki_ncz (walk), as chao_player's gait uses it.
+const WALK_MOTION: u32 = 578;
+
+/// One step from `pos` toward `to` on the ground plane: the new x and z and
+/// the yaw facing the way (None: arrived).
+fn walk_step(pos: [f32; 3], to: [f32; 3]) -> Option<(f32, f32, u32)> {
+    let (dx, dz) = (to[0] - pos[0], to[2] - pos[2]);
+    let d = dx.hypot(dz);
+    if d <= WALK_OUT_REACH {
+        return None;
+    }
+    let yaw = (dx.atan2(dz) * 65536.0 / std::f32::consts::TAU) as i32 as u32 & 0xFFFF;
+    Some((pos[0] + dx / d * WALK_OUT_SPEED, pos[2] + dz / d * WALK_OUT_SPEED, yaw))
+}
+
+/// While the player stays in an area: a roaming resident whose time here is up
+/// walks to where the player came in and leaves there, and one whose time
+/// here starts comes in there. Unverified live. There is no fade yet: the
+/// Chao's draw has no known alpha control.
+fn roam_live(c: &mut Cpu, m: &mut Mem, text: u32, now: u32) {
+    let (mut twp, mut task, mut leaving) = (RESIDENT_TWP.get(), RESIDENT_TASK.get(), LEAVING.get());
+    let entry = ENTRY.get();
+    for n in (0..RESIDENTS.len()).filter(|&n| n != STANDING) {
+        let here = roam_area(n) == now;
+        if task[n] == 0 {
+            if here {
+                residents(c, m, text, now, &[n]);
+                (twp[n], task[n]) = (RESIDENT_TWP.get()[n], RESIDENT_TASK.get()[n]);
+            }
+            continue;
+        }
+        if leaving[n] == 0 {
+            if here {
+                continue;
+            }
+            guest_call(c, m, text + AL_SET_MOTION_LINK, &[task[n], WALK_MOTION]);
+        }
+        leaving[n] += 1;
+        let at = twp[n] + 0x14;
+        let pos = [0, 4, 8].map(|o| f32::from_bits(m.r32(at + o)));
+        match walk_step(pos, entry).filter(|_| leaving[n] < WALK_OUT_FRAMES) {
+            Some((x, z, yaw)) => {
+                m.w32(at, x.to_bits());
+                m.w32(at + 8, z.to_bits());
+                m.w32(twp[n] + 0x0C, yaw);
+            }
+            None => {
+                // FreeTask, not KillChao: KillChao zeroes the Chao's save
+                // record (AL_ClearChaoParam), and a resident who comes back
+                // later is made again from that record.
+                guest_call(c, m, crate::chao_player::FREE_TASK, &[task[n]]);
+                (twp[n], task[n], leaving[n]) = (0, 0, 0);
+            }
+        }
+    }
+    RESIDENT_TWP.set(twp);
+    RESIDENT_TASK.set(task);
+    LEAVING.set(leaving);
+}
+
+/// Make the residents `which` that are in area `now`, by the entry point.
+fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32, which: &[usize]) {
     let sp = c.r[1];
     c.r[1] = sp - 0x100 - PARAM_SIZE;
     let (param, pos) = (c.r[1] + 0x10, c.r[1] + 0x10 + PARAM_SIZE);
@@ -339,28 +615,100 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
     // on a fresh gene, which resets param type to child, then fn_60_209C8 copies
     // the element's type (+0) over it; that is the type the shape init sees.
     let elem = pos + 0x10;
-    let player = m.r32(PLAYERTWP) + 0x14;
-    let mut twp = [0; 3];
+    let entry = ENTRY.get();
+    let (mut twp, mut tasks) = (RESIDENT_TWP.get(), RESIDENT_TASK.get());
+    let mut standing_task = 0;
     for (n, (ty, dx, dz)) in RESIDENTS.into_iter().enumerate() {
+        if !which.contains(&n) || roam_area(n) != now {
+            continue;
+        }
         for i in (0..PARAM_SIZE).step_by(4) {
             m.w32(param + i, 0);
         }
         m.w8(param + 0x80, ty);
+        // As chao_player's own Chao (Dark Chaos 0x16, drawn adult): marked
+        // analysed (+0x438) with +0x84 = 0xFF, so the gene analysis does not
+        // reset it to a child (the residents crawled as babies, mob).
+        // Unverified beyond that: the meaning of +0x84.
+        m.w8(param + 0x438, 1);
+        m.w8(param + 0x84, 0xFF);
         for i in (0..0x34).step_by(4) {
             m.w32(elem + i, 0);
         }
         m.w8(elem, ty);
-        m.w32(pos, (f32::from_bits(m.r32(player)) + dx).to_bits());
-        m.w32(pos + 4, m.r32(player + 4));
-        m.w32(pos + 8, (f32::from_bits(m.r32(player + 8)) + dz).to_bits());
+        m.w32(pos, (entry[0] + dx).to_bits());
+        m.w32(pos + 4, entry[1].to_bits());
+        m.w32(pos + 8, (entry[2] + dz).to_bits());
         let task = guest_call(c, m, text + CREATE_CHAO_EXTRA, &[param, 1, elem, pos, 0]);
         if task != 0 {
             twp[n] = m.r32(task + 0x34);
+            tasks[n] = task;
+            if n == STANDING {
+                standing_task = task;
+            }
         }
     }
     eprintln!("tutorial: residents' taskwks {twp:x?} (guide is [{GUIDE}])");
     RESIDENT_TWP.set(twp);
+    RESIDENT_TASK.set(tasks);
     c.r[1] = sp;
+    // Tails stands as the guide only by the lobby's arrival teleporter.
+    if standing_task != 0 && now == LOBBY {
+        // chao_player's AI hook skips the standing resident; install it if
+        // the player-Chao has not.
+        let a = text + AL_BEHAVIOR_CONTROL;
+        if !c.rt.overrides.contains_key(&a) {
+            c.rt.set_override(a, crate::chao_player::behavior);
+        }
+        STANDING_TASK.set(standing_task);
+        let link = text + AL_SET_MOTION_LINK;
+        guest_call(c, m, link, &[standing_task, STAND_MOTION]);
+    }
+}
+
+/// A hub resident's al_chao_info.h type (0x17 Tails, 0x18 Knuckles, 0x19 Amy), for its name tag.
+pub(crate) fn resident_type(m: &Mem, task: u32) -> Option<u8> {
+    let twp = m.r32(task + 0x34);
+    let n = RESIDENT_TWP.get().iter().position(|&t| t != 0 && t == twp)?;
+    Some(RESIDENTS[n].0)
+}
+
+/// The standing resident's task (0 = none).
+static STANDING_TASK: Global<u32> = global!(0);
+
+/// True for the task or taskwk (AL_BehaviorControl's r3) of a resident that
+/// runs no AI: the standing one, and one walking out.
+pub(crate) fn standing_resident(m: &Mem, r3: u32) -> bool {
+    let (tasks, leaving) = (RESIDENT_TASK.get(), LEAVING.get());
+    let out = (0..3).filter(|&n| leaving[n] != 0).map(|n| tasks[n]);
+    std::iter::once(STANDING_TASK.get()).chain(out).any(|task| task != 0 && (r3 == task || r3 == m.r32(task + 0x34)))
+}
+
+/// ChaoMain's section `n` address, from the same module entry as `text`.
+fn section(m: &Mem, text: u32, n: u32) -> u32 {
+    let mut info = m.r32(0x8000_30C8);
+    while info != 0 {
+        let table = m.r32(info + 0x10);
+        if m.r32(table + 8) & !1 == text {
+            return m.r32(table + n * 8) & !1;
+        }
+        info = m.r32(info + 4);
+    }
+    0
+}
+
+/// A new player's run: `Some(0)` until the egg is laid, then its save slot.
+/// The player has no Chao of their own before that egg hatches (chao_player).
+pub(crate) fn hatch_slot() -> Option<u32> {
+    match EGG_SLOT.get() {
+        0 => HATCH.get().then_some(0),
+        slot => Some(slot),
+    }
+}
+
+/// The tutorial's evolution is under way (growth written, cocoon timers short).
+pub(crate) fn evolving() -> bool {
+    COCOON_RESTORE.get().0 != 0
 }
 
 /// Logs the new Chao's type (param +0x80) and growth when either changes:
@@ -475,10 +823,22 @@ fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
 /// position is a resident's taskwk +0x14 is dropped; every other one plays.
 fn quiet_residents(c: &mut Cpu, m: &mut Mem, addr: u32, pos_reg: usize) {
     let twp = c.r[pos_reg].wrapping_sub(0x14);
-    // The residents, and the player's own Chao (never heard by its player).
-    if twp != 0
-        && (RESIDENT_TWP.get().contains(&twp) || twp == crate::chao_player::own_chao_twp(m))
-    {
+    // SA2_SE_LOG=1 (debug): every positional sound with its id, caller and
+    // the task work it is placed at, to name a sound heard in a run.
+    if std::env::var("SA2_SE_LOG").is_ok_and(|v| v == "1") {
+        eprintln!("se: {addr:#x} id {:#x} lr {:#x} at twp {twp:#x} pmove {}", c.r[3], c.lr, crate::chao_player::character_sounds_muted());
+    }
+    if twp != 0 && (RESIDENT_TWP.get().contains(&twp) || twp == crate::chao_player::own_twp(m)) {
+        return;
+    }
+    // The hidden character's own movement sounds (footsteps, skate jets)
+    // while its exec moves the player's Chao.
+    if crate::chao_player::character_sounds_muted() {
+        return;
+    }
+    // Chao voices (the 0x60xx Chao bank, e.g. ChaoMain fn_60_4BA6C's random
+    // 0x6014/0x6015/0x601C) are not played: Chao in the MMO are silent (mob).
+    if crate::chao_player::chao_voice(c.r[3]) {
         return;
     }
     original(c, m, addr);
@@ -516,9 +876,14 @@ fn chaomain_text(m: &Mem) -> Option<u32> {
 /// A linked ChaoMain section's address (section table entries are 8 bytes:
 /// offset, size; OSLink stores the .bss address there too).
 fn chaomain_section(m: &Mem, n: u32) -> Option<u32> {
+    module_section(m, CHAOMAIN, n)
+}
+
+/// A linked REL module's section address, None while it is not linked.
+pub(crate) fn module_section(m: &Mem, module: u32, n: u32) -> Option<u32> {
     let mut info = m.r32(0x8000_30C8);
     while info != 0 {
-        if m.r32(info) == CHAOMAIN {
+        if m.r32(info) == module {
             let at = m.r32(m.r32(info + 0x10) + n * 8) & !1;
             return (at != 0).then_some(at);
         }

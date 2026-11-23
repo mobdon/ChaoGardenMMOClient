@@ -27,6 +27,9 @@ struct Bank {
     name: String,
     csb: Vec<u8>,
     cues: csb::Bank,
+    /// Cues decoded so far, by sequence: a cue's ADX decodes once, not on
+    /// every play (decoding runs on the game thread that starts the sound).
+    decoded: BTreeMap<u32, Option<Arc<Cue>>>,
 }
 
 /// A decoded cue: interleaved PCM, and where the looped part starts.
@@ -106,6 +109,7 @@ pub fn missing_bank(files: &dyn GameFiles, request: &str) {
                         name: stem.to_string(),
                         csb: bytes,
                         cues,
+                        decoded: BTreeMap::new(),
                     },
                 );
             }),
@@ -151,20 +155,21 @@ fn cue(bank: &Bank, n: u32, seq: u32) -> Option<Cue> {
 }
 
 fn start(bank: u32, seq: u32) -> Option<Voice> {
-    BANKS.with_borrow(|b| {
-        let k = b.get(&bank)?;
-        let c = cue(k, bank, seq);
-        if c.is_none() {
-            eprintln!("steam sound: no cue {}{bank:03}{seq:03}", k.name);
+    BANKS.with_borrow_mut(|b| {
+        let k = b.get_mut(&bank)?;
+        if !k.decoded.contains_key(&seq) {
+            let c = cue(k, bank, seq);
+            if c.is_none() {
+                eprintln!("steam sound: no cue {}{bank:03}{seq:03}", k.name);
+            }
+            let c = c.filter(|c| c.rate > 0 && !c.pcm.is_empty()).map(Arc::new);
+            k.decoded.insert(seq, c);
         }
-        let c = c.filter(|c| c.rate > 0 && !c.pcm.is_empty())?;
+        let c = k.decoded.get(&seq)?.clone()?;
         if std::env::var_os("SA2_TRACE_SOUND").is_some() {
             eprintln!("steam sound: play {}{bank:03}{seq:03}", k.name);
         }
-        Some(Voice {
-            cue: Arc::new(c),
-            pos: 0.0,
-        })
+        Some(Voice { cue: c, pos: 0.0 })
     })
 }
 

@@ -57,13 +57,6 @@ const RUMBLE_OFF: u32 = GAME + 0x14;
 const PAUSE_PLAYER: u32 = GAME + 0x17;
 /// Per-controller state pointers (fn_8001F368 0x8001FD08): +0x10 buttons pressed.
 const PADS: u32 = 0x801E_55D8;
-/// Per-player buttons pressed this frame, as fn_8001E12C reads them to move
-/// the cursor (0x8001E218 up, 0x8001E2B0 down); held ones 0x10 further on.
-const PRESSED: u32 = 0x801E_5398;
-const HELD: u32 = PRESSED + 0x10;
-const UP: u32 = 0x10;
-const DOWN: u32 = 0x20;
-
 /// Small-data globals (r13-relative), from the traced functions.
 const STAGE: u32 = 0x7AA0; // i16 stage number; 0x5A is Chao World
 const STATE: u32 = 0x7AA6; // i16 game state; 0x11 paused
@@ -75,7 +68,6 @@ const CHAO_WORLD: u16 = 0x5A;
 const PAUSED: u16 = 0x11;
 /// Text ids of the three pause rows (fn_8001E12C).
 const ROW_TEXT: [u32; 3] = [2, 3, 4];
-const REPEAT: u32 = 0x7A74; // i16 cursor hold counter; the cursor moves at 0
 /// A level's four rows: CONTINUE, RESTART, EXTRAS, EXIT.
 const LEVEL_EXTRAS: u8 = 2;
 
@@ -191,7 +183,13 @@ fn rows(c: &mut Cpu, m: &mut Mem) {
     if in_chao_world(c, m) && m.r8(sda(c, MODE)) == 2 {
         m.w8(sda(c, MODE), 3);
     }
+    let before = m.r8(sda(c, CURSOR));
     original(c, m, ROWS);
+    if PAGE.get().is_none() && in_level(c, m) {
+        let (top, cursor) = level_step(TOP.get(), before, m.r8(sda(c, CURSOR)));
+        TOP.set(top);
+        m.w8(sda(c, CURSOR), cursor);
+    }
 }
 
 /// The text a pause row shows: the Extras page's rows, or EXTRAS in
@@ -242,16 +240,17 @@ fn in_level(c: &Cpu, m: &Mem) -> bool {
     !in_chao_world(c, m) && m.r16(sda(c, STATE)) == PAUSED && m.r8(sda(c, MODE)) == 3
 }
 
-/// One cursor step through a level's four rows in the three-row window:
-/// the new first row, and whether the step only scrolls (the cursor stays).
-/// Past either end the game's own wrap moves the cursor and the window follows.
-fn level_step(top: u8, cursor: u8, down: bool) -> (u8, bool) {
-    match (top, cursor, down) {
-        (0, 2, true) => (1, true),
-        (1, 0, false) => (0, true),
-        (1, 2, true) => (0, false),
-        (0, 0, false) => (1, false),
-        _ => (top, false),
+/// A level's four rows in the three-row window, after the game moved its
+/// cursor from `before` to `after`: where the game wraps (2 to 0, 0 to 2) the
+/// window scrolls first, so the result is the new first row and cursor. Read
+/// off the game's own move, so it holds whatever order and key repeat it uses.
+fn level_step(top: u8, before: u8, after: u8) -> (u8, u8) {
+    match (top, before, after) {
+        (0, 2, 0) => (1, 2), // EXTRAS down to EXIT
+        (1, 0, 2) => (0, 0), // RESTART up to CONTINUE
+        (1, 2, 0) => (0, 0), // EXIT down wraps to CONTINUE
+        (0, 0, 2) => (1, 2), // CONTINUE up wraps to EXIT
+        _ => (top, after),
     }
 }
 
@@ -352,23 +351,6 @@ fn pause_exec(c: &mut Cpu, m: &mut Mem) {
     let pad = m.r32(PADS + 4 * player);
     let mask = m.r32(sda(c, CONFIRM_MASK));
     let cursor = m.r8(sda(c, CURSOR));
-    if level {
-        // The cursor moves as fn_8001E12C will move it (0x8001E1B4..0x8001E1FC).
-        let pressed = PRESSED + 4 * player;
-        let held = m.r32(HELD + 4 * player) & 0xF0 != 0;
-        let repeat = m.r16(sda(c, REPEAT)) as i16;
-        let moves = !held || !(1..0xF0).contains(&repeat);
-        let (up, down) = (m.r32(pressed) & UP != 0, m.r32(pressed) & DOWN != 0);
-        if moves && (up || down) {
-            // Up wins, as in the game's own order.
-            let (top, scrolls) = level_step(TOP.get(), cursor, !up);
-            TOP.set(top);
-            if scrolls {
-                m.w32(pressed, m.r32(pressed) & !(UP | DOWN));
-                guest_call(c, m, MENU_SE, &[SE_MOVE, 0, 0, 0]);
-            }
-        }
-    }
     let extras_row = if level { LEVEL_EXTRAS - TOP.get() } else { 1 };
     if pad != 0 && m.r32(pad + 0x10) & mask != 0 {
         if level && TOP.get() == 1 && cursor == 0 {
@@ -481,24 +463,16 @@ mod tests {
 
     #[test]
     fn a_levels_four_rows_scroll_through_the_window() {
-        // Down from CONTINUE to EXIT and round: (top, cursor) after each step.
+        // The game's own cursor wraps over three rows; the window follows.
         let (mut top, mut cursor) = (0u8, 0u8);
         let mut seen = vec![];
         for _ in 0..4 {
-            let (t, scrolls) = level_step(top, cursor, true);
-            top = t;
-            if !scrolls {
-                cursor = (cursor + 1) % 3;
-            }
+            (top, cursor) = level_step(top, cursor, (cursor + 1) % 3);
             seen.push(top + cursor);
         }
         assert_eq!(seen, [1, 2, 3, 0], "RESTART, EXTRAS, EXIT, CONTINUE");
         for _ in 0..4 {
-            let (t, scrolls) = level_step(top, cursor, false);
-            top = t;
-            if !scrolls {
-                cursor = (cursor + 2) % 3;
-            }
+            (top, cursor) = level_step(top, cursor, (cursor + 2) % 3);
             seen.push(top + cursor);
         }
         assert_eq!(seen[4..], [3, 2, 1, 0], "and back up");
