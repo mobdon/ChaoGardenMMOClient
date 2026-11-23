@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { nativePhonePreview } from './scripts/native-phone-preview.mjs';
 import { widgetOriginalArt } from './scripts/widget-art.mjs';
 
-const privateDirectory = /(?:^|\/)(?:\.local|\.codex-attachments|server|scripts|tests)(?:\/|$)/i;
+const privateDirectory = /(?:^|\/)(?:\.local|\.codex-attachments|server|scripts|tests|archive)(?:\/|$)/i;
 
 function privateSourceBoundary() {
   return {
@@ -67,7 +67,7 @@ export default defineConfig({
       strict: true,
       deny: [
         '.env', '.env.*', '*.{crt,pem,key,p12,pfx,cer,der}', '.npmrc', '.yarnrc.yml', '**/.git/**',
-        '**/.local/**', '**/.codex-attachments/**', '**/server/**', '**/scripts/**', '**/tests/**',
+        '**/.local/**', '**/.codex-attachments/**', '**/server/**', '**/scripts/**', '**/tests/**', '**/archive/**',
         '**/*.{gba,sav,srm}',
       ],
     },
