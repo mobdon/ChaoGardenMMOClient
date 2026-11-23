@@ -229,6 +229,8 @@ async function ownRecord(token) {
   const card = JSON.parse(localStorage.getItem('chao-garden-slots-v1') || '[]').find((r) => r.token === token)?.card;
   const r = card && await fetch('/api/card', { headers: { Authorization: `Bearer ${card}` } });
   const own = r?.ok && (await r.json()).chao?.find((c) => c.token === token);
+  // Dev (admin) accounts get the dev menu in levels too, where there is no room to say so.
+  if (own?.player?.admin && !tunerShown) { tunerShown = true; gearTuner(); }
   const record = own?.record;
   const bytes = record ? Uint8Array.from(atob(record), (ch) => ch.charCodeAt(0)) : null;
   // The card lists this Chao with no record: it never played, so its egg is
