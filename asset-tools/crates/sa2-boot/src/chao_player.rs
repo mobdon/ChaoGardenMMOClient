@@ -170,7 +170,12 @@ fn chao_exec(c: &mut Cpu, m: &mut Mem) {
                 let f = |a: u32| f32::from_bits(m.r32(a));
                 eprintln!("yaw: frame {} char {:#06x} chao {:#06x} pos ({:.2},{:.2})", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), ang[1] & 0xFFFF, m.r32(cw + 0x0C) & 0xFFFF, f(cw + 0x14), f(cw + 0x1C));
             }
+            // Only the heading: his pitch and roll (he leans into slopes and
+            // his run) laid the Chao over, face down (live play, build 16).
+            // SA2_CHAO_TILT=1 (debug): his whole angle.
+            let tilt = std::env::var("SA2_CHAO_TILT").is_ok_and(|v| v == "1");
             for (i, v) in ang.into_iter().enumerate() {
+                let _ = tilt;
                 m.w32(cw + 0x08 + 4 * i as u32, v);
             }
         }
@@ -308,7 +313,7 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
     }
     let n = NODES.with_borrow(|n| n.len());
     // Any rider (Knuckles's and Rouge's skeletons too): once a frame.
-    if n > 8 {
+    if n > 8 && !SELF_CAP.get() {
         hammer_gloves(c, m);
     }
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
@@ -316,9 +321,23 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
         eprintln!("chao-player lvl: frame {f} draw {addr:#x} obj {obj:#x} motion {mot:#x} nodes {n}");
     }
     if n >= 56 {
-        SKEL.set(NODES.with_borrow(|n| n.clone()));
+        let nodes = NODES.with_borrow(|n| n.clone());
+        // Self mode: captured under the scaled view, back to full size.
+        let nodes = match SELF_SCALE.get() {
+            Some((cur, curs)) => nodes.iter().map(|e| mul34(&cur, &inv_mul(&curs, e))).collect(),
+            None => nodes,
+        };
+        SKEL.set(nodes);
+        if SELF_CAP.get() {
+            RIDER_OBJ.set(obj);
+            return;
+        }
         RIDER_OBJ.set(obj);
         air_shoes(c, m);
+    } else if n > 0 && SELF_CAP.get() {
+        // Self mode: the ball as he draws it, under the view scaled to the Chao.
+        (c.r, c.f[1]) = (regs, f1);
+        original(c, m, addr);
     } else if n > 0 {
         // In the ball the motion draw is the ball model alone (2 nodes, lvl9\g30b).
         let obj2 = m.r32(P1_OBJ2);
@@ -386,6 +405,10 @@ fn ball_draw(c: &mut Cpu, m: &mut Mem, addr: u32, b: [f32; 3]) {
     let cur = mtx(m, cur_ptr);
     let base = mtx(m, m.r32(NJ_BASE_MATRIX));
     let w = inv_mul(&base, &cur);
+    // The captured centre is in view space (the walk's current matrix): to world.
+    let bv: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { f32::from(u8::from(i == j)) } else { b[i] }));
+    let bw = inv_mul(&base, &bv);
+    let b = [bw[0][3], bw[1][3], bw[2][3]];
     let s = BOARD_SCALE;
     // Scale about the ball's centre, then move that centre onto the Chao's.
     let ws: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { w[i][j] * s } else { w[i][3] * s + (1.0 - s) * b[i] + target[i] - b[i] }));
@@ -440,6 +463,15 @@ thread_local! {
     /// KNUCKMDL's own models by slot (the gloves and Knuckles's body), whatever
     /// the shared table or EXTRA_MODELS hold there.
     static KNUX_MODELS: std::cell::RefCell<std::collections::BTreeMap<u32, u32>> = Default::default();
+    /// TERIOSMDL's own models by slot (the Air Shoes and Shadow's body):
+    /// a slot the game's table already held kept the table's model, so
+    /// model_obj there drew another file's model (a hand) on the feet.
+    static SHADOW_MODELS: std::cell::RefCell<std::collections::BTreeMap<u32, u32>> = Default::default();
+}
+
+/// A TERIOSMDL model by slot: its own load first, then the shared lookup.
+fn shadow_obj(m: &Mem, k: u32) -> u32 {
+    SHADOW_MODELS.with_borrow(|e| e.get(&k).copied()).unwrap_or_else(|| model_obj(m, k))
 }
 
 /// A model slot: one this module loaded, else the game's table.
@@ -467,6 +499,21 @@ fn gear_tune(name: &str) -> Option<[[f32; 4]; 3]> {
         DEBUG_SETS.set(sets);
     }
     let v = GEAR_TUNE.with_borrow(|t| t.get(name).copied())?;
+    Some(tune_matrix(&v))
+}
+
+/// The fists' set places, both from the gear tuner by hand ("fist0" and
+/// "fist1" lines: dx dy dz rx ry rz scale). The left plate (331) is the
+/// right one's (329) mirror along its own z, not x, and each is fitted to
+/// its own arm, so the two lines differ in more than a sign.
+const FIST_SET: [[f32; 7]; 2] = [
+    [0.3, 1.26, -2.2, -60.0, 10.0, 0.0, 1.35],
+    [0.3, 1.26, 1.8, 60.0, -10.0, 0.0, 1.35],
+];
+
+/// A tuner line "dx dy dz rx ry rz scale" as a matrix in the piece's own
+/// frame (move, then turn x, y, z in degrees, then scale).
+fn tune_matrix(v: &[f32; 7]) -> [[f32; 4]; 3] {
     let (sx, cx) = v[3].to_radians().sin_cos();
     let (sy, cy) = v[4].to_radians().sin_cos();
     let (sz, cz) = v[5].to_radians().sin_cos();
@@ -474,7 +521,7 @@ fn gear_tune(name: &str) -> Option<[[f32; 4]; 3]> {
     let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
     let rz = [[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]];
     let r = crate::skate::mul(&rz, &crate::skate::mul(&ry, &rx));
-    Some(std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { r[i][j] * v[6] } else { v[i] })))
+    std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { r[i][j] * v[6] } else { v[i] }))
 }
 
 /// A debug panel setting ("set key value" in the tuner file), None without one.
@@ -498,6 +545,410 @@ thread_local! {
     static DEBUG_SETS: std::cell::RefCell<std::collections::BTreeMap<String, String>> = Default::default();
     static GEAR_TUNE_AT: Cell<u64> = const { Cell::new(u64::MAX) };
     static GEAR_TUNE: std::cell::RefCell<std::collections::BTreeMap<String, [f32; 7]>> = Default::default();
+}
+
+/// Shadow's Air Shoes as the client exports them (docs/UPGRADES.md): his own
+/// heel/toe mesh from body model 65 (left heel node 23 with toe 24, drawn in
+/// the heel's frame) with the Air Shoes overlay 79 (slot 159) on it, at the
+/// hub's boot place on Chao foot `n`. TERIOSMDL 80/81 (slots 161/163) are
+/// hand models, which the feet drew before (test copy, run r58).
+/// SA2_SHADOW_BOOT=0 (debug): the old slot draw.
+fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list: u32) {
+    ensure_rider_rest(m); // sets RIDER_OBJ (his body model) in self mode
+    let heel = node_obj(m, RIDER_OBJ.get(), 23);
+    let overlay = model_obj(m, 159);
+    if heel == 0 {
+        return;
+    }
+    // The heel drawn alone in its own frame: its offset, rotation and scale
+    // cleared and its sibling cut for the draw, put back after.
+    let keep: Vec<u32> = (0x08..0x34).step_by(4).map(|o| m.r32(heel + o)).collect();
+    m.w32(heel + 0x30, 0);
+    for o in (0x08..0x20).step_by(4) { m.w32(heel + o, 0); }
+    for o in (0x20..0x2C).step_by(4) { m.w32(heel + o, 1.0f32.to_bits()); }
+    let br = crate::chao_retarget::read_chao(&|a| m.r32(a), heel, [vec![], vec![]]);
+    let bv: Vec<[f32; 3]> = br.verts.iter().zip(br.worlds(&[])).flat_map(|(vs, (r, t))| vs.iter().map(move |v| std::array::from_fn(|i| t[i] + (0..3).map(|k| r[i][k] * v[k]).sum::<f32>())).collect::<Vec<_>>()).collect();
+    for (i, o) in (0x08..0x34).step_by(4).enumerate() { m.w32(heel + o, keep[i]); }
+    // The hub's own Air Shoes file when there is one (it fits as in the hub).
+    let hub = hub_shoe(c, m);
+    // Without the hub's shoe file nothing is drawn (the baked fallback lay
+    // on the floor beside the Chao on a site with a stale file list).
+    // SA2_BOOT_PARTS set (debug): the baked heel/toe and overlay.
+    if hub == 0 && std::env::var_os("SA2_BOOT_PARTS").is_none() {
+        return;
+    }
+    let bv = if hub != 0 { HUB_SHOE_VERTS.with_borrow(|v| v.clone()) } else if baked_boot(c, m) != 0 { BAKED_VERTS.with_borrow(|v| v.clone()) } else { bv };
+    let node = SHOES[n].0;
+    let hp = if bv.is_empty() { None } else { hub_boot_place(m, n, node, &br, &bv) };
+    if let Some(place) = hp.map(|p| mul34(&p, &gear_tune(if n == 0 { "boot0" } else { "boot1" }).unwrap_or_else(|| tune_matrix(&BOOT_TUNE)))) {
+        if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
+            let (lo, hi) = bv.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(l, h), v| (std::array::from_fn(|i| l[i].min(v[i])), std::array::from_fn(|i| h[i].max(v[i]))));
+            eprintln!("chao-player boot {n}: Shadow heel {heel:#x} ({} nodes, {} vertices, box {lo:?}..{hi:?}, per node {:?}), overlay {overlay:#x}, place scale {:.3}", br.nodes.len(), bv.len(), br.verts.iter().map(Vec::len).collect::<Vec<_>>(), (0..3).map(|i| place[i][0] * place[i][0]).sum::<f32>().sqrt());
+        }
+        let put = |m: &mut Mem| for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, place[r][k].to_bits()); } };
+        m.w32(list, tex);
+        let lcap = LCAP.replace(false);
+        // His heel/toe vertices are weighted to the leg above them: drawn
+        // straight from his body they stretched across the screen (runs
+        // r61-r65). Drawn from an unweighted copy baked from his rest pose.
+        // SA2_BOOT_PARTS (debug): bit 1 the baked heel/toe, bit 2 the overlay.
+        // Default the overlay alone: the baked copy still lands off the foot
+        // and its cached polygon list holds more of his leg (run r76).
+        let parts = std::env::var("SA2_BOOT_PARTS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(2);
+        if hub != 0 {
+            put(m);
+            call(c, m, 0x8011_DF44, &[hub]);
+        }
+        if hub == 0 && parts & 1 != 0 {
+            let baked = baked_boot(c, m);
+            // SA2_BAKE_DRAW (debug): 0 bake only, 2 the vertices alone (no polygons).
+            let mode = std::env::var("SA2_BAKE_DRAW").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(1);
+            if baked != 0 && mode == 2 {
+                let mdl = m.r32(baked + 4);
+                let pl = m.r32(mdl + 4);
+                m.w32(mdl + 4, 0);
+                put(m);
+                call(c, m, 0x8011_DF44, &[baked]);
+                m.w32(mdl + 4, pl);
+            }
+            if baked != 0 && mode == 1 {
+                put(m);
+                call(c, m, 0x8011_DF44, &[baked]);
+            }
+        }
+        if hub == 0 && parts & 2 != 0 && (0x8000_0000..0x8C00_0000).contains(&overlay) {
+            put(m);
+            call(c, m, 0x8011_DF44, &[overlay]);
+        }
+        // The hub's jets (src/chao-attachments.js updateNativeShoeEffects and
+        // the shoe file's provenance): the right shoe's own jet models
+        // TERIOSMDL 96 toe narrow, 97 toe wide, 98 heel wide, 99 heel narrow
+        // (slots 193/195/197/199), one variant at a time: wide when fast,
+        // else narrow; only while moving. They sit in the shoe's own frame,
+        // moved by the shoe file's recentring (its shoeOriginShift
+        // 1.0672683, 0.2922889, -0.2537795 in the hub's X-mirrored space).
+        // (Slots 181/183, drawn before, are models 90/91, not jets.)
+        // unverified: the shift's signs in the game's space (checked by eye).
+        // Jets only while the skate is in (the hub shows them with its blend).
+        if skate_blend(false) > 0.0 && !debug_off("jets") {
+            let wide = skate_blend(false) >= 1.0;
+            let shift: [[f32; 4]; 3] = [[1.0, 0.0, 0.0, 1.067_268_3], [0.0, 1.0, 0.0, -0.292_288_9], [0.0, 0.0, 1.0, 0.253_779_5]];
+            let at = if hub != 0 { mul34(&place, &shift) } else { place };
+            for js in if wide { [195u32, 197] } else { [193, 199] } {
+                let jo = shadow_obj(m, js);
+                if (0x8000_0000..0x8C00_0000).contains(&jo) {
+                    for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, at[r][k].to_bits()); } }
+                    call(c, m, 0x8011_DF44, &[jo]);
+                }
+            }
+        }
+        LCAP.set(lcap);
+    }
+}
+
+/// The hub's Air Shoes (its shadow-air-shoes-right.glb: TERIOSMDL 65 heel/toe
+/// and overlay 78, TERIOSTEX), converted by scripts/convert-hub-shoe-to-ninja.py
+/// into a Ninja chunk vertex and polygon list, read from the site's
+/// /mmo-assets/shadow-air-shoes-right.njsh (SA2_HUB_SHOE overrides; local
+/// game-derived data, never in git) into game heap 1 once per load. 0 without it.
+fn hub_shoe(c: &mut Cpu, m: &mut Mem) -> u32 {
+    if let Some(o) = HUB_SHOE.get() {
+        return o;
+    }
+    let path = std::env::var("SA2_HUB_SHOE").unwrap_or_else(|_| "/mmo-assets/shadow-air-shoes-right.njsh".into());
+    let Ok(b) = std::fs::read(&path) else {
+        eprintln!("chao-player boot: no hub shoe at {path}");
+        HUB_SHOE.set(Some(0));
+        return 0;
+    };
+    let u = |o: usize| b.get(o..o + 4).map_or(0, |x| u32::from_be_bytes([x[0], x[1], x[2], x[3]]));
+    let (n, vlen, plen) = (u(4), u(8) as usize, u(12) as usize);
+    if &b[..4.min(b.len())] != b"NJSH" || b.len() < 16 + vlen + plen {
+        eprintln!("chao-player boot: {path} is not a hub shoe file");
+        HUB_SHOE.set(Some(0));
+        return 0;
+    }
+    let (model, obj) = (64u32, 0x40u32);
+    let total = (vlen + plen) as u32 + model + obj + 8;
+    let mem = call(c, m, OS_ALLOC_FROM_HEAP, &[GEAR_HEAP, total]);
+    if mem == 0 {
+        HUB_SHOE.set(Some(0));
+        return 0;
+    }
+    zero(m, mem, total);
+    let vl = mem;
+    let pl = (mem + vlen as u32 + 3) & !3;
+    m.load(vl, &b[16..16 + vlen]);
+    m.load(pl, &b[16 + vlen..16 + vlen + plen]);
+    let mdl = (pl + plen as u32 + 3) & !3;
+    let o = mdl + model;
+    m.w32(mdl, vl);
+    m.w32(mdl + 4, pl);
+    m.w32(o, 0x17); // UNIT_POS | UNIT_ANG | UNIT_SCL | BREAK (no child)
+    m.w32(o + 4, mdl);
+    for j in 0..3 { m.w32(o + 32 + 4 * j, 1.0f32.to_bits()); }
+    // Its vertices for the fit: VN chunks (8-byte header, 24 bytes a vertex).
+    let f = |o: usize| f32::from_bits(u(o));
+    let (mut verts, mut a) = (vec![], 16usize);
+    while a < 16 + vlen && u(a) & 0xFF != 0xFF {
+        let (size, cnt) = ((u(a) >> 16) as usize, (u(a + 4) >> 16) as usize);
+        for k in 0..cnt { let p = a + 8 + 24 * k; verts.push([f(p), f(p + 4), f(p + 8)]); }
+        a += 4 + 4 * size;
+    }
+    eprintln!("chao-player boot: hub shoe {path} ({n} vertices, {} read) at {o:#x}", verts.len());
+    HUB_SHOE_VERTS.set(verts);
+    HUB_SHOE.set(Some(o));
+    o
+}
+
+thread_local! {
+    static HUB_SHOE: Cell<Option<u32>> = const { Cell::new(None) };
+    static HUB_SHOE_VERTS: std::cell::RefCell<Vec<[f32; 3]>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Shadow's left heel (body node 23) and toe (24) as a new two-node object
+/// whose vertices are his rest-pose skinned positions, in the heel's frame:
+/// the whole body's vertex chunks run on the CPU (Ninja chunk weights:
+/// NF vertices carry index | weight << 16, chunk flags & 3 = 0 start,
+/// else add), then one plain VN chunk holds every cache entry, and the heel
+/// and toe keep their own polygon lists. Made once per load in game heap 1.
+/// unverified: the NF weight scale (255 = 1.0), checked only by the drawn result.
+fn baked_boot(c: &mut Cpu, m: &mut Mem) -> u32 {
+    let body = RIDER_OBJ.get();
+    if let Some((b, o)) = BAKED_BOOT.get() {
+        if b == body {
+            return o;
+        }
+    }
+    let r32 = |a: u32| m.r32(a);
+    let f = |a: u32| f32::from_bits(m.r32(a));
+    // Nodes depth first with their objects and world (rotation, position).
+    let rest = crate::chao_retarget::read_chao(&r32, body, [vec![], vec![]]);
+    let w = rest.worlds(&[]);
+    let objs: Vec<u32> = (0..w.len()).map(|k| node_obj(m, body, k)).collect();
+    if w.len() < 25 || objs[23] == 0 || objs[24] == 0 {
+        return 0;
+    }
+    let mut cache: std::collections::BTreeMap<u32, ([f32; 3], [f32; 3])> = Default::default();
+    let mut shoe: std::collections::BTreeSet<u32> = Default::default();
+    for (k, &o) in objs.iter().enumerate() {
+        let att = r32(o + 4);
+        if att == 0 { continue; }
+        let (r, t) = w[k];
+        let mut vp = r32(att);
+        while vp != 0 {
+            let hdr = r32(vp);
+            let typ = hdr & 0xFF;
+            if typ == 0xFF { break; }
+            let (status, size) = ((hdr >> 8) & 3, hdr >> 16);
+            let w2 = r32(vp + 4);
+            let (off, cnt) = (w2 & 0xFFFF, w2 >> 16);
+            let stride = if cnt != 0 { (size - 1) / cnt } else { 0 };
+            let nf = typ == 37 || typ == 44;
+            let vn = (41..=47).contains(&typ);
+            for i in 0..cnt {
+                let a = vp + 8 + i * stride * 4;
+                let pos = [f(a), f(a + 4), f(a + 8)];
+                let nor = if vn { [f(a + 12), f(a + 16), f(a + 20)] } else { [0.0, 1.0, 0.0] };
+                let (idx, wt) = if nf { let x = r32(a + (stride - 1) * 4); (off + (x & 0xFFFF), (x >> 16) as f32 / 255.0) } else { (off + i, 1.0) };
+                let p: [f32; 3] = std::array::from_fn(|j| (t[j] + (0..3).map(|q| r[j][q] * pos[q]).sum::<f32>()) * wt);
+                let n: [f32; 3] = std::array::from_fn(|j| (0..3).map(|q| r[j][q] * nor[q]).sum::<f32>() * wt);
+                if k == 23 || k == 24 {
+                    shoe.insert(idx);
+                }
+                let e = cache.entry(idx).or_insert(([0.0; 3], [0.0; 3]));
+                if !nf || status == 0 {
+                    *e = (p, n);
+                } else {
+                    for j in 0..3 { e.0[j] += p[j]; e.1[j] += n[j]; }
+                }
+            }
+            vp += 4 + size * 4;
+        }
+    }
+    // The toe draws polygon list cache 1 (its plist: chunk 0x0105); the
+    // polygons are in the node that caches list 1 (chunk 0x0104), after it.
+    let r16 = |a: u32| if a & 2 == 0 { r32(a) >> 16 } else { r32(a - 2) & 0xFFFF };
+    let toe_pl = r32(r32(objs[24] + 4) + 4);
+    let want = if toe_pl != 0 && r16(toe_pl) & 0xFF == 5 { r16(toe_pl) >> 8 } else { u32::MAX };
+    let mut polys = 0u32;
+    'nodes: for &o in &objs {
+        let att = r32(o + 4);
+        let mut a = if att != 0 { r32(att + 4) } else { 0 };
+        for _ in 0..4096 {
+            if a == 0 { break; }
+            let h = r16(a);
+            let t = h & 0xFF;
+            if t == 0xFF { break; }
+            if t == 4 && h >> 8 == want {
+                polys = a + 2;
+                break 'nodes;
+            }
+            a += match t { 0..=7 => 2, 8..=15 => 4, _ => 4 + 2 * r16(a + 2) };
+        }
+    }
+    if polys == 0 {
+        eprintln!("chao-player boot: no cached polygon list {want} for his toe");
+        BAKED_BOOT.set(Some((body, 0)));
+        return 0;
+    }
+    // Only the strips of his shoe (as the hub's export keeps only the mesh
+    // weighted to the heel): the cached list also holds more of his leg.
+    let (plist, kept, dropped) = shoe_strips(&|a| r16(a) as u16, polys, &shoe);
+    let Some(&max) = cache.keys().next_back() else { return 0 };
+    // Into the heel's frame.
+    let (hr, ht) = w[23];
+    let inv = |v: [f32; 3], d: [f32; 3]| -> [f32; 3] { std::array::from_fn(|j| (0..3).map(|q| hr[q][j] * (v[q] - d[q])).sum::<f32>()) };
+    let cnt = max + 1;
+    // Chunks of at most 64 vertices, as his own (flags 0x80 like his heel's
+    // VN chunk): one chunk of 803 crashed the draw (run r71).
+    const PER: u32 = 64;
+    let chunks = cnt.div_ceil(PER);
+    let words = 2 * chunks + cnt * 6 + 1;
+    // Model and object blocks with zeroed room past their Ninja fields
+    // (unverified whether the GC draw keeps more per model).
+    let (vl_size, model_size, obj_size) = (words * 4, 64, 0x40);
+    let pl_size = (2 * plist.len() as u32 + 3) & !3;
+    let total = vl_size + 2 * (model_size + obj_size) + pl_size;
+    let mem = call(c, m, OS_ALLOC_FROM_HEAP, &[GEAR_HEAP, total]);
+    if mem == 0 {
+        eprintln!("chao-player boot: no room to bake his heel/toe ({total} bytes)");
+        BAKED_BOOT.set(Some((body, 0)));
+        return 0;
+    }
+    zero(m, mem, total);
+    let vl = mem;
+    let mut a = vl;
+    for ch in 0..chunks {
+        let (off, n) = (ch * PER, PER.min(cnt - ch * PER));
+        m.w32(a, ((1 + n * 6) << 16) | (0x80 << 8) | 41);
+        m.w32(a + 4, (n << 16) | off);
+        a += 8;
+        for i in off..off + n {
+            let (p, nv) = cache.get(&i).copied().unwrap_or(([0.0; 3], [0.0, 1.0, 0.0]));
+            let (p, nv) = (inv(p, ht), inv(nv, [0.0; 3]));
+            for j in 0..3 {
+                m.w32(a + 4 * j as u32, p[j].to_bits());
+                m.w32(a + 12 + 4 * j as u32, nv[j].to_bits());
+            }
+            a += 24;
+        }
+    }
+    m.w32(a, 0xFF);
+    let (m_heel, m_toe) = (mem + vl_size, mem + vl_size + model_size);
+    let (o_heel, o_toe) = (mem + vl_size + 2 * model_size, mem + vl_size + 2 * model_size + obj_size);
+    let pl_at = o_toe + obj_size;
+    for (i, &w) in plist.iter().enumerate() {
+        m.w16(pl_at + 2 * i as u32, w);
+    }
+    for (mdl, vlist, pl) in [(m_heel, vl, pl_at), (m_toe, 0, 0)] {
+        m.w32(mdl, vlist);
+        m.w32(mdl + 4, pl);
+        for j in 0..3 { m.w32(mdl + 8 + 4 * j, 0); }
+        m.w32(mdl + 20, 0); // radius 0, as his own heel model
+    }
+    for (obj, mdl, child) in [(o_heel, m_heel, 0), (o_toe, m_toe, 0)] {
+        // UNIT_POS | UNIT_ANG | UNIT_SCL, and BREAK (0x10): the walk
+        // (0x8011DFC0) enters the child pointer unchecked unless BREAK is set.
+        m.w32(obj, 0x17);
+        m.w32(obj + 4, mdl);
+        for j in 0..3 { m.w32(obj + 8 + 4 * j, 0); m.w32(obj + 20 + 4 * j, 0); m.w32(obj + 32 + 4 * j, 1.0f32.to_bits()); }
+        m.w32(obj + 44, child);
+        m.w32(obj + 48, 0);
+    }
+    eprintln!("chao-player boot: baked his heel/toe ({cnt} cache entries, {} set, shoe {}) at {o_heel:#x}: {kept} shoe strips kept, {dropped} dropped", cache.len(), shoe.len());
+    BAKED_BOOT.set(Some((body, o_heel)));
+    BAKED_VERTS.set(shoe.iter().filter_map(|i| cache.get(i)).map(|&(p, _)| inv(p, ht)).collect());
+    o_heel
+}
+
+thread_local! {
+    /// (his body model, the baked heel/toe object) once made this load.
+    static BAKED_BOOT: Cell<Option<(u32, u32)>> = const { Cell::new(None) };
+    /// The baked shoe's own vertices (heel and toe), in the heel's frame.
+    static BAKED_VERTS: std::cell::RefCell<Vec<[f32; 3]>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A Ninja chunk polygon list (big-endian shorts from `start`, to its end
+/// chunk) with only the strips whose vertices are all in `keep`; material
+/// and other state chunks kept, polygon cache/draw chunks (types 4/5)
+/// dropped. Returns the new list and the strip counts kept and dropped.
+/// Strip types 64-75 by their shorts per vertex (index plus UV/normal/
+/// colour); an unknown type is kept whole.
+/// unverified: per-vertex sizes of types 67-69 and 73-75 (not in his shoe so far).
+fn shoe_strips(r16: &dyn Fn(u32) -> u16, start: u32, keep: &std::collections::BTreeSet<u32>) -> (Vec<u16>, usize, usize) {
+    let (mut out, mut kept, mut dropped) = (vec![], 0, 0);
+    let mut a = start;
+    for _ in 0..8192 {
+        let h = r16(a);
+        let t = h & 0xFF;
+        match t {
+            0xFF => break,
+            0 | 4 | 5 => a += 2,
+            1..=7 => { out.push(h); a += 2; }
+            8..=15 => { out.extend([h, r16(a + 2)]); a += 4; }
+            64..=75 => {
+                let size = r16(a + 2) as u32;
+                let end = a + 4 + 2 * size;
+                let base = match t { 64 | 73 => 1, 65 | 66 | 70 => 3, 67 => 4, 71 | 72 | 74 | 75 => 5, _ => 6 };
+                let w = r16(a + 4);
+                let (n, uf) = (w & 0x3FFF, (w >> 14) as u32);
+                let mut p = a + 6;
+                let mut strips: Vec<u16> = vec![];
+                let mut nk = 0u16;
+                for _ in 0..n {
+                    let cnt = (r16(p) as i16).unsigned_abs() as u32;
+                    let s0 = p;
+                    p += 2;
+                    let mut all = true;
+                    for i in 0..cnt {
+                        all &= keep.contains(&(r16(p) as u32));
+                        p += 2 * base + if i >= 2 { 2 * uf } else { 0 };
+                    }
+                    if all {
+                        strips.extend((s0..p).step_by(2).map(r16));
+                        nk += 1;
+                    } else {
+                        dropped += 1;
+                    }
+                }
+                if nk > 0 {
+                    out.extend([h, 1 + strips.len() as u16, ((uf as u16) << 14) | nk]);
+                    out.extend(strips);
+                    kept += nk as usize;
+                }
+                a = end;
+            }
+            _ => {
+                let size = r16(a + 2) as u32;
+                out.extend((a..a + 4 + 2 * size).step_by(2).map(r16));
+                a += 4 + 2 * size;
+            }
+        }
+    }
+    out.push(0x00FF);
+    (out, kept, dropped)
+}
+
+/// The object of node `index` (depth first, as read_chao counts) in a model
+/// tree (NJS_OBJECT: child +0x2C, sibling +0x30), 0 when there is none.
+fn node_obj(m: &Mem, root: u32, index: usize) -> u32 {
+    let ok = |o: u32| (0x8000_0000..0x8C00_0000).contains(&o);
+    if !ok(root) {
+        return 0;
+    }
+    let (mut stack, mut n) = (vec![root], 0usize);
+    while let Some(o) = stack.pop() {
+        if n == index {
+            return o;
+        }
+        n += 1;
+        let (child, sib) = (m.r32(o + 0x2C), m.r32(o + 0x30));
+        if ok(sib) { stack.push(sib); }
+        if ok(child) { stack.push(child); }
+        if n > 512 { break; }
+    }
+    0
 }
 
 /// Knuckles's fist for a Hammer Gloves plate: right plate 329 with fist 163,
@@ -594,15 +1045,27 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     let regs = (c.r, c.f);
     let ext = |vs: Vec<[f32; 3]>| (0..3).map(|k| { let (lo, hi) = vs.iter().fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v[k]), h.max(v[k]))); hi - lo }).fold(0.0f32, f32::max);
     for (n, &(node, foot, model)) in SHOES.iter().enumerate() {
+        if chao_world(m) && models.is_empty() && !std::env::var("SA2_SHADOW_BOOT").is_ok_and(|v| v == "0") {
+            shadow_boot(c, m, n, tex, cur_ptr, list);
+            continue;
+        }
         // Chao World: the right boot (78 = slot 163) on both feet, as the hub does.
         let model = models.get(n).copied().unwrap_or(if chao_world(m) { 163 } else { model });
-        let obj = model_obj(m, model);
+        let obj = shadow_obj(m, model);
         if !(0x8000_0000..0x8C00_0000).contains(&obj) {
             continue;
         }
         // The boot's vertices in its own model space (its nodes carry the rest
         // offset from Shadow's foot): centred on the Chao foot below.
         let br = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]);
+        // Only Shadow's shoe (TERIOSMDL 80/81: 2 nodes, 174 vertices): another
+        // file's model in these slots (a hand) is never drawn on the feet.
+        if models.is_empty() && (br.nodes.len() != 2 || br.verts.iter().map(Vec::len).sum::<usize>() != 174) {
+            if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
+                eprintln!("chao-player shoes: slot {model} holds {obj:#x} ({} nodes), not Shadow's shoe; not drawn", br.nodes.len());
+            }
+            continue;
+        }
         let bv: Vec<[f32; 3]> = br.verts.iter().zip(br.worlds(&[])).flat_map(|(vs, (r, t))| vs.iter().map(move |v| std::array::from_fn(|i| t[i] + (0..3).map(|k| r[i][k] * v[k]).sum::<f32>())).collect::<Vec<_>>()).collect();
         let centre = bv.iter().fold([0.0f32; 3], |a, v| [a[0] + v[0], a[1] + v[1], a[2] + v[2]]).map(|x| x / bv.len().max(1) as f32);
         let boot = ext(bv.clone());
@@ -626,6 +1089,23 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
                 for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, place[r][k].to_bits()); } }
                 m.w32(list, tex);
                 let lcap = LCAP.replace(false);
+                // SA2_SHADOW_FOOT=1 (debug): also the foot node of his body
+                // model (nodes 14/24) with its children. Off: his body is a
+                // weighted model, and a subtree drawn alone stretched into a
+                // screen-sized mesh once he moved (test copy, run r52).
+                let foot_obj = node_obj(m, RIDER_OBJ.get(), foot);
+                if foot_obj != 0 && std::env::var("SA2_SHADOW_FOOT").is_ok_and(|v| v == "1") {
+                    let sib = m.r32(foot_obj + 0x30);
+                    m.w32(foot_obj + 0x30, 0);
+                    // The node's own rest offset is in its object: draw it at the boot's place.
+                    let keep: Vec<u32> = (0x08..0x2C).step_by(4).map(|o| m.r32(foot_obj + o)).collect();
+                    for o in (0x08..0x20).step_by(4) { m.w32(foot_obj + o, 0); }
+                    for o in (0x20..0x2C).step_by(4) { m.w32(foot_obj + o, 1.0f32.to_bits()); }
+                    call(c, m, 0x8011_DF44, &[foot_obj]);
+                    for (i, o) in (0x08..0x2C).step_by(4).enumerate() { m.w32(foot_obj + o, keep[i]); }
+                    m.w32(foot_obj + 0x30, sib);
+                    for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, place[r][k].to_bits()); } }
+                }
                 call(c, m, 0x8011_DF44, &[obj]);
                 // Heel/toe jets (Shadow's right jets 96-99 = slots 181-184, the
                 // hub's: modelled in the same foot frame as the boot) while moving.
@@ -712,9 +1192,12 @@ fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::Ch
     // Shadow's rest foot rotation (node 24, his model space) and his facing
     // (-x) to the Chao's (+z).
     ensure_rider_rest(_m);
-    let mount = RIDER_REST.with_borrow(|r| r.as_ref().and_then(|(_, v)| v.get(24).copied()))
+    // The hub's own shoe file is in the hub's coordinates: its mount as it is
+    // (src/chao-attachments.js shadowShoeMountRotation / mirroredShadowShoeRest).
+    let hub = HUB_SHOE.get().is_some_and(|o| o != 0);
+    let mount = if hub { mount } else { RIDER_REST.with_borrow(|r| r.as_ref().and_then(|(_, v)| v.get(24).copied()))
         .map(|rf| crate::skate::mul(&[[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]], &crate::skate::unit(&rf)))
-        .unwrap_or(mount);
+        .unwrap_or(mount) };
     // SA2_BOOT_FIX="rx,ry,rz" (debug, degrees): a turn after the hub mount, to
     // find the handedness difference between the hub (Babylon) and the game.
     let mount = match std::env::var("SA2_BOOT_FIX").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<_>>()) {
@@ -748,9 +1231,11 @@ fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::Ch
     // SA2_SHOE_SCALE=k (debug): k times the hub fit, to see it in a check.
     // shortcut: 1.4x by eye on the self-driven Chao with the character's own
     // rest foot as the mount (lobby close-ups: 1.0 sits inside the foot, 1.6
-    // swallows it); rider mode used 1.7 with the hub mount. The computed fit
+    // swallows it); rider mode used 1.7 with the hub mount. The hub's shoe
+    // file: 1.6 by eye (test copy run r83: at 1.0 it sat inside the foot,
+    // at 1.6 it covers the foot as in the hub). The computed fit
     // alone sits inside the foot: find the measuring difference.
-    let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]) * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.4);
+    let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]) * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(if hub { 1.6 } else { 1.4 });
     if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 0 {
         eprintln!("chao-player boot fit: foot {:?}..{:?} shoe {:?}..{:?} scale {sc}", flo, fhi, slo, shi);
     }
@@ -782,12 +1267,34 @@ const GLOVE_REFS: [(u32, [f32; 3], [f32; 3]); 2] = [
     (329, [0.150_553_9, 0.933_591_6, 0.325_177_2], [-0.984_045_9, 0.173_063_3, -0.041_265_2]),
     (331, [0.171_001_5, 0.896_849_7, -0.407_944_7], [-0.985_151_6, 0.162_074_6, -0.056_639_6]),
 ];
-/// shortcut: 1.6 of the hand's size by mob's ask (bigger than the hub's 1.12);
-/// the gear tuner (?geartune=1) gives the measured value to commit.
-const GLOVE_SCALE: f32 = 1.6;
+/// shortcut: Knuckles's fist at 1.0 of the Chao hand's size, so his cuff keeps
+/// his proportions round the Chao's thin wrist (1.6 swallowed the arm); the
+/// gear tuner (?geartune=1) gives the measured value to commit.
+const GLOVE_SCALE: f32 = 1.0;
 /// KNUCKMDL body model 142 in the model table (slot 2n+1).
 const KNUX_BODY_SLOT: u32 = 285;
 const GLOVE_REACH: f32 = 0.55;
+/// The hub's glove: the Hammer Gloves cuff alone, 1.12 of the Chao palm's
+/// largest extent, centred on the palm (src/scene.js attachOwnerGear).
+const HUB_GLOVE_SCALE: f32 = 1.12;
+/// SA2_GLOVE_NATIVE=1 (debug): the older fit on Knuckles's hand frame with
+/// his fist under the cuff. Default: the hub's fit, as the hub draws it.
+fn glove_native() -> bool {
+    std::env::var("SA2_GLOVE_NATIVE").is_ok_and(|v| v == "1")
+}
+/// Where along the arm (shoulder 0 -> hand tip 1) the glove's origin (his
+/// wrist) sits, and how far the fists turn out from the hips (degrees):
+/// a presentation fit, not game data. SA2_GLOVE_UP / SA2_GLOVE_OUT override.
+/// Degrees the cuff tips about its own centre (positive: top in towards the body).
+fn glove_up() -> f32 {
+    std::env::var("SA2_GLOVE_UP").ok().and_then(|v| v.parse().ok()).unwrap_or(0.35)
+}
+fn glove_roll() -> f32 {
+    std::env::var("SA2_GLOVE_ROLL").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0)
+}
+fn glove_out() -> f32 {
+    std::env::var("SA2_GLOVE_OUT").ok().and_then(|v| v.parse().ok()).unwrap_or(15.0)
+}
 
 fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
     let rest = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| (r.worlds(&[]), r.verts.clone())))?;
@@ -804,7 +1311,9 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         let (model, up, fwd) = GLOVE_REFS[k];
         // The hub's vectors are in its glTF space, whose root mirrors the
         // source x (chao-attachments.js note): mirror them back for the game.
-        let (up, fwd) = if std::env::var("SA2_GLOVE_NOMIRROR").is_ok() { (up, fwd) } else { ([-up[0], up[1], up[2]], [-fwd[0], fwd[1], fwd[2]]) };
+        // The hub mirrors them only because its glTF root mirrors X; the
+        // game's plate is in Knuckles's own coordinates: as read.
+        let (up, fwd) = if !glove_native() || std::env::var("SA2_GLOVE_NOMIRROR").is_ok() { (up, fwd) } else { ([-up[0], up[1], up[2]], [-fwd[0], fwd[1], fwd[2]]) };
         let obj = knux_obj(m, model);
         if !(0x8000_0000..0x8C00_0000).contains(&obj) {
             return None;
@@ -830,7 +1339,7 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         // 42 left, the frames the hub vectors were read from) and his facing
         // (-x) to the Chao's (+z), as the boots do with Shadow's foot.
         // SA2_GLOVE_HUB=1 (debug): the hub's vectors instead.
-        let native = (!std::env::var("SA2_GLOVE_HUB").is_ok_and(|v| v == "1")).then(|| {
+        let native = glove_native().then(|| {
             let body = knux_obj(m, KNUX_BODY_SLOT);
             if !(0x8000_0000..0x8C00_0000).contains(&body) { return None; }
             let kr = crate::chao_retarget::read_chao(&|a| m.r32(a), body, [vec![], vec![]]).worlds(&[]);
@@ -894,7 +1403,7 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
             ssize
         };
         // SA2_GLOVE_SCALE=k (debug): k times the fitted size.
-        let s = hsize * GLOVE_SCALE / ssize * std::env::var("SA2_GLOVE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
+        let s = hsize * if native.is_some() { GLOVE_SCALE } else { HUB_GLOVE_SCALE } / ssize * std::env::var("SA2_GLOVE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
         // SA2_GLOVE_PIVOT=wrist (debug): the glove's end nearest the shoulder
         // (its cuff: the vertices in the first 15% along the arm) sits on the
         // wrist, where the hand starts along the arm, instead of the glove's
@@ -903,7 +1412,7 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         // Chao's wrist (where the hand starts along the arm), so the arm goes
         // through the cuff (mob 2026-11-22: bigger, higher on the wrist).
         let t: [f32; 3] = if native.is_some() && !std::env::var("SA2_GLOVE_PIVOT").is_ok() {
-            std::array::from_fn(|i| sh[i] + ax[i] * reach * GLOVE_REACH)
+            std::array::from_fn(|i| sh[i] + ax[i] * reach * glove_up())
         } else if std::env::var("SA2_GLOVE_PIVOT").is_ok_and(|v| v == "wrist") {
             let along = |p: &[f32; 3]| (0..3).map(|i| p[i] * ax[i]).sum::<f32>();
             let (lo, hi) = src.iter().map(along).fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v), h.max(v)));
@@ -914,7 +1423,33 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         } else {
             std::array::from_fn(|i| hc[i] - sc[i] * s)
         };
+        // Rolled about the arm's own axis (shoulder -> hand) through the
+        // cuff's centre: the side frame turns off the outside of the arm.
+        // SA2_GLOVE_ROLL (degrees, debug); mirrored for the left arm.
+        let roll = glove_roll() * if sh[0] < 0.0 { 1.0 } else { -1.0 };
+        let (r, t) = if roll == 0.0 { (r, t) } else {
+            let (sn, cs) = roll.to_radians().sin_cos();
+            let k = ax;
+            let kx = [[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]];
+            let rot: [[f32; 3]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| f32::from(u8::from(i == j)) * cs + sn * kx[i][j] + (1.0 - cs) * k[i] * k[j]));
+            // Keep the cuff's centre (t + s * sc) where it was.
+            let c: [f32; 3] = std::array::from_fn(|i| t[i] + s * sc[i]);
+            let rc: [f32; 3] = std::array::from_fn(|i| (0..3).map(|q| rot[i][q] * sc[q]).sum::<f32>());
+            (crate::skate::mul(&rot, &r), std::array::from_fn(|i| c[i] - s * rc[i]))
+        };
         let desired: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { r[i][j] * s } else { t[i] }));
+        // Tipped about the Chao's forward axis (+z) through the cuff's
+        // centre (its own middle): positive tips the top in towards the
+        // body. The right arm (-x) turns towards -x, the left towards +x.
+        let out_deg = glove_out() * if sh[0] < 0.0 { -1.0 } else { 1.0 };
+        let piv: [f32; 3] = std::array::from_fn(|i| t[i] + s * sc[i]);
+        let sh = piv;
+        let (so, co) = out_deg.to_radians().sin_cos();
+        let rz = [[co, -so, 0.0], [so, co, 0.0], [0.0, 0.0, 1.0]];
+        let desired: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| {
+            let lin = (0..3).map(|q| rz[i][q] * desired[q][j]).sum::<f32>();
+            if j < 3 { lin } else { sh[i] + (0..3).map(|q| rz[i][q] * (desired[q][3] - sh[q])).sum::<f32>() }
+        }));
         out[k] = (model, inv_mul(&aw, &desired));
         let _ = arm;
     }
@@ -945,7 +1480,11 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
     for (k, (model, local)) in fit.into_iter().enumerate() {
         let Some(node) = HANDS.with_borrow(|h| h[k]) else { continue };
         let place = mul34(&node, &local);
-        let place = gear_tune(if k == 0 { "fist0" } else { "fist1" }).map_or(place, |t| mul34(&place, &t));
+        let place = mul34(&place, &gear_tune(if k == 0 { "fist0" } else { "fist1" }).unwrap_or_else(|| tune_matrix(&FIST_SET[k])));
+        if f % 300 == 0 {
+            let ft = FEET.with_borrow(|x| x[k].map(|v| [v[0][3], v[1][3], v[2][3]]));
+            eprintln!("chao-player gloves: {k} arm node at {:?}, fist at {:?}, foot {:?}, local t {:?}", [node[0][3], node[1][3], node[2][3]], [place[0][3], place[1][3], place[2][3]], ft, [local[0][3], local[1][3], local[2][3]]);
+        }
         for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, place[r][q].to_bits()); } }
         m.w32(list, tex);
         let lcap = LCAP.replace(false);
@@ -953,7 +1492,7 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
         // Knuckles's own fist under the plate (same frame: both are built on
         // his hand node).
         let fist = knux_obj(m, knux_fist(model));
-        if (0x8000_0000..0x8C00_0000).contains(&fist) {
+        if glove_native() && (0x8000_0000..0x8C00_0000).contains(&fist) {
             for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, place[r][q].to_bits()); } }
             call(c, m, 0x8011_DF44, &[fist]);
         }
@@ -966,6 +1505,26 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
 
 /// Place the Chao on the rider right before it draws (after its own exec).
 fn chao_display(c: &mut Cpu, m: &mut Mem) {
+    // The player's own Chao in self mode is drawn upright: the character's
+    // exec leaves his pitch and roll (slope and run lean) in the shared task
+    // work after the Chao's exec, and the draw laid the Chao flat with them.
+    // SA2_CHAO_TILT=1 (debug): drawn with his tilt.
+    let task = c.r[3];
+    let cw = m.r32(task + 0x34);
+    let own = matches!(STEP.get(), Step::Live(ch) if ch == task) && cw != 0 && self_drive(m) && !std::env::var("SA2_CHAO_TILT").is_ok_and(|v| v == "1");
+    let keep = (m.r32(cw.wrapping_add(0x08)), m.r32(cw.wrapping_add(0x10)));
+    if own {
+        m.w32(cw + 0x08, 0);
+        m.w32(cw + 0x10, 0);
+    }
+    chao_display_inner(c, m);
+    if own {
+        m.w32(cw + 0x08, keep.0);
+        m.w32(cw + 0x10, keep.1);
+    }
+}
+
+fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
     if remote_offscreen(m, c.r[3]) {
         return;
     }
@@ -991,13 +1550,23 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
     // each result with the retargeted pose (Chao-local, posed below).
     // Chao World: the native Chao rig and its own motions draw it (no rider
     // skeleton copied onto it); elsewhere the rider's pose is retargeted.
-    // SA2_CHAO_RETARGET=1 (debug): retarget in Chao World too.
-    if live && RIDER.get() != 0 && (!chao_world(m) || std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")) {
+    // Chao World self mode: the hidden Shadow's live skeleton (walked by his
+    // display, drawing nothing) poses the Chao, so it walks, runs and skates
+    // with his motions. SA2_CHAO_RETARGET=1 (debug): also outside self mode;
+    // =0: the Chao's own motions.
+    if live && RIDER.get() != 0 && (!chao_world(m) || (self_retarget(m) && self_in_motion()) || std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")) {
         level_pose(m, c.r[3]);
         CHAO_DRAW.set(true);
         CHAO_NODE.set(0);
         let a = rt::sec(m, 60, 1) + CHAO_DISPLAY;
         rel_original(c, m, a, chao_display);
+        if self_drive(m) {
+            // No rider draw carries the gear in self mode: draw it from the
+            // hands and feet this draw recorded.
+            hammer_gloves(c, m);
+            air_shoes(c, m);
+            try_on(c, m);
+        }
         return crate::name_tags::finish();
     }
     // ChaoMain queues the model draw past this call (no walker runs inside
@@ -1020,6 +1589,7 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
         if self_drive(m) {
             hammer_gloves(c, m);
             air_shoes(c, m);
+            try_on(c, m);
         }
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 0 {
             let rest = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| r.nodes.len()));
@@ -1137,6 +1707,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(SONIC_EXEC, |c, m| exec(c, m, SONIC_EXEC));
     c.rt.set_override(KNUX_EXEC, |c, m| exec(c, m, KNUX_EXEC));
     c.rt.set_override(DESTROY_TASK, destroy_task);
+    c.rt.set_override(SPIN_FLASH_DISP, spin_flash);
     if std::env::var_os("SA2_TRACE_EVDRAW").is_some() {
         c.rt.set_override(DRAW_MOTION, trace_draw_motion);
         c.rt.set_override(0x8011_DF44, |c, m| ev_draw(c, m, 0x8011_DF44));
@@ -1444,7 +2015,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
             record_hand(m, i, m.r32(NJ_CURRENT_MATRIX));
             // Wearing Shadow's shoes and moving: the web hub's skate overlay
             // (skate.rs) on its 8 mapped nodes, from the rider's live pose.
-            if MOVING.get() && SHADOW_TEX.get().is_some() && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
+            if skate_blend(i == 0) > 0.0 && SHADOW_TEX.get().is_some() && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
                 if let Some(&(_, src, w, cap)) = crate::skate::MAP.iter().find(|e| e.0 == i) {
                     skate_node(m, i, src, w, cap);
                 }
@@ -1452,6 +2023,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
             if let Some(k) = SHOES.iter().position(|s| s.0 == i) {
                 let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
                 FEET.with_borrow_mut(|f| f[k] = Some(cur));
+                hide_foot(m, m.r32(NJ_CURRENT_MATRIX));
             }
         }
         return crate::name_tags::node(mtx(m, m.r32(NJ_CURRENT_MATRIX)));
@@ -1474,7 +2046,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
             }
         });
         if RIDER.get() == 0 {
-            pose_chao();
+            pose_chao(false);
         }
     }
     let a = rt::sec(m, 60, 1) + AL_NODE_TRANSFORM;
@@ -1512,6 +2084,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
     if let Some(k) = SHOES.iter().position(|s| s.0 == i) {
         let cur = mtx(m, cur_ptr);
         FEET.with_borrow_mut(|f| f[k] = Some(cur));
+        hide_foot(m, cur_ptr);
     }
 }
 
@@ -1526,7 +2099,9 @@ fn ensure_rider_rest(m: &Mem) {
     if RIDER_REST.with_borrow(|r| r.is_some()) || sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 != 0 {
         return;
     }
-    let found = (0..0x428u32).map(|k| model_obj(m, k)).filter(|o| (0x8000_0000..0x8C00_0000).contains(o)).find(|&o| crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]).nodes.len() == 62);
+    // Shadow's own body first: KNUCKMDL's body (slot 285) has 62 nodes too.
+    let shadow: Vec<u32> = SHADOW_MODELS.with_borrow(|e| e.values().copied().collect());
+    let found = shadow.into_iter().chain((0..0x428u32).map(|k| model_obj(m, k))).filter(|o| (0x8000_0000..0x8C00_0000).contains(o)).find(|&o| crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]).nodes.len() == 62);
     let Some(obj) = found else { return };
     let rr = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]).worlds(&[]);
     let r0 = rr.first().map(|x| x.0).unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
@@ -1558,12 +2133,36 @@ fn skate_node(m: &mut Mem, i: usize, src: usize, w: f32, cap: f32) {
     let d = crate::skate::desired(&now, &rest, &chao_rest, w, cap);
     let p = CHAO_PLACE.get();
     let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+    // Blended with the Chao's own walk pose while the skate comes in or goes out.
+    let b = skate_blend(false);
     for row in 0..3 {
         for col in 0..3 {
             let v: f32 = (0..3).map(|k| p[row][k] * d[k][col]).sum();
-            m.w32(cur_ptr + 4 * (4 * row + col) as u32, v.to_bits());
+            let a = cur_ptr + 4 * (4 * row + col) as u32;
+            let own = f32::from_bits(m.r32(a));
+            m.w32(a, (own + (v - own) * b).to_bits());
         }
     }
+}
+
+/// How far the skate is blended in (0 = the Chao's own walk, 1 = skating),
+/// the hub's rule (src/shadow-skate.js SkateCadence): in while it runs
+/// (the hub's skate speed band; here the game's own walk/run switch), out
+/// when it slows, over the hub's 0.42 s in and 0.28 s out (smoothstep).
+/// `step`: advance one frame (once per draw, at node 0).
+fn skate_blend(step: bool) -> f32 {
+    if step {
+        let target = if MOVING.get() && LAST_MOTION.get() == 119 { 1.0f32 } else { 0.0 };
+        let p = SKATE_PROGRESS.get();
+        let dt = if target > p { 1.0 / (0.42 * 60.0) } else { 1.0 / (0.28 * 60.0) };
+        SKATE_PROGRESS.set(p + (target - p).clamp(-dt, dt));
+    }
+    let p = SKATE_PROGRESS.get();
+    p * p * (3.0 - 2.0 * p)
+}
+
+thread_local! {
+    static SKATE_PROGRESS: Cell<f32> = const { Cell::new(0.0) };
 }
 
 thread_local! {
@@ -1574,8 +2173,95 @@ thread_local! {
     static RIDER_REST: std::cell::RefCell<Option<(u32, Vec<[[f32; 3]; 3]>)>> = const { std::cell::RefCell::new(None) };
 }
 
+/// Gear debugger try-on (only with the ?geartune=1 panel): each planned
+/// character item (shared/upgrade-catalog.json wearable models, PC model id n
+/// = GC table slot 2n+1) drawn on the Chao at a node origin at half size, for
+/// the panel to move into place ("Copy values" gives the numbers to commit).
+/// Sonic's items need SONICMDL/SONICTEX, loaded once into heap 1 here.
+/// (panel key, file, model slot, Chao node: 1 body, 16 head, 3/10 arms, 6/13 feet)
+const TRY_ON: [(&str, u8, u32, usize, [f32; 7]); 7] = [
+    ("sunglasses", b'K', 323, 16, [0.0, -0.5, -0.64, -180.0, -90.0, 0.0, 1.6]),  // KNUCKMDL 161, set in the tuner
+    ("necklace", b'K', 337, 1, [0.0, -0.16, 1.8, -155.0, 90.0, -155.0, 1.41]),   // KNUCKMDL 168, set in the tuner
+    ("sflame", b'T', 201, 16, TUNE_NONE),                                       // TERIOSMDL 100, on the head as a crown
+    ("lshoe0", b'S', 27, 6, TUNE_NONE),                                          // SONICMDL 13 (right)
+    ("lshoe1", b'S', 29, 13, TUNE_NONE),                                         // SONICMDL 14 (left)
+    ("ring", b'S', 51, 16, TUNE_NONE),                                           // SONICMDL 25 Flame Ring, on the head as a crown
+    ("bracelet", b'S', 53, 3, [0.58, -0.76, -0.12, 171.0, 88.0, 0.0, 1.46]),     // SONICMDL 26, set in the tuner
+];
+const TUNE_NONE: [f32; 7] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+/// The hub shoes' set size from the tuner (0.75 of the fit).
+const BOOT_TUNE: [f32; 7] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.75];
+
+fn try_on(c: &mut Cpu, m: &mut Mem) {
+    if debug_set("tryon").as_deref() != Some("1") {
+        return;
+    }
+    if SONIC_TEX.get().is_none() {
+        let heap_var = c.r[13].wrapping_sub(SY_HEAP_SDA);
+        let keep_heap = m.r32(heap_var);
+        m.w32(heap_var, GEAR_HEAP);
+        write_str(m, b"SONICTEX");
+        let tex = call(c, m, LOAD_TEX, &[STR]);
+        write_str(m, b"SONICMDL.PRS");
+        let mdl = load_models(c, m, STR);
+        SONIC_MODELS.set(LAST_LOAD.with_borrow(|l| l.clone()));
+        m.w32(heap_var, keep_heap);
+        eprintln!("chao-player try-on: Sonic's textures {tex:#x}, models {mdl:#x} ({} slots)", SONIC_MODELS.with_borrow(|s| s.len()));
+        SONIC_TEX.set(Some(tex));
+    }
+    let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+    let keep_m = mtx(m, cur_ptr);
+    let list = m.r32(c.r[13].wrapping_sub(0x7228)) + 0x20;
+    let keep_list = m.r32(list);
+    let regs = (c.r, c.f);
+    let lcap = LCAP.replace(false);
+    for &(key, file, slot, node, set) in &TRY_ON {
+        if slot == 0 || debug_off(key) {
+            continue;
+        }
+        let (obj, tex) = match file {
+            b'K' => (knux_obj(m, slot), KNUX_TEX.get()),
+            b'T' => (shadow_obj(m, slot), SHADOW_TEX.get()),
+            _ => (SONIC_MODELS.with_borrow(|s| s.get(&slot).copied()).unwrap_or(0), SONIC_TEX.get()),
+        };
+        let Some(at) = NODE_MATS.with_borrow(|n| n.get(&node).copied()) else { continue };
+        let (Some(tex), true) = (tex.filter(|&t| t != 0), (0x8000_0000..0x8C00_0000).contains(&obj)) else { continue };
+        let half: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if i == j { 0.5 } else { 0.0 }));
+        let place = mul34(&at, &half);
+        let place = mul34(&place, &gear_tune(key).unwrap_or_else(|| tune_matrix(&set)));
+        for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, place[r][q].to_bits()); } }
+        m.w32(list, tex);
+        call(c, m, 0x8011_DF44, &[obj]);
+    }
+    LCAP.set(lcap);
+    (c.r, c.f) = regs;
+    m.w32(list, keep_list);
+    for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, keep_m[r][q].to_bits()); } }
+}
+
+thread_local! {
+    static SONIC_TEX: Cell<Option<u32>> = const { Cell::new(None) };
+    static SONIC_MODELS: std::cell::RefCell<std::collections::BTreeMap<u32, u32>> = Default::default();
+    /// This draw's view-space matrices of the Chao nodes the try-on uses.
+    static NODE_MATS: std::cell::RefCell<std::collections::BTreeMap<usize, [[f32; 4]; 3]>> = Default::default();
+}
+
+/// Under the hub's shoes the Chao's own foot is not drawn, as the hub hides
+/// the foot meshes its footwear covers (src/scene.js attachOwnerGear): the
+/// foot node's matrix is collapsed to its origin after the shoe's mount
+/// was taken from it. Only the player's own Chao wears the shoes.
+fn hide_foot(m: &mut Mem, cur_ptr: u32) {
+    if HUB_SHOE.get().is_some_and(|o| o != 0) && !debug_off("shoes") && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
+        for r in 0..3 { for k in 0..3 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, 0); } }
+    }
+}
+
 /// Arm nodes 3/10's view-space matrices from this draw walk, for the gloves.
 fn record_hand(m: &Mem, i: usize, cur_ptr: u32) {
+    if matches!(i, 1 | 3 | 6 | 10 | 13 | 16) {
+        let cur = mtx(m, cur_ptr);
+        NODE_MATS.with_borrow_mut(|n| { n.insert(i, cur); });
+    }
     if i == 3 || i == 10 {
         let cur = mtx(m, cur_ptr);
         HANDS.with_borrow_mut(|h| h[usize::from(i == 10)] = Some(cur));
@@ -1708,7 +2394,7 @@ fn write_pose(m: &mut Mem, chao: u32) {
             *r = Some(rest);
         }
     });
-    pose_chao();
+    pose_chao(false);
     let seated = seat(m);
     let mut nodes = vec![];
     fn walk(m: &Mem, o: u32, out: &mut Vec<u32>) {
@@ -1764,7 +2450,7 @@ fn level_pose(m: &Mem, chao: u32) {
             *r = Some(rest);
         }
     });
-    pose_chao();
+    pose_chao(self_retarget(m));
     POSED_WORLD.set(false);
     // SA2_HEAD_LOG=a-b (debug): the posed head (node 16) and body (node 1)
     // up vectors and the rider's spine 2->34 each frame, to see head jitter.
@@ -1837,7 +2523,7 @@ fn seat(m: &Mem) -> Option<([[f32; 3]; 3], [f32; 3])> {
 }
 
 /// Retarget Sonic's skeleton (made model-space by his root) onto the Chao.
-fn pose_chao() {
+fn pose_chao(upright: bool) {
     let sonic: Vec<[[f32; 4]; 3]> = SKEL.with_borrow(|s| {
         if s.len() < 56 {
             return vec![];
@@ -1849,7 +2535,26 @@ fn pose_chao() {
     });
     let posed = CHAO_REST.with_borrow(|r| match (r, sonic.len()) {
         _ if OWN_MOTION.get() => vec![],
-        (Some(rest), 62) => rest.pose(&sonic, false, ARM_FWD.get()),
+        (Some(rest), 62) if upright && !std::env::var("SA2_CHAO_LEAN").is_ok_and(|v| v == "1") => rest.pose_upright(&sonic, ARM_FWD.get()),
+        (Some(rest), 62) => {
+            let mut p = rest.pose(&sonic, false, ARM_FWD.get());
+            // Chao World self mode: the body keeps the Chao's own upright
+            // tilt (Shadow's run lean laid it flat, face down, on the Chao);
+            // the whole pose turns about the body node back to its rest up.
+            // SA2_CHAO_LEAN=1 (debug): his lean as it is.
+            if false && upright && p.len() > 1 {
+                let rest_up = { let r = rest.worlds(&[])[1].0; [r[0][1], r[1][1], r[2][1]] };
+                let (br, bp) = p[1];
+                let up = [br[0][1], br[1][1], br[2][1]];
+                let fix = crate::chao_retarget::rot_between(up, rest_up);
+                for (r, t) in p.iter_mut() {
+                    *r = crate::skate::mul(&fix, r);
+                    let d = [t[0] - bp[0], t[1] - bp[1], t[2] - bp[2]];
+                    *t = std::array::from_fn(|i| bp[i] + (0..3).map(|k| fix[i][k] * d[k]).sum::<f32>());
+                }
+            }
+            p
+        }
         _ => vec![],
     });
     POSED.set(posed);
@@ -1878,6 +2583,40 @@ fn zero(m: &mut Mem, a: u32, n: u32) {
 
 fn display(c: &mut Cpu, m: &mut Mem, addr: u32) {
     if self_drive(m) {
+        // His display walked for his skeleton only (SKEL), drawing nothing
+        // and no gear (the Chao's draw carries it).
+        // Always in self mode: the hub's skate overlay (skate_node) reads his
+        // live pose, also when his whole skeleton is not copied on the Chao.
+        if !std::env::var("SA2_SELF_CAP").is_ok_and(|v| v == "0") {
+            // His effects (the jump's spin ball) are drawn, at the Chao's
+            // size: the view is scaled by BOARD_SCALE about the Chao's spot
+            // for the call (current and base matrix), and the captured
+            // skeleton is taken back to full size.
+            let Step::Live(chao) = STEP.get() else { return };
+            let cw = m.r32(chao + 0x34);
+            let p = [0x14, 0x18, 0x1C].map(|o| f32::from_bits(m.r32(cw + o)));
+            let s = BOARD_SCALE;
+            let t: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { if i == j { s } else { 0.0 } } else { (1.0 - s) * p[i] }));
+            let (cur_ptr, base_ptr) = (m.r32(NJ_CURRENT_MATRIX), m.r32(NJ_BASE_MATRIX));
+            let (cur, base) = (mtx(m, cur_ptr), mtx(m, base_ptr));
+            let put = |m: &mut Mem, a: u32, x: &[[f32; 4]; 3]| for r in 0..3 { for k in 0..4 { m.w32(a + 4 * (4 * r + k) as u32, x[r][k].to_bits()); } };
+            let (curs, bases) = (mul34(&cur, &t), mul34(&base, &t));
+            put(m, cur_ptr, &curs);
+            if base_ptr != cur_ptr {
+                put(m, base_ptr, &bases);
+            }
+            SELF_SCALE.set(Some((cur, curs)));
+            SELF_CAP.set(true);
+            LCAP.set(true);
+            original(c, m, addr);
+            LCAP.set(false);
+            SELF_CAP.set(false);
+            SELF_SCALE.set(None);
+            put(m, cur_ptr, &cur);
+            if base_ptr != cur_ptr {
+                put(m, base_ptr, &base);
+            }
+        }
         return;
     }
     // SA2_RIDER_DISP_OFF=1 (test): skip the hidden rider's display in Chao
@@ -2056,12 +2795,71 @@ fn staff_goto(c: &mut Cpu, m: &mut Mem, task: u32, area: u32) {
 }
 
 thread_local! {
+    static LEAVE_DONE: Cell<bool> = const { Cell::new(false) };
     static GOTO_SEQ: Cell<u32> = const { Cell::new(0) };
     /// The Chao task seen after a go-to's area change, and for how many frames.
     static GOTO_HELD: Cell<(u32, u32)> = const { Cell::new((0, 0)) };
     /// The go-to under way: (area, spot, area change asked).
     static GOTO: Cell<Option<(u32, Option<[f32; 3]>, bool)>> = const { Cell::new(None) };
     static TP_DONE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// The character's jump spin flash, its own task (main.dol display 0x8008B0CC:
+/// work at task +0x40: +1 player, +4 position, +0x1C uniform scale, drawn
+/// with njTranslateEx/njScale). Self mode: shrunk to the Chao's size
+/// (BOARD_SCALE) about the Chao's spot, as the character's own display is.
+const SPIN_FLASH_DISP: u32 = 0x8008_B0CC;
+fn spin_flash(c: &mut Cpu, m: &mut Mem) {
+    let w = m.r32(c.r[3] + 0x40);
+    let Step::Live(chao) = STEP.get() else { return original(c, m, SPIN_FLASH_DISP) };
+    let cw = m.r32(chao + 0x34);
+    if !self_drive(m) || w == 0 || cw == 0 || m.r8(w + 1) != 0 {
+        return original(c, m, SPIN_FLASH_DISP);
+    }
+    let keep: Vec<u32> = (0..4).map(|i| m.r32(w + 4 + 4 * i)).collect();
+    let (s, keep_scale) = (BOARD_SCALE, m.r32(w + 0x1C));
+    for i in 0..3u32 {
+        let p = f32::from_bits(m.r32(cw + 0x14 + 4 * i));
+        let v = f32::from_bits(keep[i as usize]);
+        m.w32(w + 4 + 4 * i, (p + (v - p) * s).to_bits());
+    }
+    m.w32(w + 0x1C, (f32::from_bits(keep_scale) * s).to_bits());
+    original(c, m, SPIN_FLASH_DISP);
+    for i in 0..3u32 {
+        m.w32(w + 4 + 4 * i, keep[i as usize]);
+    }
+    m.w32(w + 0x1C, keep_scale);
+}
+
+/// Moving (or within 30 frames of it): Shadow's skeleton poses the Chao.
+/// Standing still the Chao keeps its own stand (his idle, retargeted,
+/// bent it over with its hands on the floor; test copy run r56).
+fn self_in_motion() -> bool {
+    sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed).saturating_sub(MOVED_AT.get()) < 30
+}
+
+thread_local! {
+    static MOVED_AT: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Self mode with the Chao posed from the hidden character's skeleton
+/// (default; SA2_CHAO_RETARGET=0: the Chao's own motions).
+fn self_retarget(m: &Mem) -> bool {
+    // Off by default: the retargeted body lay flat and upside down in live
+    // play (build 16 and test copy run r107). The Chao keeps its own rig and
+    // motions with the hub's skate overlay (skate.rs) while it wears the
+    // shoes, as the hub does. SA2_CHAO_RETARGET=1 (debug): his skeleton.
+    // Off by default: the hub's way is the Chao's own rig and motions at its
+    // own scale with the skate overlay (skate.rs) from his live pose.
+    // SA2_CHAO_RETARGET=1 (debug): his limb directions copied on the Chao.
+    self_drive(m) && std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")
+}
+
+thread_local! {
+    /// The character's display is walked only for SKEL (self mode).
+    static SELF_CAP: Cell<bool> = const { Cell::new(false) };
+    /// The view before and after the self-mode scale (to undo it on the skeleton).
+    static SELF_SCALE: Cell<Option<([[f32; 4]; 3], [[f32; 4]; 3])>> = const { Cell::new(None) };
 }
 
 fn chao_world(m: &Mem) -> bool {
@@ -2150,6 +2948,9 @@ fn drop_stage_loads() {
     KNUX_TEX.set(None);
     EXTRA_MODELS.with_borrow_mut(|e| e.clear());
     KNUX_MODELS.with_borrow_mut(|e| e.clear());
+    SHADOW_MODELS.with_borrow_mut(|e| e.clear());
+    BAKED_BOOT.set(None);
+    HUB_SHOE.set(None);
     GLOVE_FIT.set(None);
     SHADOW_MOVES.set(false);
     BOARD.set(None);
@@ -2274,6 +3075,12 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         IN_PMOVE.set(hidden);
         original(c, m, addr);
         IN_PMOVE.set(false);
+        // SA2_YAW_LOG=1 (debug): the visible character's own yaw, to compare.
+        let own = m.r32(task + 0x34);
+        if own != 0 && chao_world(m) && std::env::var("SA2_YAW_LOG").is_ok_and(|v| v == "1") {
+            let f = |a: u32| f32::from_bits(m.r32(a));
+            eprintln!("yaw: frame {} char {:#06x} native pos ({:.2},{:.2})", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r32(own + 0x0C) & 0xFFFF, f(own + 0x14), f(own + 0x1C));
+        }
     } else if let (true, Step::Live(chao)) = (pmove, STEP.get()) {
         player_move(c, m, addr, task, chao);
     }
@@ -2294,6 +3101,14 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     staff_goto(c, m, task, u32::from(area));
     crate::card_box::frame(c, m);
     lobby_exit_hook(c, m);
+    // SA2_LEAVE_AT=frame (debug): leave Chao World for the Stage Select once
+    // at that frame, as the lobby exit does (to test the Stage Select headless).
+    if chao_world(m) && module_linked(m, 60) && std::env::var("SA2_LEAVE_AT").ok().and_then(|v| v.trim().parse::<u64>().ok())
+        .is_some_and(|f| sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= f) && !LEAVE_DONE.replace(true) {
+        eprintln!("chao-player: debug leave -> the game's Stage Select");
+        crate::start_stage::to_stage_select();
+        call(c, m, rt::sec(m, 60, 1) + LEAVE_CHAO_WORLD, &[]);
+    }
     // SA2_CHAO_AREA_AT=frame,area (debug): change Chao World area once at that
     // frame, with ChaoMain's own area change (.text 0x27E00, as start_stage
     // uses it; 7 = the lobby), to test the gear across a second change.
@@ -2322,7 +3137,8 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // loading outlived the area step on arrival, its blocks were handed
         // out again, and its FreeTask on leaving crashed the task loop
         // ("no function at 0x10000004" right after "remote ... offline").
-        let kept = REMOTE.with_borrow(|r| r.values().filter(|e| e.task != 0).count());
+        // The card box's portrait Chao (extra_chao) lives there too.
+        let kept = REMOTE.with_borrow(|r| r.values().filter(|e| e.task != 0).count()) + EXTRA_TASKS.with_borrow(|x| x.len());
         if kept == 0 {
             REMOTE_ALLOC.with_borrow_mut(|r| if let Some((reg, sizes)) = r.as_mut() {
                 *reg = crate::chao_cache::Region::new(REMOTE_HEAP_START, REMOTE_HEAP_END);
@@ -2363,6 +3179,9 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         let lp = LAST_RIDER_POS.replace(pos);
         let d2: f32 = (0..3).map(|i| { let d = f32::from_bits(pos[i]) - f32::from_bits(lp[i]); d * d }).sum();
         MOVING.set(d2 > 0.01 * 0.01);
+        if MOVING.get() {
+            MOVED_AT.set(sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed));
+        }
         // Chao World: the hub's gait (mmo-play src/chao-locomotion.js) with the
         // game's own motions: AL_motion_table 0 alm_tati (stand), 578
         // alm_aruki_ncz (walk), 119 alm_run (run); common-motions.ini.
@@ -2412,6 +3231,14 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             m.w32(heap_var, GEAR_HEAP);
             let tex = call(c, m, LOAD_TEX, &[SHADOW_TEX_NAME]);
             let mdl = load_models(c, m, SHADOW_MDL_NAME);
+            SHADOW_MODELS.set(LAST_LOAD.with_borrow(|l| l.clone()));
+            // Every TERIOSMDL model by slot with its node and vertex counts (to find his shoe models).
+            // (The character's own file is already in the game's table: list that too.)
+            let all: Vec<String> = (0..0x428u32).filter_map(|k| { let o = shadow_obj(m, k); (0x8000_0000..0x8C00_0000).contains(&o).then_some((k, o)) }).map(|(k, o)| {
+                let r = crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]);
+                format!("{k}:{}n/{}v", r.nodes.len(), r.verts.iter().map(Vec::len).sum::<usize>())
+            }).collect();
+            eprintln!("chao-player: model slots {}", all.join(" "));
             eprintln!("chao-player: Shadow's textures {tex:#x} ({} entries), models {mdl:#x}", if tex != 0 { m.r32(tex + 4) } else { 0 });
             SHADOW_TEX.set(Some(tex).filter(|&t| t != 0));
             if tex == 0 {
@@ -2425,7 +3252,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             // Node and vertex counts name each model (Shadow's boot: 2 nodes, 174 vertices).
             let size = |o: u32| if (0x8000_0000..0x8C00_0000).contains(&o) { let r = crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]); (r.nodes.len(), r.verts.iter().map(Vec::len).sum::<usize>()) } else { (0, 0) };
             eprintln!("chao-player: boot slots 161/163 -> {:#x} {:?} / {:#x} {:?} (table {:#x}/{:#x}), glove slots 329/331 -> {:#x} {:?} / {:#x} {:?}, Knuckles body 285 -> {:#x} {:?}",
-                model_obj(m, 161), size(model_obj(m, 161)), model_obj(m, 163), size(model_obj(m, 163)), m.r32(MODELS + 4 * 161), m.r32(MODELS + 4 * 163),
+                shadow_obj(m, 161), size(shadow_obj(m, 161)), shadow_obj(m, 163), size(shadow_obj(m, 163)), m.r32(MODELS + 4 * 161), m.r32(MODELS + 4 * 163),
                 knux_obj(m, 329), size(knux_obj(m, 329)), knux_obj(m, 331), size(knux_obj(m, 331)), knux_obj(m, KNUX_BODY_SLOT), size(knux_obj(m, KNUX_BODY_SLOT)));
             m.w32(heap_var, keep_heap);
             eprintln!("chao-player: Knuckles's textures {ktex:#x}, models {kmdl:#x} (heap {GEAR_HEAP}, was {keep_heap})");
@@ -2821,6 +3648,7 @@ fn destroy_task(c: &mut Cpu, m: &mut Mem) {
         }
     }
     REMOTE.with_borrow_mut(|r| r.values_mut().filter(|e| e.task == t).for_each(|e| e.task = 0));
+    EXTRA_TASKS.with_borrow_mut(|x| x.remove(&t));
     let exec = m.r32(t + TASK_EXEC);
     if !linked_copies(m, &[BASE]).is_empty() && (BASE..BSS).contains(&exec) {
         BASE_TASK_GONE.set(true);
@@ -2950,6 +3778,20 @@ fn create_at(c: &mut Cpu, m: &mut Mem, pos: [u32; 3], param: u32) -> Step {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shoe_strips_keeps_only_strips_inside_the_set() {
+        // material (type 16, 2 shorts), UV strip chunk (type 65): strip A
+        // over 1,2,3 (kept), strip B over 1,9,3 (dropped), end.
+        let list: Vec<u16> = vec![0x0010, 2, 0xAAAA, 0xBBBB, 0x0041, 21, 2,
+            3, 1, 0, 0, 2, 0, 0, 3, 0, 0,
+            3, 1, 0, 0, 9, 0, 0, 3, 0, 0, 0x00FF];
+        let r16 = |a: u32| list[(a / 2) as usize];
+        let keep: std::collections::BTreeSet<u32> = [1, 2, 3].into();
+        let (out, kept, dropped) = shoe_strips(&r16, 0, &keep);
+        assert_eq!((kept, dropped), (1, 1));
+        assert_eq!(out, vec![0x0010, 2, 0xAAAA, 0xBBBB, 0x0041, 11, 1, 3, 1, 0, 0, 2, 0, 0, 3, 0, 0, 0x00FF]);
+    }
+
     use super::*;
 
     #[test]
@@ -3491,7 +4333,18 @@ pub(crate) fn extra_chao(c: &mut Cpu, m: &mut Mem, info: u32, pos: u32) -> u32 {
     m.w32(cur, heap);
     let t = call(c, m, rt::sec(m, 60, 1) + 0x3148C, &[info, 1, 0, pos, 0]);
     m.w32(cur, old);
+    if t != 0 {
+        EXTRA_TASKS.with_borrow_mut(|x| x.insert(t));
+    }
     t
+}
+
+thread_local! {
+    /// Live extra_chao tasks: their blocks are in the remote heap, which must
+    /// not start empty again under them (a reset under the card box's
+    /// portrait Chao handed its blocks to the next remote Chao, and the task
+    /// loop then ran a garbage task: "no function at 0x10000004").
+    static EXTRA_TASKS: std::cell::RefCell<std::collections::BTreeSet<u32>> = Default::default();
 }
 
 /// The player's Chao's record (0x800 bytes), as [`export_record`] sends it.
@@ -3546,7 +4399,10 @@ const AL_IS_ON_SCREEN3: u32 = 0x1_A590;
 
 fn on_screen3(c: &mut Cpu, m: &mut Mem) {
     let t = c.r[3];
-    let ours = matches!(STEP.get(), Step::Live(ch) if ch == t) || REMOTE.with_borrow(|r| r.values().any(|e| e.task != 0 && e.task == t));
+    let ours = matches!(STEP.get(), Step::Live(ch) if ch == t) || REMOTE.with_borrow(|r| r.values().any(|e| e.task != 0 && e.task == t))
+        // The card box's portrait Chao: on a wide canvas the box sits left of
+        // the game's 640 (card_box left_edge), where this test culled it.
+        || EXTRA_TASKS.with_borrow(|x| x.contains(&t));
     let a = rt::sec(m, 60, 1) + AL_IS_ON_SCREEN3;
     // The original still runs: it also stores the camera distance the draw uses.
     rel_original(c, m, a, on_screen3);

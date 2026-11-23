@@ -272,6 +272,8 @@ function joinRoom(token, zone) {
       // The picker's list once the signed-in Chao is known; asked again (every 10 s) until it has a record.
       if (self && !cardIds.size && Date.now() - cardAt > 10000) { cardAt = Date.now(); cardSelf = self; cardChao(token); }
       if (self) firstSheet(self, token);
+      // Dev (admin) accounts always get the dev menu (gear tuner, debug toggles, info).
+      if (self?.admin && !tunerShown) { tunerShown = true; gearTuner(); }
       showCard(self); overlay?.snapshot(m); othersIn(m, token); tagNames(m); breedSnapshot(m);
     }
     if (m.type === 'event') { overlay?.event(m); breedEvent(m); queueEvent(m); if (m.kind === 'staff-goto') staffGoto(m); }
@@ -709,10 +711,19 @@ function showCard(player) {
 // player's Chao (sa2-boot chao_player.rs reads /mmo/gear-tune: one line per
 // piece "name dx dy dz rx ry rz scale", offsets in the piece's own frame,
 // degrees); "Copy values" puts the lines on the clipboard.
+let tunerShown = false;
 function gearTuner() {
-  const pieces = { fist0: 'Fist 1', fist1: 'Fist 2', boot0: 'Shoe 1', boot1: 'Shoe 2' };
+  const pieces = { fist0: 'Fist 1', fist1: 'Fist 2', boot0: 'Shoe 1', boot1: 'Shoe 2', sunglasses: 'Sunglasses', necklace: 'Air Necklace', sflame: 'Flame Ring (Shadow)', lshoe0: 'Light Shoe 1', lshoe1: 'Light Shoe 2', ring: 'Flame Ring (Sonic)', bracelet: 'Bounce Bracelet' };
   const keys = [['dx', -3, 3, 0.02], ['dy', -3, 3, 0.02], ['dz', -3, 3, 0.02], ['rx', -180, 180, 1], ['ry', -180, 180, 1], ['rz', -180, 180, 1], ['scale', 0.2, 3, 0.01]];
   const vals = Object.fromEntries(Object.keys(pieces).map((p) => [p, { dx: 0, dy: 0, dz: 0, rx: 0, ry: 0, rz: 0, scale: 1 }]));
+  // The fists' set place (sa2-boot chao_player.rs FIST_SET): the panel starts from it.
+  Object.assign(vals.fist0, { dx: 0.3, dy: 1.26, dz: -2.2, rx: -60, ry: 10, rz: 0, scale: 1.35 });
+  Object.assign(vals.fist1, { dx: 0.3, dy: 1.26, dz: 1.8, rx: 60, ry: -10, rz: 0, scale: 1.35 });
+  // The other set places (chao_player.rs TRY_ON, BOOT_TUNE).
+  vals.boot0.scale = vals.boot1.scale = 0.75;
+  Object.assign(vals.sunglasses, { dx: 0, dy: -0.5, dz: -0.64, rx: -180, ry: -90, rz: 0, scale: 1.6 });
+  Object.assign(vals.necklace, { dx: 0, dy: -0.16, dz: 1.8, rx: -155, ry: 90, rz: -155, scale: 1.41 });
+  Object.assign(vals.bracelet, { dx: 0.58, dy: -0.76, dz: -0.12, rx: 171, ry: 88, rz: 0, scale: 1.46 });
   const text = () => Object.entries(vals).map(([p, v]) => [p, ...keys.map(([k]) => v[k])].join(' ')).join('\n') + '\n';
   const send = () => {
     const b = new TextEncoder().encode(text() + setText()).subarray(0, MMO.GEAR_MAX);
@@ -739,15 +750,16 @@ function gearTuner() {
   });
   pick.onchange = () => rows.forEach((f) => f());
   // Debug toggles and the sound mute list: "set key value" lines in the same file.
-  const sets = { fists: '1', shoes: '1', jets: '1', selog: '0', mute: '', tp: '' };
+  const sets = { fists: '1', shoes: '1', jets: '1', tryon: '1', sunglasses: '1', necklace: '1', sflame: '1', lshoe0: '1', lshoe1: '1', ring: '1', bracelet: '1', selog: '0', mute: '', tp: '' };
   const setText = () => Object.entries(sets).map(([k, v]) => `set ${k} ${v}`).join('\n') + '\n';
   const fx = document.createElement('div');
   fx.style.cssText = 'margin-top:6px;display:flex;flex-wrap:wrap;gap:6px';
-  for (const k of ['fists', 'shoes', 'jets', 'selog']) {
+  // One switch per try-on piece too (chao_player.rs TRY_ON skips a piece set to 0).
+  for (const k of ['fists', 'shoes', 'jets', 'tryon', 'sunglasses', 'necklace', 'sflame', 'lshoe0', 'lshoe1', 'ring', 'bracelet', 'selog']) {
     const cb = Object.assign(document.createElement('input'), { type: 'checkbox', checked: sets[k] === '1' });
     cb.onchange = () => { sets[k] = cb.checked ? '1' : '0'; send(); };
     const l = document.createElement('label');
-    l.append(cb, k === 'selog' ? 'sound log' : k);
+    l.append(cb, k === 'selog' ? 'sound log' : pieces[k] || k);
     fx.append(l);
   }
   const mute = Object.assign(document.createElement('input'), { placeholder: 'mute ids, e.g. 2003,601c', style: 'width:100%;margin-top:4px' });
@@ -864,7 +876,10 @@ async function start() {
   // ?stage=N from the Chao MMO's Stage Select: start that stage from boot (sa2_boot::start_stage).
   if (/^\d+$/.test(q.get('stage') || '')) e.SA2_START_STAGE = q.get('stage');
   // ?geartune=1 (debug): the gear tuner panel (gearTuner) and its file.
-  if (q.get('geartune') === '1') { e.SA2_GEAR_TUNE = '/mmo/gear-tune'; e.SA2_INFO_OUT = '/mmo/info-out'; gearTuner(); }
+  // The game reads its files always (empty until a panel writes them): a
+  // dev account's panel opens once the room says it is an admin.
+  e.SA2_GEAR_TUNE = '/mmo/gear-tune'; e.SA2_INFO_OUT = '/mmo/info-out';
+  if (q.get('geartune') === '1' && !tunerShown) { tunerShown = true; gearTuner(); }
   if (/^\d+$/.test(q.get('area') || '')) e.SA2_CHAO_AREA = q.get('area');
   // ?stage=60&combat=1: Big Foot's arena as the combat area (sa2_boot::combat).
   if (q.get('combat') === '1') e.SA2_COMBAT = '1';

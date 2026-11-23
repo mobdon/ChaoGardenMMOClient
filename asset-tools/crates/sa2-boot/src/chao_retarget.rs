@@ -136,6 +136,26 @@ impl ChaoRest {
         self.worlds(&extra)
     }
 
+    /// The Chao's body and head stay as its own rest (upright); only its arms
+    /// and legs take the rider's limb directions, measured in the rider's own
+    /// body frame (so his run lean does not tip the Chao, his stride and arm
+    /// swing still show). For Chao World, where the Chao is the player.
+    pub fn pose_upright(&self, sonic: &[[[f32; 4]; 3]], arm_fwd: f32) -> Vec<Xf> {
+        let p = |i: usize| pos(&sonic[i]);
+        let body = body_rot(sonic);
+        let mut extra = vec![None; self.nodes.len()];
+        let w1 = self.worlds(&extra);
+        for &(piv, mesh, a, b) in &LIMBS {
+            let u = sub(self.centroid(&w1, mesh), w1[piv].1);
+            let mut v = tmv(&body, unit(to_chao(sub(p(b), p(a)))));
+            if ARMS.contains(&mesh) {
+                v[2] += arm_fwd;
+            }
+            extra[piv] = Some(rot_between(u, unit(v)));
+        }
+        self.worlds(&extra)
+    }
+
     /// board.py `board_tris`: re-seats the posed Chao `w` on the board.
     /// `board`: the board's triangles in Chao space (to_chao of Sonic's
     /// board), `scale`: Chao height / Sonic height. Returns the board

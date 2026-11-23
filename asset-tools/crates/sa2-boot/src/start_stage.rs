@@ -68,6 +68,8 @@ const PRE_STAGE: u32 = 0x9_72E8;
 const SAVE_SLOT: u32 = 0x2C30;
 const AL_GENE_CREATE: u32 = 0x1_218C;
 const CREATE_EGG: u32 = 0x8F20;
+/// The egg's frames left before it starts to hatch, in its work at task +0x40.
+const EGG_WAIT: u32 = 0x14;
 const GENE_SIZE: u32 = 0xC0;
 /// AL_GENE (al_chao_info.h, 0xA4 bytes; CHAO_PARAM_GC +0x438..+0x4DC).
 const GENE_BYTES: usize = 0xA4;
@@ -147,6 +149,8 @@ static SHOWN: Global<Option<u32>> = global!(None);
 /// SA2_TP_ARRIVE=1: enter Chao World in the Neutral Garden, then go to the lobby
 /// the game's own way, so it arrives as from a garden teleporter.
 static TP_ARRIVE: Global<bool> = global!(false);
+/// The Chao World area the player was last in (0: none, or already back in the lobby).
+static CAME_FROM: Global<u32> = global!(0);
 /// SA2_HATCH_EGG=1: lay a new player's egg where they arrive in the lobby.
 static HATCH: Global<bool> = global!(false);
 /// The pending start has happened; the title after it means the game came back.
@@ -163,6 +167,8 @@ static TO_STAGE_SELECT: Global<bool> = global!(false);
 const ADVERTISE: u32 = 91;
 const MENU_SCREEN: u32 = 0x6_2054;
 const SCREEN_STAGE_SELECT: u32 = 3;
+/// advertiseD .text fn_91_2BB38: the Stage Select's setup, called before screen 3.
+const STAGE_SELECT_SETUP: u32 = 0x2BB38;
 /// Game state byte advertiseD reads to open its menu instead of the title.
 const GO_TO_MENU: u32 = 0x5B;
 static MENU_SEEN: Global<(u32, u32, u32)> = global!((u32::MAX, u32::MAX, u32::MAX));
@@ -180,7 +186,7 @@ pub(crate) fn to_stage_select_pending() -> bool {
 /// screen dispatcher for the Stage Select, and log its top state and screen.
 /// Unverified: that the request field is honoured from the title state; the
 /// log shows which top state the menu is in when the request lands.
-fn stage_select_frame(m: &mut Mem) {
+fn stage_select_frame(c: &mut Cpu, m: &mut Mem) {
     let Some(bss) = module_section(m, ADVERTISE, 6) else { return };
     let now = (m.r32(bss), m.r32(bss + MENU_SCREEN), m.r32(bss + MENU_SCREEN + 4));
     if MENU_SEEN.replace(now) != now {
@@ -191,10 +197,16 @@ fn stage_select_frame(m: &mut Mem) {
     // fn_91_30A0C leads to). Set the current screen instead, once, while the
     // screen struct is fresh from that init, so the Stage Select's exec
     // (fn_91_2BC44) starts from its own first step.
-    // Unverified: that the Stage Select needs nothing from screen 7 first.
+    // Both of the menu's own ways to screen 3 (advertiseD .text 0x27448 and
+    // 0x2C2EC) first call fn_91_2BB38, the Stage Select's setup: skipped, its
+    // pictures drew as grey noise (headless, with and without the gear).
     if now.1 == SCREEN_STAGE_SELECT {
         TO_STAGE_SELECT.set(false);
-    } else {
+    } else if let Some(text) = module_section(m, ADVERTISE, 1) {
+        // SA2_SS_SETUP=0 (debug): without the setup call, as before.
+        if !std::env::var("SA2_SS_SETUP").is_ok_and(|v| v == "0") {
+            guest_call(c, m, text + STAGE_SELECT_SETUP, &[]);
+        }
         m.w32(bss + MENU_SCREEN, SCREEN_STAGE_SELECT);
         m.w32(bss + MENU_SCREEN + 4, 0);
     }
@@ -321,7 +333,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         crate::tiny_transporter::frame(c, m);
     }
     if TO_STAGE_SELECT.get() {
-        stage_select_frame(m);
+        stage_select_frame(c, m);
     }
     if mode == MD_LEFT_STAGE && STARTED.get() && TO_STAGE_SELECT.get() {
         // The game's own way on from here is its title and menus. advertiseD's
@@ -375,12 +387,30 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         if HATCH.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 && player_placed(m) {
             HATCH.set(false);
             // Only a new player's egg: an egg an existing player picked is not their own Chao.
-            EGG_SLOT.set(lay_egg_with(c, m, text, None));
+            EGG_SLOT.set(lay_egg_with(c, m, text, None, true));
         }
         // Eggs the player picked and named on the page hatch here too.
         if !TP_ARRIVE.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
             for gene in picked_eggs() {
-                lay_egg_with(c, m, text, gene.as_ref());
+                lay_egg_with(c, m, text, gene.as_ref(), false);
+            }
+        }
+        // Back to the lobby from an area: the lobby places the player by its
+        // previous stage (ChaoMain .text 0x27988). A return that passes
+        // through area 13 (0x27DA0, from a garden) leaves 13 there, and the
+        // lobby then uses its default spot (the centre) instead of that
+        // area's door: the area left is put back until the player stands in
+        // the lobby. SA2_DOOR_RETURN=0 (debug): off.
+        if now != LOBBY && now != 13 && (1..=LAST_AREA).contains(&now) {
+            CAME_FROM.set(now);
+        } else if CAME_FROM.get() != 0 && !TP_ARRIVE.get() && !std::env::var("SA2_DOOR_RETURN").is_ok_and(|v| v == "0") {
+            if now == LOBBY && shown == LOBBY && m.r32(PLAYERTWP) != 0 {
+                CAME_FROM.set(0);
+            } else if let Some(bss) = chaomain_section(m, 5) {
+                if m.r32(bss + PRE_STAGE) != CAME_FROM.get() {
+                    eprintln!("start-stage: lobby return from area {} (previous stage read {})", CAME_FROM.get(), m.r32(bss + PRE_STAGE));
+                    m.w32(bss + PRE_STAGE, CAME_FROM.get());
+                }
             }
         }
         if now != shown {
@@ -390,7 +420,8 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             LEAVING.set([0; 3]);
             STANDING_TASK.set(0);
         }
-        if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
+        // As the egg: ENTRY is the arrival point only once the area has placed the player (mob 2026-11-23).
+        if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 && player_placed(m) {
             RESIDENTS_OUT.set(true);
             let at = m.r32(PLAYERTWP) + 0x14;
             ENTRY.set([0, 4, 8].map(|o| f32::from_bits(m.r32(at + o))));
@@ -467,7 +498,7 @@ pub(crate) fn go_lobby() {
 /// The game's own egg at the player's feet, with guest scratch for the gene
 /// and position on a lowered stack (as the native caller keeps them).
 /// Returns the egg's save slot (0 = none was free).
-fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8>>) -> u32 {
+fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8>>, hatch_now: bool) -> u32 {
     let slot = guest_call(c, m, text + SAVE_SLOT, &[]);
     if slot == 0 {
         eprintln!("start-stage: no free Chao save slot; no egg");
@@ -488,8 +519,18 @@ fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8
             }
         }
     }
-    guest_call(c, m, text + CREATE_EGG, &[gene, slot, 0, pos, 3]);
+    let egg = guest_call(c, m, text + CREATE_EGG, &[gene, slot, 0, pos, 3]);
     c.r[1] = sp;
+    // MMO glue: a new player's own egg (`hatch_now`) hatches on arrival; other eggs keep the game's wait. CreateEgg (0x9168) sets the wait at
+    // the egg's work (task +0x40) +0x14 to (100 + a random part) * 60 frames;
+    // AL_EggStop (0xA728) counts it down and, once it is below zero, sets the
+    // egg's state to 3. Read from the disassembly. Inferred, unverified until a
+    // run: that state 3 (AL_EggJump by the exec's call order) leads to the
+    // hatch (CreateChaoFromEgg is called from AL_EggCrash, 0x9914).
+    if hatch_now && egg != 0 {
+        m.w32(m.r32(egg + 0x40) + EGG_WAIT, 0);
+        eprintln!("tutorial: egg task {egg:#x}, its wait set to 0");
+    }
     eprintln!("tutorial: egg laid, save slot {slot:#x}");
     // The tutorial runs only with SA2_TUTORIAL=1: a start with the egg crashed the lobby on arrival.
     if std::env::var("SA2_TUTORIAL").is_ok_and(|v| v.trim() == "1") {
