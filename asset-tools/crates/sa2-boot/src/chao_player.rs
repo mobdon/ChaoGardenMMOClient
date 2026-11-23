@@ -1503,6 +1503,56 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
     for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, keep_m[r][q].to_bits()); } }
 }
 
+/// A character's yaw (BAMS; it faces (cos, sin) in x, z) as the Chao yaw
+/// that faces the same way (the Chao faces (sin, cos)).
+pub(crate) fn chao_yaw(player_yaw: u32) -> u32 {
+    0x4000u32.wrapping_sub(player_yaw) & 0xFFFF
+}
+
+/// Debug (SA2_TEST_CAM): a view matrix (Ninja: x right, y up, looking down
+/// -z) at `eye` looking at `at`.
+pub(crate) fn look_at(eye: [f32; 3], at: [f32; 3]) -> [[f32; 4]; 3] {
+    let n = |v: [f32; 3]| { let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-6); [v[0] / l, v[1] / l, v[2] / l] };
+    let cross = |a: [f32; 3], b: [f32; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    let f = n([at[0] - eye[0], at[1] - eye[1], at[2] - eye[2]]);
+    let r = n(cross(f, [0.0, 1.0, 0.0]));
+    let u = cross(r, f);
+    let rows = [r, u, [-f[0], -f[1], -f[2]]];
+    std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { rows[i][j] } else { -(rows[i][0] * eye[0] + rows[i][1] * eye[1] + rows[i][2] * eye[2]) }))
+}
+
+const NJ_SET_CAMERA: u32 = 0x8011_242C;
+
+/// SA2_TEST_CAM=front|side|rear[,distance] (debug, test only, no game data):
+/// after the game sets its camera (njSetCamera 0x8011242C), the view matrix
+/// is replaced by a look-at on the player's Chao from a fixed place by the
+/// character's heading: front = ahead of it looking back, side = to its
+/// right, rear = behind. The game's own camera work is untouched, so the
+/// stick still steers by the game camera.
+/// unverified: that every draw reads the view from _nj_base_matrix after
+/// njSetCamera (some may cull by the game camera's own place).
+fn test_cam(c: &mut Cpu, m: &mut Mem) {
+    original(c, m, NJ_SET_CAMERA);
+    let Ok(v) = std::env::var("SA2_TEST_CAM") else { return };
+    let Step::Live(chao) = STEP.get() else { return };
+    let cw = m.r32(chao + 0x34);
+    if cw == 0 || !self_drive(m) {
+        return;
+    }
+    let (side, dist) = v.split_once(',').map_or((v.as_str(), 9.0), |(a, d)| (a, d.trim().parse().unwrap_or(9.0)));
+    let f = |a: u32| f32::from_bits(m.r32(a));
+    let yaw = (m.r32(cw + 0x0C) & 0xFFFF) as f32 * std::f32::consts::TAU / 65536.0;
+    let fwd = if PMOVE_CHAO.get() == chao { [yaw.cos(), 0.0, yaw.sin()] } else { [yaw.sin(), 0.0, yaw.cos()] };
+    let right = [-fwd[2], 0.0, fwd[0]];
+    let d = match side { "front" => fwd, "side" => right, _ => [-fwd[0], 0.0, -fwd[2]] };
+    let at = [f(cw + 0x14), f(cw + 0x18) + 3.0, f(cw + 0x1C)];
+    let view = look_at([at[0] + d[0] * dist, at[1] + 0.5, at[2] + d[2] * dist], at);
+    let (base, cur) = (m.r32(NJ_BASE_MATRIX), m.r32(NJ_CURRENT_MATRIX));
+    for a in [base, cur] {
+        for r in 0..3 { for k in 0..4 { m.w32(a + 4 * (4 * r + k) as u32, view[r][k].to_bits()); } }
+    }
+}
+
 /// Place the Chao on the rider right before it draws (after its own exec).
 fn chao_display(c: &mut Cpu, m: &mut Mem) {
     // The player's own Chao in self mode is drawn upright: the character's
@@ -1513,19 +1563,39 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
     let cw = m.r32(task + 0x34);
     let own = matches!(STEP.get(), Step::Live(ch) if ch == task) && cw != 0 && self_drive(m) && !std::env::var("SA2_CHAO_TILT").is_ok_and(|v| v == "1");
     let keep = (m.r32(cw.wrapping_add(0x08)), m.r32(cw.wrapping_add(0x10)));
+    // The character's exec leaves its own yaw in the shared task work, and
+    // the two do not mean the same: the character goes along (cos, sin) of
+    // it (test copy run clip-B2: yaw 0xA01F while moving along (-1, -1)),
+    // the Chao is drawn facing (sin, cos) (AL_ForwardSpd). Copied as it was,
+    // the Chao faced his way only on one diagonal and was mirrored
+    // elsewhere (up to 180 degrees off). Drawn with its own meaning of the
+    // same heading; the task work keeps his value for his exec.
+    let keep_yaw = m.r32(cw.wrapping_add(0x0C));
+    let turn = own && PMOVE_CHAO.get() == task && player_move_on() && !std::env::var("SA2_CHAO_YAW_RAW").is_ok_and(|v| v == "1");
     if own {
         m.w32(cw + 0x08, 0);
         m.w32(cw + 0x10, 0);
+    }
+    if turn {
+        m.w32(cw + 0x0C, chao_yaw(keep_yaw));
     }
     chao_display_inner(c, m);
     if own {
         m.w32(cw + 0x08, keep.0);
         m.w32(cw + 0x10, keep.1);
     }
+    if turn {
+        m.w32(cw + 0x0C, keep_yaw);
+    }
 }
 
 fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
     if remote_offscreen(m, c.r[3]) {
+        return;
+    }
+    // SA2_HIDE_CHAO=1 (test only): the player's own Chao and its gear are not
+    // drawn, so the hidden character (SA2_SHOW_SONIC) can be seen alone.
+    if matches!(STEP.get(), Step::Live(ch) if ch == c.r[3]) && std::env::var("SA2_HIDE_CHAO").is_ok_and(|v| v == "1") {
         return;
     }
     // The walker's pilot (own_pilot) draws the player's Chao at the seat:
@@ -1766,6 +1836,9 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     // The walkers' exec: only once walker.rs asks for the pilot (own_pilot).
     c.rt.set_override(WALKER_EXEC, |c, m| if PILOT_USED.get() { exec(c, m, WALKER_EXEC) } else { original(c, m, WALKER_EXEC) });
     c.rt.set_override(DESTROY_TASK, destroy_task);
+    if std::env::var_os("SA2_TEST_CAM").is_some() {
+        c.rt.set_override(NJ_SET_CAMERA, test_cam);
+    }
     c.rt.set_override(SPIN_FLASH_DISP, spin_flash);
     if std::env::var_os("SA2_TRACE_EVDRAW").is_some() {
         c.rt.set_override(DRAW_MOTION, trace_draw_motion);
@@ -2266,6 +2339,14 @@ fn track_log(m: &Mem, i: usize, own: &[[f32; 4]; 3]) {
     }
     if i == 14 {
         let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+        // Headings in the world, degrees: the rider's root node as his display
+        // drew it (he faces -x) and the Chao's placement (it faces +z).
+        let base = mtx(m, m.r32(NJ_BASE_MATRIX));
+        let place = inv_mul(&base, &CHAO_PLACE.get());
+        let chao_yaw = place[0][2].atan2(place[2][2]).to_degrees();
+        let rider_yaw = SKEL.with_borrow(|s| s.first().map(|r| (-r[0][0]).atan2(-r[2][0]).to_degrees()));
+        let diff = rider_yaw.map(|r| (r - chao_yaw + 540.0).rem_euclid(360.0) - 180.0);
+        TRACK_LINE.with_borrow_mut(|l| l.push_str(&format!(" heading: rider {rider_yaw:.1?} chao {chao_yaw:.1} diff {diff:.1?}")));
         eprintln!("track: f{f} blend {:.2} motion {}{}", skate_blend(false), LAST_MOTION.get(), TRACK_LINE.take());
     }
 }
@@ -3946,6 +4027,22 @@ fn create_at(c: &mut Cpu, m: &mut Mem, pos: [u32; 3], param: u32) -> Step {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn chao_yaw_faces_the_way_the_character_goes() {
+        for a in [0u32, 0x1234, 0x4000, 0xA01F, 0xFFFF] {
+            let t = |b: u32| b as f32 * std::f32::consts::TAU / 65536.0;
+            let (p, c) = (t(a), t(super::chao_yaw(a)));
+            assert!((p.cos() - c.sin()).abs() < 1e-3 && (p.sin() - c.cos()).abs() < 1e-3, "{a:#x}");
+        }
+    }
+    #[test]
+    fn look_at_puts_the_target_ahead_on_minus_z() {
+        let v = super::look_at([0.0, 0.0, 10.0], [0.0, 0.0, 0.0]);
+        let p = |q: [f32; 3]| -> [f32; 3] { std::array::from_fn(|i| v[i][0] * q[0] + v[i][1] * q[1] + v[i][2] * q[2] + v[i][3]) };
+        let near = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-4);
+        assert!(near(p([0.0, 0.0, 0.0]), [0.0, 0.0, -10.0]));
+        assert!(near(p([1.0, 2.0, 0.0]), [1.0, 2.0, -10.0])); // x right, y up
+    }
     #[test]
     fn stride_lock_takes_the_short_way_round() {
         let near = |a: f32, b: f32| (a - b).abs() < 1e-5;
