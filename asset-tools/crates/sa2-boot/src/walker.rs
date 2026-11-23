@@ -81,8 +81,8 @@ const HIDE: u32 = 8;
 
 /// The mech row player 1's Chao Walker takes during its load (0 = none).
 static MECH_ROW: AtomicU32 = AtomicU32::new(0);
-/// Ninja's current matrix (3x4, raw words) at the seat node in this display.
-static SEAT: std::sync::Mutex<Option<[u32; 12]>> = std::sync::Mutex::new(None);
+/// Ninja's current matrix (3x4, camera included) at the seat node in this display.
+static SEAT: std::sync::Mutex<Option<[[f32; 4]; 3]>> = std::sync::Mutex::new(None);
 
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
     if !std::env::var("SA2_CHAO_WALKER").is_ok_and(|v| v.trim() == "1") {
@@ -127,13 +127,15 @@ fn node_callback(c: &mut Cpu, m: &mut Mem) {
     original(c, m, NODE_CALLBACK);
     if seat_node(m) == Some(node) {
         let at = m.r32(NJ_CURRENT_MATRIX);
-        *SEAT.lock().unwrap() = Some(std::array::from_fn(|i| m.r32(at + 4 * i as u32)));
+        let word = |r: usize, k: usize| f32::from_bits(m.r32(at + 4 * (4 * r + k) as u32));
+        *SEAT.lock().unwrap() = Some(std::array::from_fn(|r| std::array::from_fn(|k| word(r, k))));
     }
 }
 
 /// Draw the player's own Chao at the seat (Ninja's current matrix there).
 /// shortcut: draws nothing until chao_player has its draw-at-a-matrix function (being added by that file's owner); call it here and return what it returns.
-fn own_pilot(_c: &mut Cpu, _m: &mut Mem, _seat: &[u32; 12]) -> bool {
+/// shortcut: the seat matrix is passed at scale 1.0; the Chao takes its size from it, so scale it here to the stock pilot's size once that ratio is read from the two models.
+fn own_pilot(_c: &mut Cpu, _m: &mut Mem, _seat: &[[f32; 4]; 3]) -> bool {
     false
 }
 
@@ -341,7 +343,7 @@ mod tests {
         assert!(SEAT.lock().unwrap().is_none());
         c.r[3] = SEAT_NODE;
         node_callback(&mut c, &mut m);
-        assert_eq!(SEAT.lock().unwrap().take().map(|s| s[3]), Some(0x4120_0000));
+        assert_eq!(SEAT.lock().unwrap().take().map(|s| s[0][3]), Some(10.0));
         m.w8(OBJ2 + 3, 7);
         assert_eq!(seat_node(&m), None, "Eggman's own walker has no seat");
     }
