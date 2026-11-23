@@ -20,12 +20,39 @@
 //!   (fn_72_5020 creates them; fn_72_13258 tests both the same way). The page
 //!   shows its buttons only while both are set. Unverified: that the game
 //!   clears them when it returns to the mode select.
+//!
+//! The 2-player entry is the MMO's PvP queue (server src/queue.rs). Same module:
+//! - fn_72_60E4(task) (.text 0x60E4) is the menu task; its state is the byte at
+//!   *(task +0x34), dispatched through the table at .data 0x1928 (relocations):
+//!   3 fn_72_40D8 mode select, 4 fn_72_4840 and 5 fn_72_4454 (1-player),
+//!   6 fn_72_4AC0, 7 fn_72_4D7C, 8 fn_72_4EE8, 9 fn_72_5020 (makes the
+//!   fighters), 15 leaves.
+//! - fn_72_40D8: the cursor is the byte at *lbl_72_bss_8 +0xA (0, 1, or -1 for
+//!   exit). A (pad press & 4) stores it at +5 and goes to state 4 for 0 and
+//!   state 6 for 1.
+//! - fn_72_4D7C (state 7) goes on to state 8 on pad 1's A, and when +5 is 1
+//!   also on pad 2's A (lbl_801E55D8 +4): so +5 == 1 is the 2-player entry.
+//! - fn_72_4AC0 (state 6) is that entry's Chao pick (ChaoMain fn_60_5287C):
+//!   result 4 stores the two picks at +0x18/+0x1C and goes to state 7, result 3
+//!   backs out to state 3 (or 15).
+//! - Run headless (2026-11-23): the mode select reads "Tournament" (0) and
+//!   "Interleague Game" (1); the pick asks for a Memory Card and garden with
+//!   LT/RT. With the MMO's one card there is nothing to pick on the other
+//!   side, so state 7 is not reached. Adaptation, not the game's own: A
+//!   pressed on that pick (pad 1, *lbl_801E55D8 +0x10 & 4, as fn_72_4D7C reads
+//!   it) is the confirm. B puts the cursor on GO BACK, and B or A there backs
+//!   out as the game does: fn_72_4AC0 0x4C48 keeps fn_60_52B78's answer in the
+//!   menu work's flags (+4 & 0x200), seen set exactly while GO BACK is lit.
+//! Unverified: what the states after 9 do in this mode.
 use crate::chao_player::rel_original;
 use sa2_recomp::rt::{Cpu, Mem, OS_MODULE_HEAD};
 use sa2_recomp::{global, global::Global};
 
 const KARATE: u32 = 72;
 const ATTACK_PICK: u32 = 0xFCC8;
+const MENU: u32 = 0x60E4;
+/// main.dol lbl_801E55D8: the pads; *(+0) +0x10 is pad 1's presses, 4 is A.
+const PADS: u32 = 0x801E_55D8;
 const STRONG_ABOVE: f32 = 1600.0;
 const HARD_KICK: u8 = 4;
 const ROUNDHOUSE: u8 = 5;
@@ -40,7 +67,40 @@ static USED: Global<u8> = global!(0);
 /// Told to the page: strong moves unlocked (0/1), the press counter of the
 /// last used button whose attack is over (the page takes no new move until
 /// its own counter matches), and whether a bout is on (0/1).
-static TOLD: Global<(u8, u8, u8)> = global!((0, 0, 0));
+static TOLD: Global<(u8, u8, u8, u8)> = global!((0, 0, 0, 0));
+/// Told to the page with them: 0 not in the 2-player entry, 1 in it (the page
+/// joins the queue), 2 confirmed (the page marks ready).
+static QUEUE: Global<u8> = global!(0);
+
+/// The queue mark for the menu task's state, the mode byte (+5) and whether A
+/// was pressed on the pick.
+fn queue(state: u8, mode: u8, confirmed: bool) -> u8 {
+    match state {
+        _ if mode != 1 => 0,
+        6 if confirmed => 2,
+        6 | 7 => 1,
+        8..=14 => 2,
+        _ => 0,
+    }
+}
+
+fn menu(c: &mut Cpu, m: &mut Mem) {
+    let task = c.r[3];
+    let work = m.r32(task + 0x34);
+    // The pick is open (state 6, step 3) with its cursor off GO BACK.
+    let picking = m.r8(work) == 6 && m.r8(work + 1) == 3 && m.r16(work + 4) & 0x200 == 0;
+    rel_original(c, m, HOOKED.get() + MENU, menu);
+    let Some((_, bss)) = sections(m) else { return };
+    let state = m.r32(bss + 8);
+    if state != 0 {
+        let a = picking && m.r32(m.r32(PADS) + 0x10) & 4 != 0;
+        let now = queue(m.r8(work), m.r8(state + 5), a || QUEUE.get() == 2);
+        if now != QUEUE.get() {
+            eprintln!("karate-queue: mark {now}");
+            QUEUE.set(now);
+        }
+    }
+}
 
 /// The attack the player's Chao does: the pressed button when the game allows
 /// it (the two strong moves need attack above 1600), else the game's own pick.
@@ -85,12 +145,14 @@ fn pressed() -> Option<[u8; 2]> {
     std::fs::read(std::env::var("SA2_KARATE_IN").ok()?).ok()?.first_chunk().copied()
 }
 
-/// SA2_KARATE_OUT: [strong moves unlocked, press counter that is done, bout on].
+/// SA2_KARATE_OUT: [strong moves unlocked, press counter that is done, bout on,
+/// queue mark].
 fn tell(strong: u8, done: u8, bout: u8) {
-    if TOLD.get() != (strong, done, bout) {
-        TOLD.set((strong, done, bout));
+    let now = (strong, done, bout, QUEUE.get());
+    if TOLD.get() != now {
+        TOLD.set(now);
         if let Ok(p) = std::env::var("SA2_KARATE_OUT") {
-            let _ = std::fs::write(p, [strong, done, bout]);
+            let _ = std::fs::write(p, [now.0, now.1, now.2, now.3]);
         }
     }
 }
@@ -104,15 +166,19 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
     let (text, bss) = sections(m).unwrap_or((0, 0));
     let old = HOOKED.get();
     if text == old {
-        let (strong, done, _) = TOLD.get();
+        let (strong, done, ..) = TOLD.get();
         tell(strong, done, u8::from(text != 0 && bout_on(m.r32(bss + 8), |a| m.r32(a))));
         return;
     }
     if old != 0 {
         c.rt.overrides.remove(&(old + ATTACK_PICK));
+        c.rt.overrides.remove(&(old + MENU));
     }
+    // Left the Karate area: out of the queue (the next frame's tell says so).
+    QUEUE.set(0);
     if text != 0 {
         c.rt.set_override(text + ATTACK_PICK, pick);
+        c.rt.set_override(text + MENU, menu);
         // A press left over from an earlier bout is not carried into this one.
         USED.set(pressed().map_or(0, |p| p[0]));
         tell(0, USED.get(), 0);
@@ -147,6 +213,18 @@ mod tests {
         assert!(!bout_on(0x100, mem(1, 0)));
         assert!(!bout_on(0x100, mem(0, 1)));
         assert!(bout_on(0x100, mem(1, 1)));
+    }
+
+    #[test]
+    fn only_the_two_player_entry_queues() {
+        // 1-player (mode 0) never queues, whatever the menu state.
+        assert!((0..=16).all(|s| queue(s, 0, true) == 0));
+        // Mode select, 1-player screens and leaving: not in the entry.
+        assert!([0, 1, 2, 3, 4, 5, 15, 16].iter().all(|&s| queue(s, 1, true) == 0));
+        assert_eq!([queue(6, 1, false), queue(7, 1, false)], [1, 1]);
+        // A on the pick confirms; the game's own states past its confirm too.
+        assert_eq!(queue(6, 1, true), 2);
+        assert!((8..=14).all(|s| queue(s, 1, false) == 2));
     }
 
     #[test]

@@ -269,11 +269,11 @@ function joinRoom(token, zone) {
       if (self?.admin && !tunerShown) { tunerShown = true; gearTuner(); }
       showCard(self); overlay?.snapshot(m); othersIn(m, token); tagNames(m); breedSnapshot(m);
     }
-    if (m.type === 'event') { overlay?.event(m); breedEvent(m); }
+    if (m.type === 'event') { overlay?.event(m); breedEvent(m); queueEvent(m); }
     if (m.kind === 'chat') chatLine(m); else if (m.kind === 'voice') voicePlay(m);
   };
   // 4001: this card's Chao went out somewhere else; don't fight over it.
-  ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, room.zone), 3000); };
+  ws.onclose = ({ code }) => { queue.sent = 0; if (code !== 4001) setTimeout(() => joinRoom(token, room.zone), 3000); };
 }
 // ---- the other players' Chao (sa2-boot chao_player.rs, worker.js MMO files) --
 // The game's own pose goes to the room each 100 ms; the room's other players
@@ -388,6 +388,7 @@ function mmoTick(token) {
   // The canvas aspect for the game's card box (pad bytes 20..22, also set per click).
   new DataView(sh.pad).setUint16(20, Atomics.load(ctl, 8), true);
   karateLocks();
+  queueTick();
   breedPick();
   storyCleared(token);
   const pose = mmoHead(MMO.POSE_OUT), seq = Atomics.load(pose, 0);
@@ -563,6 +564,7 @@ function cover(on) {
 // The game changed Chao World area (its own teleporters): follow it into that room.
 function roomArea(area) {
   karateButtons(area === 10 || area === 11);
+  queueRanked(area === 10 || area === 11);
   const zone = roomZones[area === 0 ? '' : area];
   // Arrived in Chao World from a level (the pause menu's EXIT): no room yet.
   if (!room && zone && mmoToken()) return joinRoom(mmoToken(), zone);
@@ -617,6 +619,51 @@ function karateLocks() {
     b.title = locked ? 'Needs Power above 400' : '';
     b.style.background = b.disabled ? '#666' : '#f5a800';
   }
+}
+// ---- Chao Karate PvP queue (sa2-boot karate.rs, server src/queue.rs) -------
+// The game's own 2-player Karate entry is the queue: picking it joins, its
+// confirm marks ready, backing out or leaving the area leaves. The game says
+// which with its queue mark (0 out, 1 in the entry, 2 confirmed).
+const queue = { sent: 0, ranked: false, names: {} };
+const queueSay = (text) => chatLine({ channel: 'room', fromName: 'Queue', text });
+function queueTick() {
+  const now = mmoBytes[MMO.KARATE + 7];
+  if (now === queue.sent || room?.ws.readyState !== 1) return;
+  const send = (m) => room.ws.send(JSON.stringify({ type: 'action', ...m }));
+  if (!now) send({ action: 'queue-leave' });
+  else {
+    if (!queue.sent) send({ action: 'queue-join', event: 'chao-karate', ranked: queue.ranked });
+    if (now === 2 || queue.sent === 2) send({ action: 'queue-ready', ready: now === 2 });
+  }
+  queue.sent = now;
+}
+function queueEvent(m) {
+  const name = (id) => queue.names[id] || 'A player';
+  if (m.kind === 'queue') {
+    if (m.group == null) return queueSay('You are out of the queue.');
+    for (const p of m.members) queue.names[p.id] = p.name;
+    const who = m.members.map((p) => `${name(p.id)}${p.ready ? ' (ready)' : ''}`).join(', ');
+    queueSay(`${m.ranked ? 'Ranked' : 'Unranked'} ${m.event === 'chao-race' ? 'race' : 'Karate'}: ${who}.${m.started ? ' All ready: the match starts.' : ''}`);
+  } else if (m.kind === 'queue-result') {
+    // The server ran the bout itself (run false: it could not).
+    if (!m.run) return queueSay('The server could not run this bout.');
+    const r = m.result || {}, how = r.reason === 'knockout' ? 'knockout' : 'time limit';
+    const records = Object.entries(m.records || {}).map(([id, v]) => ` ${name(id)}: ${v.wins}-${v.losses}-${v.draws}.`).join('');
+    queueSay(`${m.winner ? `${name(m.winner)} wins` : 'Draw'} by ${how} after ${Math.round((r.frames || 0) / 60)} s, HP ${(r.hp || []).join(' to ')}.${m.ranked ? records : ''}`);
+  }
+}
+// Ranked or not has no place in the game's menu: an MMO page control, read when the entry is picked.
+function queueRanked(on) {
+  let box = document.getElementById('queue-ranked');
+  if (!box && on) {
+    box = Object.assign(document.createElement('label'), { id: 'queue-ranked' });
+    box.style.cssText = 'position:fixed;right:1rem;top:1rem;z-index:4;padding:.3rem .7rem;border-radius:1rem;background:#0008;color:#fff;font-weight:700';
+    const cb = Object.assign(document.createElement('input'), { type: 'checkbox' });
+    cb.onchange = () => { queue.ranked = cb.checked; canvas.focus(); };
+    box.append(cb, ' MMO: ranked 2-player match');
+    document.body.append(box);
+  }
+  if (box) box.style.display = on ? '' : 'none';
 }
 // One PC play is enough for the phone: when the server has no Tiny Garden picture sheet for this
 // login yet, the signed-in Chao's is sent once, with no Transporter pick. A pick replaces it later.
