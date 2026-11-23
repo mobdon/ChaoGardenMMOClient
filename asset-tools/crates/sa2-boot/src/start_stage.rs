@@ -381,7 +381,10 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
                 m.w32(bss + PRE_STAGE, 1);
             }
         }
-        if HATCH.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
+        // Not before the lobby has put the player at its arrival point: laid on the
+        // player task's first frame the egg sat at the start spot inside the centre
+        // exit's dish, 113 away from the player and the camera (build 18 run).
+        if HATCH.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 && player_placed(m) {
             HATCH.set(false);
             // Only a new player's egg: an egg an existing player picked is not their own Chao.
             EGG_SLOT.set(lay_egg_with(c, m, text, None, true));
@@ -441,6 +444,18 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
     crate::karate::frame(c, m);
     crate::story::frame(c, m);
     original(c, m, TOP_LEVEL);
+}
+
+/// ChaoMain .bss 0x41F6C (section 6): the task made by fn_60_27908 whose exec
+/// fn_60_27988 (.text 0x27988) writes the player's arrival point for the area
+/// and previous stage (lobby from the Neutral Garden: 80, 0, 80) while its
+/// taskwk mode is 0, 1, 2, then stays at 3. Read from the disassembly; unverified live.
+const PLACER_TASK: u32 = 0x4_1F6C;
+
+/// The area's own placing of the player is over (or there is no such task).
+fn player_placed(m: &Mem) -> bool {
+    let task = chaomain_section(m, 6).map_or(0, |bss| m.r32(bss + PLACER_TASK));
+    task == 0 || !(0..3).contains(&(m.r8(m.r32(task + 0x34)) as i8))
 }
 
 /// Named eggs the page queued since the last read (/dev/egg: a u32 count,
