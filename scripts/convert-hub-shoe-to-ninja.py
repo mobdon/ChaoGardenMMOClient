@@ -6,7 +6,8 @@ on the player's Chao (sa2-boot chao_player.rs hub_shoe).
 Only the shoe and overlay meshes (glTF meshes 0 and 1) are taken; the jet
 meshes stay with the game's own jet models. Positions, normals, UVs and the
 native texture index (material extras sa2Source.textureIndex) are copied as
-they are. The output is local game-derived data: never commit it.
+they are, and each part's diffuse colour (sa2Source.diffuse) goes in a material
+chunk before it, so the shoe carries its own colour whatever was drawn before it. The output is local game-derived data: never commit it.
 
 usage: python3 scripts/convert-hub-shoe-to-ninja.py IN.glb OUT.njsh
 
@@ -19,6 +20,8 @@ import sys
 
 CV_VN = 41  # NJD_CV_VN: position + normal
 CT_TID = 8  # NJD_CT_TID: texture id
+CM_D = 0x11  # NJD_CM_D: material, diffuse colour
+FBS_SA_FBD_ISA = 0x25  # its blend: source alpha / inverse source alpha (the source's SRC / INV_SRC)
 CS_UVN = 65  # NJD_CS_UVN: strip, UV in 0..255
 FST_DB = 0x10  # strip flag: double sided (glTF winding not checked against Ninja's)
 PER_CHUNK = 64
@@ -54,12 +57,14 @@ def convert(path):
             nor = accessor(j, blob, p['attributes']['NORMAL'])
             uv = accessor(j, blob, p['attributes']['TEXCOORD_0'])
             idx = [t[0] for t in accessor(j, blob, p['indices'])]
-            tex = j['materials'][p['material']]['extras']['sa2Source']['textureIndex']
+            src = j['materials'][p['material']]['extras']['sa2Source']
+            tex = src['textureIndex']
+            r, g, b, a = [max(0, min(255, round(x * 255))) for x in src.get('diffuse', [1, 1, 1, 1])]
             base = len(verts)
             # The hub's glTF root mirrors the source X (src/chao-attachments.js):
             # mirrored back, its mount turns the shoe flat (height 2.6, length 5.1).
             verts += [((-pos[k][0], pos[k][1], pos[k][2]), (-nor[k][0], nor[k][1], nor[k][2])) for k in range(len(pos))]
-            prims.append((tex, [(base + idx[k], uv[idx[k]]) for k in range(len(idx))]))
+            prims.append((tex, (r, g, b, a), [(base + idx[k], uv[idx[k]]) for k in range(len(idx))]))
     vl = b''
     for start in range(0, len(verts), PER_CHUNK):
         part = verts[start:start + PER_CHUNK]
@@ -68,7 +73,10 @@ def convert(path):
             vl += struct.pack('>6f', *p, *n)
     vl += struct.pack('>I', 0xFF)
     pl = []
-    for tex, corners in prims:
+    for tex, (r, g, b, a), corners in prims:
+        # ARGB as Ninja keeps it: two shorts, green|blue then alpha|red.
+        # unverified: the short order for a colour that is not grey (the shoe's are white and grey).
+        pl += [(FBS_SA_FBD_ISA << 8) | CM_D, 2, (g << 8) | b, (a << 8) | r]
         pl += [CT_TID, tex & 0x1FFF]
         tris = [corners[k:k + 3] for k in range(0, len(corners), 3)]
         body = [len(tris)]
@@ -107,7 +115,7 @@ def self_check():
     n, vlen, plen = struct.unpack('>III', out[4:16])
     assert out[:4] == b'NJSH' and n == 3 and vlen == 8 + 3 * 24 + 4
     pl = struct.unpack('>%dH' % (plen // 2), out[16 + vlen:])
-    assert pl == (CT_TID, 6, (FST_DB << 8) | CS_UVN, 11, 1, 3, 0, 0, 0, 1, 255, 0, 2, 0, 255, 0xFF), pl
+    assert pl == ((FBS_SA_FBD_ISA << 8) | CM_D, 2, 0xFFFF, 0xFFFF, CT_TID, 6, (FST_DB << 8) | CS_UVN, 11, 1, 3, 0, 0, 0, 1, 255, 0, 2, 0, 255, 0xFF), pl
 
 
 if __name__ == '__main__':

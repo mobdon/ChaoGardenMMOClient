@@ -315,10 +315,6 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
         original(c, m, addr);
     }
     let n = NODES.with_borrow(|n| n.len());
-    // Any rider (Knuckles's and Rouge's skeletons too): once a frame.
-    if n > 8 && !SELF_CAP.get() {
-        hammer_gloves(c, m);
-    }
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
     if f % 60 == 0 {
         eprintln!("chao-player lvl: frame {f} draw {addr:#x} obj {obj:#x} motion {mot:#x} nodes {n}");
@@ -338,7 +334,6 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
             return;
         }
         RIDER_OBJ.set(obj);
-        air_shoes(c, m);
     } else if n > 0 && SELF_CAP.get() {
         // Self mode: the ball as he draws it, under the view scaled to the Chao.
         (c.r, c.f[1]) = (regs, f1);
@@ -710,6 +705,14 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
         // and its cached polygon list holds more of his leg (run r76).
         let parts = std::env::var("SA2_BOOT_PARTS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(2);
         if hub != 0 {
+            if n == 0 && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 300 {
+                tex_log(m, "Shadow's (at the shoe draw)", tex);
+                // The polygon lists' first words: the hub shoe's, and Shadow's own heel and toe
+                // (his body model's nodes 23 and 24), to compare their material chunks.
+                let words = |o: u32| -> String { let mdl = m.r32(o + 4); let pl = if mdl >> 24 == 0x80 { m.r32(mdl + 4) } else { 0 }; if pl >> 24 != 0x80 { return "-".into() } (0..28).map(|k| format!("{:04x}", m.r16(pl + 2 * k))).collect::<Vec<_>>().join(" ") };
+                let body = SHADOW_MODELS.with_borrow(|e| e.values().copied().collect::<Vec<_>>()).into_iter().find(|&o| (0x8000_0000..0x8C00_0000).contains(&o) && crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]).nodes.len() == 62).unwrap_or(0);
+                eprintln!("plist-log: hub shoe {} | Shadow heel 23 {} | toe 24 {} | heel 13 {}", words(hub), words(node_obj(m, body, 23)), words(node_obj(m, body, 24)), words(node_obj(m, body, 13)));
+            }
             foot_log(m, n, node, "the hub's Air Shoe file", hub);
             put(m);
             call(c, m, 0x8011_DF44, &[hub]);
@@ -781,6 +784,24 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
 /// Shadow's right heel node frame -> the hub shoe file's space:
 /// MX * (p - shoeOriginShift), as one matrix.
 const JET_HEEL_TO_FILE: [[f32; 4]; 3] = [[-1.0, 0.0, 0.0, 1.067_268_3], [0.0, 1.0, 0.0, -0.292_288_9], [0.0, 0.0, 1.0, 0.253_779_5]];
+
+/// SA2_FOOT_LOG=1 (debug): a texture list as loaded (NJS_TEXLIST: entries,
+/// count; each entry 12 bytes: name, attribute, loaded texture).
+fn tex_log(m: &Mem, whose: &str, list: u32) {
+    if list == 0 || !std::env::var("SA2_FOOT_LOG").is_ok_and(|v| v == "1") {
+        return;
+    }
+    let (names, n) = (m.r32(list), m.r32(list + 4).min(64));
+    let ok = |a: u32| (0x8000_0000..0x8C00_0000).contains(&a);
+    let rows: Vec<String> = (0..n).map(|i| {
+        let e = names + 12 * i;
+        let (name, attr, addr) = (m.r32(e), m.r32(e + 4), m.r32(e + 8));
+        // The loaded texture's first words (its own header), to tell two lists' entries apart.
+        let head = if ok(addr) { (0..6).map(|k| format!("{:x}", m.r32(addr + 4 * k))).collect::<Vec<_>>().join("/") } else { "-".into() };
+        format!("{i}:{}:{attr:#x}:{addr:#x}[{head}]", if ok(name) { crate::cstr(m, name) } else { format!("{name:#x}") })
+    }).collect();
+    eprintln!("tex-log: stage {} {whose} texture list {list:#x}, {n} entries: {}", m.r16(STAGE_NUM), rows.join(" "));
+}
 
 /// SA2_FOOT_LOG=1 (debug), each frame: the model drawn at Chao foot `n`
 /// (its node), where it comes from, and its node and vertex counts.
@@ -902,6 +923,15 @@ fn hub_shoe(c: &mut Cpu, m: &mut Mem) -> u32 {
         HUB_SHOE.set(Some(0));
         return 0;
     }
+    // A shoe file made before the converter wrote material chunks has none
+    // and takes its diffuse colour from whatever was drawn last: such a file
+    // gets one white material chunk in front (NJD_CM_D, source alpha /
+    // inverse source alpha). (This was not what made the shoes pink in
+    // Rouge's stages: that was the draw inside her display, see chao_display_inner.)
+    let old_file = b.get(16 + vlen + 1) != Some(&0x11);
+    let lead: &[u8] = if old_file { &[0x25, 0x11, 0x00, 0x02, 0xFF, 0xFF, 0xFF, 0xFF] } else { &[] };
+    let plist: Vec<u8> = [lead, &b[16 + vlen..16 + vlen + plen]].concat();
+    let plen = plist.len();
     let (model, obj) = (64u32, 0x40u32);
     let total = (vlen + plen) as u32 + model + obj + 8;
     let mem = call(c, m, OS_ALLOC_FROM_HEAP, &[GEAR_HEAP, total]);
@@ -913,7 +943,7 @@ fn hub_shoe(c: &mut Cpu, m: &mut Mem) -> u32 {
     let vl = mem;
     let pl = (mem + vlen as u32 + 3) & !3;
     m.load(vl, &b[16..16 + vlen]);
-    m.load(pl, &b[16 + vlen..16 + vlen + plen]);
+    m.load(pl, &plist);
     let mdl = (pl + plen as u32 + 3) & !3;
     let o = mdl + model;
     m.w32(mdl, vl);
@@ -1817,7 +1847,10 @@ fn test_cam(c: &mut Cpu, m: &mut Mem) {
     let fwd = if rider != 0 || PMOVE_CHAO.get() == chao { [yaw.cos(), 0.0, yaw.sin()] } else { [yaw.sin(), 0.0, yaw.cos()] };
     let right = [-fwd[2], 0.0, fwd[0]];
     let d = match side { "front" => fwd, "side" => right, _ => [-fwd[0], 0.0, -fwd[2]] };
-    let at = [f(cw + 0x14), f(cw + 0x18) + height, f(cw + 0x1C)];
+    // In a level the Chao's own task work falls between its pins to him (its own
+    // gravity runs on): his spot is where it is drawn.
+    let spot = if rider != 0 { rider } else { cw };
+    let at = [f(spot + 0x14), f(spot + 0x18) + height, f(spot + 0x1C)];
     let view = look_at([at[0] + d[0] * dist, at[1] + 0.5, at[2] + d[2] * dist], at);
     let (base, cur) = (m.r32(NJ_BASE_MATRIX), m.r32(NJ_CURRENT_MATRIX));
     for a in [base, cur] {
@@ -1917,13 +1950,14 @@ fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
         CHAO_NODE.set(0);
         let a = rt::sec(m, 60, 1) + CHAO_DISPLAY;
         rel_original(c, m, a, chao_display);
-        if self_drive(m) {
-            // No rider draw carries the gear in self mode: draw it from the
-            // hands and feet this draw recorded.
-            hammer_gloves(c, m);
-            air_shoes(c, m);
-            try_on(c, m);
-        }
+        // The gear from the hands and feet this draw recorded, in every
+        // stage. Before 2026-11-23 a level drew it from inside the hidden
+        // character's display: a frame behind the Chao, and in whatever
+        // colour state his own draw had left (the Air Shoes came out pink
+        // in Rouge's stages).
+        hammer_gloves(c, m);
+        air_shoes(c, m);
+        try_on(c, m);
         return crate::name_tags::finish();
     }
     // ChaoMain queues the model draw past this call (no walker runs inside
@@ -1945,14 +1979,10 @@ fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
         LEVEL_RIG.set(false);
         BOARD_PLACE.set(None);
         NATIVE_DRAW.set(false);
-        // Self mode: no rider display walks, which is where the gear was drawn
-        // (level_capture); draw it here, from the feet and hands this native
-        // draw just recorded.
-        if self_drive(m) {
-            hammer_gloves(c, m);
-            air_shoes(c, m);
-            try_on(c, m);
-        }
+        // The gear from the feet and hands this native draw just recorded.
+        hammer_gloves(c, m);
+        air_shoes(c, m);
+        try_on(c, m);
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 0 {
             let rest = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| r.nodes.len()));
             eprintln!("chao-player native: walked {} node transforms, rest model nodes {rest:?}, hands {:?}", CHAO_NODE.get(), HANDS.with_borrow(|h| h.map(|x| x.map(|v| [v[0][3], v[1][3], v[2][3]]))));
@@ -3903,6 +3933,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             eprintln!("chao-player: model slots {}", all.join(" "));
             eprintln!("chao-player: Shadow's textures {tex:#x} ({} entries), models {mdl:#x}", if tex != 0 { m.r32(tex + 4) } else { 0 });
             SHADOW_TEX.set(Some(tex).filter(|&t| t != 0));
+            tex_log(m, "Shadow's", tex);
             if tex == 0 {
                 GEAR_LOAD_AT.set(u64::MAX); // no retry every frame; the next stage tries again
             }
@@ -3919,6 +3950,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             m.w32(heap_var, keep_heap);
             eprintln!("chao-player: Knuckles's textures {ktex:#x}, models {kmdl:#x} (heap {GEAR_HEAP}, was {keep_heap})");
             KNUX_TEX.set(Some(ktex).filter(|&t| t != 0));
+            tex_log(m, "Knuckles's", ktex);
             // SA2_MODEL_DUMP (debug): every loaded model slot with its node and vertex counts.
             if std::env::var_os("SA2_MODEL_DUMP").is_some() {
                 for k in 0..0x428u32 {
