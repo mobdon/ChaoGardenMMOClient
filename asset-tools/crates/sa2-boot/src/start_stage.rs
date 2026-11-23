@@ -901,7 +901,8 @@ fn parse_shared(text: Option<&str>) -> (bool, [Option<([f32; 3], u32, u32)>; 3])
     for line in text.lines() {
         let v: Vec<f32> = line.split_whitespace().filter_map(|w| w.parse().ok()).collect();
         if let [n, x, y, z, yaw, motion] = v[..] {
-            if let Some(p) = poses.get_mut(n as usize) {
+            // Whole and not negative: a cast would turn -1 or 0.5 into resident 0.
+            if let Some(p) = Some(n).filter(|n| *n >= 0.0 && n.fract() == 0.0).and_then(|n| poses.get_mut(n as usize)) {
                 *p = Some(([x, y, z], yaw as u32 & 0xFFFF, motion as u32));
             }
         }
@@ -913,7 +914,7 @@ fn parse_shared(text: Option<&str>) -> (bool, [Option<([f32; 3], u32, u32)>; 3])
 fn shared_residents_lead_without_a_file_and_read_the_leaders_poses() {
     assert_eq!(parse_shared(None), (true, [None; 3]));
     assert_eq!(parse_shared(Some("lead 1\n")), (true, [None; 3]));
-    let (lead, poses) = parse_shared(Some("lead 0\n2 1.5 0 -2 16384 578\n7 0 0 0 0 0\nbad\n"));
+    let (lead, poses) = parse_shared(Some("lead 0\n2 1.5 0 -2 16384 578\n7 0 0 0 0 0\n-1 9 9 9 0 0\n0.5 9 9 9 0 0\nbad\n"));
     assert!(!lead);
     assert_eq!(poses, [None, None, Some(([1.5, 0.0, -2.0], 16384, 578))]);
 }
@@ -926,8 +927,10 @@ fn share_residents(c: &mut Cpu, m: &mut Mem, text: u32) {
     let (twp, task) = (RESIDENT_TWP.get(), RESIDENT_TASK.get());
     let roaming = || (0..RESIDENTS.len()).filter(|&n| n != STANDING && task[n] != 0);
     if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % SHARE_EVERY == 0 {
-        let file = std::env::var("SA2_RESIDENT_IN").ok().and_then(|p| std::fs::read_to_string(p).ok());
-        let (lead, poses) = parse_shared(file.as_deref());
+        let path = std::env::var("SA2_RESIDENT_IN").ok();
+        let file = path.as_ref().and_then(|p| std::fs::read_to_string(p).ok());
+        // A server file that cannot be read this time (or has no word yet) changes nothing.
+        let (lead, poses) = if path.is_some() && file.is_none() { (LEAD.get(), SHARED.get()) } else { parse_shared(file.as_deref()) };
         if lead != LEAD.get() {
             eprintln!("residents: this game {}", if lead { "leads" } else { "draws the leader's" });
             PINNED.set([false; 3]);
