@@ -654,7 +654,9 @@ function gearTuner() {
   const vals = Object.fromEntries(Object.keys(pieces).map((p) => [p, { dx: 0, dy: 0, dz: 0, rx: 0, ry: 0, rz: 0, scale: 1 }]));
   // The fists' set place (sa2-boot chao_player.rs FIST_SET): the panel starts from it.
   Object.assign(vals.fist0, { dx: 0.3, dy: 1.26, dz: -2.2, rx: -60, ry: 10, rz: 0, scale: 1.35 });
-  Object.assign(vals.fist1, { dx: 0.3, dy: 1.26, dz: 1.8, rx: 60, ry: -10, rz: 0, scale: 1.35 });
+  // Fist 2: fist 1's reflection across the Chao, written out (FIST_SET[1]). While "Link fists"
+  // is on the game draws fist 2 as the reflection of fist 1's sliders and these are not used.
+  Object.assign(vals.fist1, { dx: 0.137, dy: 1.368, dz: 1.873, rx: 53.84, ry: -14.64, rz: 0.72, scale: 1.32 });
   // The other set places (chao_player.rs TRY_ON, BOOT_TUNE).
   vals.boot0.scale = vals.boot1.scale = 0.75;
   Object.assign(vals.sunglasses, { dx: 0, dy: -0.5, dz: -0.64, rx: -180, ry: -90, rz: 0, scale: 1.6 });
@@ -682,19 +684,19 @@ function gearTuner() {
     n.onchange = () => set(n.value);
     row.append(k, r, n);
     box.append(row);
-    return () => { r.value = n.value = vals[pick.value][k]; };
+    return () => { r.value = n.value = vals[pick.value][k]; r.disabled = n.disabled = pick.value === 'fist1' && sets.link === '1'; };
   });
   pick.onchange = () => rows.forEach((f) => f());
   // Debug toggles and the sound mute list: "set key value" lines in the same file.
-  const sets = { fists: '1', shoes: '1', jets: '1', tryon: '1', selog: '0', mute: '', tp: '' };
+  const sets = { fists: '1', shoes: '1', jets: '1', tryon: '1', selog: '0', link: '1', mute: '', tp: '' };
   const setText = () => Object.entries(sets).map(([k, v]) => `set ${k} ${v}`).join('\n') + '\n';
   const fx = document.createElement('div');
   fx.style.cssText = 'margin-top:6px;display:flex;flex-wrap:wrap;gap:6px';
-  for (const k of ['fists', 'shoes', 'jets', 'tryon', 'selog']) {
+  for (const k of ['fists', 'shoes', 'jets', 'tryon', 'selog', 'link']) {
     const cb = Object.assign(document.createElement('input'), { type: 'checkbox', checked: sets[k] === '1' });
-    cb.onchange = () => { sets[k] = cb.checked ? '1' : '0'; send(); };
+    cb.onchange = () => { sets[k] = cb.checked ? '1' : '0'; send(); rows.forEach((f) => f()); };
     const l = document.createElement('label');
-    l.append(cb, k === 'selog' ? 'sound log' : k);
+    l.append(cb, k === 'selog' ? 'sound log' : k === 'link' ? 'Link fists' : k);
     fx.append(l);
   }
   const mute = Object.assign(document.createElement('input'), { placeholder: 'mute ids, e.g. 2003,601c', style: 'width:100%;margin-top:4px' });
@@ -731,7 +733,8 @@ function gearTuner() {
   ov.append(stat, lv, gr, pt, story, apply, said);
   box.append(ov);
   const copy = Object.assign(document.createElement('button'), { textContent: 'Copy values', style: 'margin-top:6px;width:100%' });
-  copy.onclick = () => navigator.clipboard?.writeText(text()).catch(() => {});
+  // With the link flag: linked, fist 2's line is its set reflection, for reference only.
+  copy.onclick = () => navigator.clipboard?.writeText(text() + `link ${sets.link}\n`).catch(() => {});
   // Keys typed into the panel stay away from the game's controls.
   box.addEventListener('keydown', (ev) => ev.stopPropagation());
   box.append(copy);
