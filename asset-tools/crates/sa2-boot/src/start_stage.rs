@@ -109,7 +109,8 @@ const CHILD: u8 = 2;
 const FULL_GROWTH: (u32, u32) = (0x2A50, 0x48);
 const GROWTH: u32 = 0xC0;
 /// How close (world units, squared) the player must come to the guide (an MMO choice).
-const REACH_SQ: f32 = 5.0 * 5.0;
+/// Above 5.2: the two Chao's collision keeps the player that far from the standing guide (build 18 run).
+const REACH_SQ: f32 = 8.0 * 8.0;
 /// What the guide says, one line at a time, while the player stays near it.
 /// The first and last are the game's own lobby hint lines (Steam
 /// gd_PC/Message/mhChaoLobbye.prs, s2392 and s2393); the middle two are MMO text.
