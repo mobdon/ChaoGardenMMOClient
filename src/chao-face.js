@@ -255,3 +255,27 @@ export function configureChaoFace(root, typeName = 'child') {
   const align = typeName.startsWith('hero') ? 'hero' : typeName.startsWith('dark') ? 'dark' : 'normal';
   root.metadata = { ...(root.metadata || {}), chaoFace: { ...(root.metadata?.chaoFace || {}), eyeColour: align, defaultEye: align === 'dark' ? 10 : 0 } };
 }
+
+// EyeColorTexIdList (GC ChaoMain.rel .rodata 0xC58, Steam sonic2app.exe file offset 0x4A62C0): eye colour -> al_eye
+// picture. AL_FaceInit (.text 0xB104) gives types 5..19 colour (type - 5) % 3, Neutral / Hero / Dark Chaos 3 / 4 / 5,
+// every other type 0; AL_FaceSetEye (0xABB4, 0xAC34) draws that picture for the plain eyes and for a Chaos Chao.
+const EYE_COLOUR_PICTURE = Object.freeze([0, 9, 8, 10, 11, 12]);
+
+/** The al_eye picture number the game puts on the open eyes of a Chao of `type`. */
+export function eyePictureOfType(type) {
+  const colour = type >= 5 && type <= 19 ? (type - 5) % 3 : type >= 20 && type <= 22 ? type - 17 : 0;
+  return EYE_COLOUR_PICTURE[colour];
+}
+
+/**
+ * A single model built from the game files: its eye nodes 18 and 21 take the game's eye picture for `type`
+ * (the model's own strip names a body picture; the game swaps it, AL_MatChangeObjectTexture 0xAC54).
+ * Needs loadChaoFaceManifest() first; false when the picture or the nodes are missing.
+ */
+export function setChaoEyePicture(root, type) {
+  const texture = eyeTexture(root.getScene(), eyePictureOfType(type));
+  const meshes = root.getChildMeshes(false).filter(mesh => /^0(?:18|21)_object/.test(mesh.name) && mesh.material && 'albedoTexture' in mesh.material);
+  if (!texture || !meshes.length) return false;
+  for (const mesh of meshes) mesh.material.albedoTexture = texture;
+  return true;
+}

@@ -114,6 +114,35 @@ export function applyNativeChaoMaterial(key, mat) {
   }
   restoreNativeChaosSampling(key, mat);
   applyNinjaEnvironment(mat);
+  if (chunk) applyChaoStripState(mat, chunk);
+}
+
+// How ChaoMain's own drawer puts every Chao strip on screen (fn_60_51008 .text 0x51114, fn_60_51E20 0x51E58 with main.dol
+// fn_80122A44, fn_60_51CDC 0x51CF8): blended by alpha (SRC_ALPHA, INV_SRC_ALPHA), alpha of 64 or less not drawn
+// (GXSetAlphaCompare GREATER 0x40), depth tested and written, culled unless the strip is DOUBLE_SIDE (bit 4).
+// Alpha is texture alpha x the chunk's diffuse alpha. The USE_ALPHA flag is not asked.
+function applyChaoStripState(mat, chunk) {
+  if (mat.albedoTexture) mat.albedoTexture.hasAlpha = true;
+  mat.useAlphaFromAlbedoTexture = !!mat.albedoTexture;
+  mat.opacityTexture = null;
+  mat.alpha = (chunk.material?.diffuseRgba?.[3] ?? 255) / 255;
+  mat.transparencyMode = 3; // alpha test and blend
+  mat.alphaCutOff = 65 / 255;
+  mat.alphaMode = Engine.ALPHA_COMBINE;
+  mat.forceDepthWrite = true; mat.disableDepthWrite = false;
+  mat.backFaceCulling = !(chunk.stripFlags & 16);
+  mat.twoSidedLighting = false;
+}
+
+/**
+ * Draw order of a model built from the game files: the game draws node by node in tree order and each node's strips
+ * in file order (al_draw_B .text 0x88CC), with depth written, so a see-through part hides what is drawn after it.
+ */
+export function orderChaoStrips(root) {
+  const number = node => { for (let n = node; n; n = n.parent) { const m = /(?:^|-)(\d{3})_/.exec(n.name || ''); if (m) return Number(m[1]); } return 0; };
+  const meshes = root.getChildMeshes(false).filter(mesh => mesh.material);
+  meshes.map((mesh, at) => [number(mesh), at, mesh]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).forEach(([, , mesh], order) => { mesh.alphaIndex = order; });
+  return meshes.length;
 }
 
 // The game's light on a Chao (GC main.dol SetLight fn_80024CB8 and ChaoMain's own strip drawer fn_60_50A8C):

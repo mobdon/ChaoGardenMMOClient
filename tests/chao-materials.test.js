@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Engine, NullEngine, PBRMaterial, RawTexture, Scene, Texture } from '@babylonjs/core';
-import { applyChunkDiffuse, applyNinjaLight, ninjaLight, restoreNativeChaosSampling } from '../src/chao-materials.js';
+import { applyChunkDiffuse, applyNativeChaoMaterial, applyNinjaLight, ninjaLight, restoreNativeChaosSampling } from '../src/chao-materials.js';
 
 test('native Chaos skin clamps its RGB gradient without changing pixels, tint or opacity', () => {
   const engine = new NullEngine(), scene = new Scene(engine);
@@ -78,5 +78,26 @@ test('a strip flagged IGNORE_LIGHT stays unlit; others get one light plugin and 
     assert.equal(applyChunkDiffuse(lit), true);
     assert.deepEqual(lit.albedoColor.asArray(), [1, 0, 0]);
     assert.equal(applyChunkDiffuse(new PBRMaterial('server', scene)), false);
+  } finally { engine.dispose(); }
+});
+
+test('a strip from the game files blends, drops alpha of 64 or less, writes depth and culls unless double-sided', () => {
+  const engine = new NullEngine(), scene = new Scene(engine);
+  try {
+    const material = (flags, alpha) => {
+      const result = new PBRMaterial('strip', scene);
+      result.metadata = { gltf: { extras: { sa2Chunk: { stripFlags: flags, material: { diffuseRgba: [255, 255, 255, alpha] } } } } };
+      applyNativeChaoMaterial('neutral-chaos', result);
+      return result;
+    };
+    const plain = material(2, 255), fin = material(26, 128);
+    for (const mat of [plain, fin]) {
+      assert.equal(mat.transparencyMode, 3);
+      assert.equal(mat.alphaCutOff, 65 / 255);
+      assert.equal(mat.forceDepthWrite, true);
+    }
+    assert.equal(plain.backFaceCulling, true);
+    assert.equal(fin.backFaceCulling, false);
+    assert.equal(fin.alpha, 128 / 255);
   } finally { engine.dispose(); }
 });

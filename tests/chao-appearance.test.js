@@ -93,3 +93,10 @@ test('native mouth texture pairs cover ChaoMouth 0..12', () => {
   assert.deepEqual(MOUTH_TEXTURES[11], [16, 15]);
   assert.ok(MOUTH_TEXTURES.flat().every(index => index >= 0 && index < 19));
 });
+
+test('the open-eye picture follows the type: hero and dark adults, and the three Chaos Chao', async () => {
+  const { eyePictureOfType } = await import('../src/chao-face.js');
+  assert.deepEqual([2, 5, 6, 7, 18, 19].map(eyePictureOfType), [0, 0, 9, 8, 9, 8]);
+  assert.deepEqual([20, 21, 22].map(eyePictureOfType), [10, 11, 12]);
+  assert.deepEqual([23, 24, 25].map(eyePictureOfType), [0, 0, 0]);
+});
