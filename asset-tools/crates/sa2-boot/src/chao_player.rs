@@ -710,6 +710,7 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
         // and its cached polygon list holds more of his leg (run r76).
         let parts = std::env::var("SA2_BOOT_PARTS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(2);
         if hub != 0 {
+            foot_log(m, n, node, "the hub's Air Shoe file", hub);
             put(m);
             call(c, m, 0x8011_DF44, &[hub]);
         }
@@ -756,6 +757,15 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
             let to_file = if old { [[1.0, 0.0, 0.0, 1.067_268_3], JET_HEEL_TO_FILE[1], JET_HEEL_TO_FILE[2]] } else { JET_HEEL_TO_FILE };
             let heel = if hub != 0 { mul34(&place, &to_file) } else { place };
             let toe = jet_toe_in_heel(m).filter(|_| hub != 0 && !old).map_or(heel, |rel| mul34(&heel, &rel));
+            if std::env::var("SA2_JET_LOG").is_ok_and(|v| v == "1") {
+                // Each jet's origin in the drawn shoe's own frame (constant = fixed to the shoe),
+                // and where the game's own jet matrices for Shadow (saved by his display's node
+                // callback: toe 540 / 588, heel 636 / 684, right / left) sit in that same frame.
+                let o = |x: &[[f32; 4]; 3]| { let r = inv_mul(&place, x); [r[0][3], r[1][3], r[2][3]] };
+                let (nt, nh) = if n == 0 { (540, 636) } else { (588, 684) };
+                let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+                eprintln!("jet-frame: f{f} foot {n} ours toe {:?} heel {:?} game toe {:?} heel {:?}", o(&toe), o(&heel), o(&mtx(m, 0x801F_E758 + nt)), o(&mtx(m, 0x801F_E758 + nh)));
+            }
             for (js, at) in if odd { [(193u32, toe), (197, heel)] } else { [(195, toe), (199, heel)] } {
                 let jo = shadow_obj(m, js);
                 if (0x8000_0000..0x8C00_0000).contains(&jo) {
@@ -772,6 +782,22 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
 /// MX * (p - shoeOriginShift), as one matrix.
 const JET_HEEL_TO_FILE: [[f32; 4]; 3] = [[-1.0, 0.0, 0.0, 1.067_268_3], [0.0, 1.0, 0.0, -0.292_288_9], [0.0, 0.0, 1.0, 0.253_779_5]];
 
+/// SA2_FOOT_LOG=1 (debug), each frame: the model drawn at Chao foot `n`
+/// (its node), where it comes from, and its node and vertex counts.
+fn foot_log(m: &Mem, n: usize, node: usize, what: &str, obj: u32) {
+    if !std::env::var("SA2_FOOT_LOG").is_ok_and(|v| v == "1") {
+        return;
+    }
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let (nodes, verts) = if (0x8000_0000..0x8C00_0000).contains(&obj) {
+        let r = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]);
+        (r.nodes.len(), r.verts.iter().map(Vec::len).sum::<usize>())
+    } else {
+        (0, 0)
+    };
+    eprintln!("foot-log: f{f} stage {} foot {n} (Chao node {node}): {what}, object {obj:#x}, {nodes} nodes, {verts} vertices", m.r16(STAGE_NUM));
+}
+
 thread_local! {
     static JET_LOGGED: Cell<bool> = const { Cell::new(false) };
     /// (body model, his right toe node 14 in his right heel node 13's frame, at rest).
@@ -782,7 +808,10 @@ thread_local! {
 /// body model's rest pose (the shoe on the Chao is rigid, so the rest relation
 /// stands in for his live toe bend).
 fn jet_toe_in_heel(m: &Mem) -> Option<[[f32; 4]; 3]> {
-    let body = RIDER_OBJ.get();
+    // Shadow's own body (TERIOSMDL's 62-node model), also when Sonic rides.
+    let body = SHADOW_MODELS.with_borrow(|e| e.values().copied().find(|&o| JET_TOE.get().is_some_and(|(b, _)| b == o)))
+        .or_else(|| SHADOW_MODELS.with_borrow(|e| e.values().copied().collect::<Vec<_>>()).into_iter().find(|&o| (0x8000_0000..0x8C00_0000).contains(&o) && crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]).nodes.len() == 62))
+        .unwrap_or(RIDER_OBJ.get());
     if !(0x8000_0000..0x8C00_0000).contains(&body) {
         return None;
     }
@@ -1233,15 +1262,21 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
     let posed = POSED.with_borrow(|p| p.clone());
     let skel = SKEL.with_borrow(|s| s.clone());
-    // Chao World places the boots from the Chao's own feet (hub fit): no
-    // rider skeleton needed there, and in self mode there is none.
-    if !chao_world(m) && (posed.len() < 14 || skel.len() != 62) {
+    // The hub's shoe (shadow_boot) in every stage, placed from the Chao's own
+    // feet. Before 2026-11-23 only Chao World took it; a level drew the model
+    // table's slots 161/163 on the feet, which hold hand models (TERIOSMDL
+    // 80/81: 2 nodes, 174 vertices, the same pair the guard below lets
+    // through as "Shadow's shoe"): white gloved hands on the Chao's feet on
+    // City Escape's board, and no shoes.
+    // SA2_SHOE_MODELS / SA2_SHADOW_BOOT=0 (debug): the old slot draw.
+    let models: Vec<u32> = std::env::var("SA2_SHOE_MODELS").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default();
+    let slot_draw = !models.is_empty() || std::env::var("SA2_SHADOW_BOOT").is_ok_and(|v| v == "0");
+    if slot_draw && !chao_world(m) && (posed.len() < 14 || skel.len() != 62) {
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
             eprintln!("chao-player shoes: skipped (posed {}, skel {})", posed.len(), skel.len());
         }
         return;
     }
-    let models: Vec<u32> = std::env::var("SA2_SHOE_MODELS").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default();
     let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
     let keep_m = mtx(m, cur_ptr);
     let base = mtx(m, m.r32(NJ_BASE_MATRIX));
@@ -1250,10 +1285,11 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     let regs = (c.r, c.f);
     let ext = |vs: Vec<[f32; 3]>| (0..3).map(|k| { let (lo, hi) = vs.iter().fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v[k]), h.max(v[k]))); hi - lo }).fold(0.0f32, f32::max);
     for (n, &(node, foot, model)) in SHOES.iter().enumerate() {
-        if chao_world(m) && models.is_empty() && !std::env::var("SA2_SHADOW_BOOT").is_ok_and(|v| v == "0") {
+        if !slot_draw {
             shadow_boot(c, m, n, tex, cur_ptr, list);
             continue;
         }
+        foot_log(m, n, node, "model table slot (debug)", shadow_obj(m, models.get(n).copied().unwrap_or(model)));
         // Chao World: the right boot (78 = slot 163) on both feet, as the hub does.
         let model = models.get(n).copied().unwrap_or(if chao_world(m) { 163 } else { model });
         let obj = shadow_obj(m, model);
@@ -1710,6 +1746,10 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
             let ft = FEET.with_borrow(|x| x[k].map(|v| [v[0][3], v[1][3], v[2][3]]));
             eprintln!("chao-player gloves: {k} arm node at {:?}, fist at {:?}, foot {:?}, local t {:?}", [node[0][3], node[1][3], node[2][3]], [place[0][3], place[1][3], place[2][3]], ft, [local[0][3], local[1][3], local[2][3]]);
         }
+        if std::env::var("SA2_FOOT_LOG").is_ok_and(|v| v == "1") {
+            let ft = FEET.with_borrow(|x| x.map(|v| v.map(|v| [v[0][3], v[1][3], v[2][3]])));
+            eprintln!("foot-log: f{f} hand {k} (Chao arm node {}): Hammer Gloves plate, KNUCKMDL slot {model}, at {:?} (view); arm node at {:?}; feet at {ft:?}", [3, 10][k], [place[0][3], place[1][3], place[2][3]], [node[0][3], node[1][3], node[2][3]]);
+        }
         for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, place[r][q].to_bits()); } }
         m.w32(list, tex);
         let lcap = LCAP.replace(false);
@@ -2162,6 +2202,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     sa2_recomp::os::add_frame_hook(ev_frame_hook);
     // walker.rs (SA2_CHAO_WALKER) installs its own handler there first: kept, and
     // it takes the voice task's calls while a walker is the character (voice).
+    c.rt.set_override(NATIVE_JETS, native_jets);
     PREV_VOICE.set(c.rt.overrides.get(&ADX_START_AFS).copied());
     c.rt.set_override(ADX_START_AFS, voice);
     c.rt.set_override(SONIC_DISP, |c, m| display(c, m, SONIC_DISP));
@@ -2169,6 +2210,30 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     if !std::env::var("SA2_CHAO_KNUX_DISP").is_ok_and(|v| v == "0") {
         c.rt.set_override(KNUX_DISP, |c, m| display(c, m, KNUX_DISP));
         c.rt.set_override(ROUGE_DISP, |c, m| display(c, m, ROUGE_DISP));
+    }
+}
+
+/// fn_8007BC7C: the character's effect display; for Shadow it draws his Air
+/// Shoes' jets at his own toe and heel nodes while his skate motions play
+/// (gate: model slot 185 loaded, main.dol 0x8007BD2C).
+const NATIVE_JETS: u32 = 0x8007_BC7C;
+
+/// While the player's Chao is out, the hidden Shadow's own jets are not
+/// drawn: they followed his feet (drawn at the Chao's size), not the shoes on
+/// the Chao, so a second set of flames moved about the Chao's feet out of
+/// step with its shoes (seen with the Chao's shoes switched off: flames
+/// still there). The game's own gate is used: slot 185 empty for the call.
+/// SA2_SHOW_SONIC (debug: the character drawn) keeps them, to compare.
+fn native_jets(c: &mut Cpu, m: &mut Mem) {
+    let gate = MODELS + 4 * 185;
+    let keep = m.r32(gate);
+    let hide = matches!(STEP.get(), Step::Live(_)) && std::env::var_os("SA2_SHOW_SONIC").is_none();
+    if hide {
+        m.w32(gate, 0);
+    }
+    original(c, m, NATIVE_JETS);
+    if hide {
+        m.w32(gate, keep);
     }
 }
 
@@ -2891,7 +2956,7 @@ fn light_shoe_place(m: &Mem, node: usize) -> Option<(u32, [[f32; 4]; 3])> {
         let foot = foot_in(pick);
         let turn = [[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]];
         let mount = crate::skate::mul(&turn, &crate::skate::unit(&crate::skate::mul(&crate::skate::inv(&w[0].0), &w[pick].0)));
-        eprintln!("chao-player light shoes: Sonic's body {body:#x}; item box centre {ic:?} is {:.2} from his foot's in node 23's frame, {:.2} in node 24's: node {pick}; foot {} vertices", d(23), d(24), foot.len());
+        eprintln!("chao-player light shoes: item SONICMDL slot 29 object {obj:#x}: {} nodes, {} vertices; Sonic's body {body:#x}; item box centre {ic:?} is {:.2} from his foot's in node 23's frame, {:.2} in node 24's: node {pick}; foot {} vertices", sr.nodes.len(), item.len(), d(23), d(24), foot.len());
         LIGHT_FIT.set(Some((mount, foot)));
     }
     let (mount, foot) = LIGHT_FIT.with_borrow(|f| f.clone())?;
