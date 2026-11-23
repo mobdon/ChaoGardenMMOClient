@@ -52,7 +52,8 @@ const CHAO_WORLD: u16 = 0x5A;
 const CHAOMAIN: u32 = 0x3C;
 const AL_GET_STAGE_NUMBER: u32 = 0x2_7FA0;
 const AL_CHANGE_AREA: u32 = 0x2_7E00;
-/// ChaoMain area numbers 1..=12 (1 Neutral, 2 Hero, 3 Dark, 5 Entrance/race,
+/// ChaoMain area numbers 1..=12 (1 Neutral, 2 Hero, 3 Dark, 4 the race,
+/// 5 the race entrance, 6 Kindergarten,
 /// 9 Stadium, 10 Karate); 0 is the lobby Chao World starts in.
 const LAST_AREA: u32 = 12;
 /// The Chao Lobby's stage number (al_stage.h: 7 lobby; 0 is none, while loading).
