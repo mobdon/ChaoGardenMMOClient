@@ -563,12 +563,13 @@ pub(crate) fn go_area(area: u32) {
     TO_AREA.set(area);
 }
 
-/// The character under the Chao in Chao World: Shadow (1), so a Chao in
-/// Shadow's shoes moves with his motions (SA2_CHAO_RIDER=n overrides; debug).
-/// shortcut: character number 1 = Shadow is unverified against the
-/// character table; the headless run checks the rider's model.
+/// The character under the Chao in Chao World. MMO glue: Sonic (0), as in his
+/// own levels: the Chao runs like him, or skates like Shadow while it wears
+/// Shadow's Air Shoes (chao_player shadow_moves swaps his action table live).
+/// Until 2026-11-23 Shadow himself (character 1) rode here.
+/// SA2_CHAO_RIDER=n overrides (debug; 1 = Shadow).
 fn rider() -> u32 {
-    std::env::var("SA2_CHAO_RIDER").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(1)
+    std::env::var("SA2_CHAO_RIDER").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0)
 }
 
 /// The game's own egg at the player's feet, with guest scratch for the gene
