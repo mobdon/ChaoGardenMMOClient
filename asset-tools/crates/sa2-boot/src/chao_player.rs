@@ -2033,6 +2033,17 @@ fn staff_goto(c: &mut Cpu, m: &mut Mem, task: u32, area: u32) {
     if cw == 0 {
         return;
     }
+    // After an area change the lobby makes the player's Chao twice (the second
+    // 1.4 s after the first, at the lobby's own spot): the place goes to the
+    // task that has stayed for 3 s.
+    if asked {
+        let (held, n) = GOTO_HELD.get();
+        let n = if held == chao { n + 1 } else { 0 };
+        GOTO_HELD.set((chao, n));
+        if n < 180 {
+            return;
+        }
+    }
     GOTO.set(None);
     let Some(p) = at else { return };
     for twp in [cw, m.r32(task + 0x34)] {
@@ -2046,6 +2057,8 @@ fn staff_goto(c: &mut Cpu, m: &mut Mem, task: u32, area: u32) {
 
 thread_local! {
     static GOTO_SEQ: Cell<u32> = const { Cell::new(0) };
+    /// The Chao task seen after a go-to's area change, and for how many frames.
+    static GOTO_HELD: Cell<(u32, u32)> = const { Cell::new((0, 0)) };
     /// The go-to under way: (area, spot, area change asked).
     static GOTO: Cell<Option<(u32, Option<[f32; 3]>, bool)>> = const { Cell::new(None) };
     static TP_DONE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
