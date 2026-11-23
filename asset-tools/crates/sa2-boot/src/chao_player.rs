@@ -2182,10 +2182,10 @@ thread_local! {
 const TRY_ON: [(&str, u8, u32, usize, [f32; 7]); 7] = [
     ("sunglasses", b'K', 323, 16, [0.0, -0.5, -0.64, -180.0, -90.0, 0.0, 1.6]),  // KNUCKMDL 161, set in the tuner
     ("necklace", b'K', 337, 1, [0.0, -0.16, 1.8, -155.0, 90.0, -155.0, 1.41]),   // KNUCKMDL 168, set in the tuner
-    ("sflame", b'T', 201, 3, TUNE_NONE),                                        // TERIOSMDL 100
+    ("sflame", b'T', 201, 16, TUNE_NONE),                                       // TERIOSMDL 100, on the head as a crown
     ("lshoe0", b'S', 27, 6, TUNE_NONE),                                          // SONICMDL 13 (right)
     ("lshoe1", b'S', 29, 13, TUNE_NONE),                                         // SONICMDL 14 (left)
-    ("ring", b'S', 51, 10, TUNE_NONE),                                           // SONICMDL 25 Flame Ring
+    ("ring", b'S', 51, 16, TUNE_NONE),                                           // SONICMDL 25 Flame Ring, on the head as a crown
     ("bracelet", b'S', 53, 3, [0.58, -0.76, -0.12, 171.0, 88.0, 0.0, 1.46]),     // SONICMDL 26, set in the tuner
 ];
 const TUNE_NONE: [f32; 7] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];

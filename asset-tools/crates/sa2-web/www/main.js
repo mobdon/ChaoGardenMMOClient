@@ -686,15 +686,16 @@ function gearTuner() {
   });
   pick.onchange = () => rows.forEach((f) => f());
   // Debug toggles and the sound mute list: "set key value" lines in the same file.
-  const sets = { fists: '1', shoes: '1', jets: '1', tryon: '1', selog: '0', mute: '', tp: '' };
+  const sets = { fists: '1', shoes: '1', jets: '1', tryon: '1', sunglasses: '1', necklace: '1', sflame: '1', lshoe0: '1', lshoe1: '1', ring: '1', bracelet: '1', selog: '0', mute: '', tp: '' };
   const setText = () => Object.entries(sets).map(([k, v]) => `set ${k} ${v}`).join('\n') + '\n';
   const fx = document.createElement('div');
   fx.style.cssText = 'margin-top:6px;display:flex;flex-wrap:wrap;gap:6px';
-  for (const k of ['fists', 'shoes', 'jets', 'tryon', 'selog']) {
+  // One switch per try-on piece too (chao_player.rs TRY_ON skips a piece set to 0).
+  for (const k of ['fists', 'shoes', 'jets', 'tryon', 'sunglasses', 'necklace', 'sflame', 'lshoe0', 'lshoe1', 'ring', 'bracelet', 'selog']) {
     const cb = Object.assign(document.createElement('input'), { type: 'checkbox', checked: sets[k] === '1' });
     cb.onchange = () => { sets[k] = cb.checked ? '1' : '0'; send(); };
     const l = document.createElement('label');
-    l.append(cb, k === 'selog' ? 'sound log' : k);
+    l.append(cb, k === 'selog' ? 'sound log' : pieces[k] || k);
     fx.append(l);
   }
   const mute = Object.assign(document.createElement('input'), { placeholder: 'mute ids, e.g. 2003,601c', style: 'width:100%;margin-top:4px' });
