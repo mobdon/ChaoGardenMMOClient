@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { detectGameFiles } from './game-files.js';
+import { sections } from './ini-sections.js';
 
 const run = promisify(execFile);
 const game = await detectGameFiles(process.argv[2]);
@@ -32,15 +33,6 @@ for (let i = 0; i < exe.readUInt16LE(pe + 6); i++) {
 const zeroFillForVA = (va, length = 1) => { const rva = va - imageBase; return peSections.some(item => rva >= item.rva + item.size && rva + length <= item.rva + item.virtualSize); };
 const fileOffsetForVA = (va, length = 1) => { const rva = va - imageBase, section = peSections.find(item => rva >= item.rva && rva + length <= item.rva + item.size); return section ? section.raw + rva - section.rva : null; };
 const atVA = (va, length = 1) => { const offset = fileOffsetForVA(va, length); if (offset === null) throw new Error(`Unmapped native pointer:${hex(va)}`); return offset; };
-function sections(text) {
-  const result = []; let item;
-  for (const line of text.split(/\r?\n/)) {
-    const heading = line.match(/^\[([^\]]+)\]/);
-    if (heading) { item = { name: heading[1], lines: [line], fields: {} }; result.push(item); }
-    else if (item) { item.lines.push(line); const field = line.match(/^([^;=][^=]*)=(.*)$/); if (field) item.fields[field[1].trim()] = field[2].trim(); }
-  }
-  return result;
-}
 const chao = sections(await readFile(path.join(configs, 'ChaoCommon.ini'), 'utf8'));
 const common = sections(await readFile(path.join(configs, 'CommonObjects.ini'), 'utf8'));
 const animalSections = chao.filter(item => item.fields.filename?.startsWith('Chao/animals/'));
