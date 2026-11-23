@@ -3,7 +3,7 @@
 The read-only Rust inspector accepts a 65,536-byte raw flash image. The example also verifies the ASOE revision 0 cartridge SHA-256 before interpreting the image. A save file carries no authenticated cartridge identity. Its slot markers and checksums establish structural validity for this reader.
 
 ~~~powershell
-cargo run --example flash -- "$env:SONIC_ADVANCE_ASOE_ROM" "path/to/local.sav"
+cargo run --bin sonic-advance-assets -- inspect-save "path/to/local.sav" "$env:SONIC_ADVANCE_ASOE_ROM"
 cargo test --test flash
 ~~~
 
