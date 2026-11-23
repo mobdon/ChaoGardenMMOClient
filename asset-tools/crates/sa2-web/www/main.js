@@ -970,10 +970,12 @@ async function voiceStart() {
   proc.connect(voiceCtx.createGain()).connect(voiceCtx.destination); // gain 1 on silence: keeps the processor running
   voiceMic = { stream, proc };
 }
-function voicePlay({ fromId, fromName, volume, data }) {
+function voicePlay({ fromId, fromName, volume, data, staff }) {
   if (!voiceCtx) return; // the server never sends voice from players you muted
-  // A new voice nearby gets one clickable line, so it can be muted like chat.
-  if (!voiceAt.has(fromId)) chatLine({ channel: 'system', fromId, fromName, text: 'is talking nearby (click to mute)' }); // browsers allow audio only after the first key or click
+  // A new voice nearby gets one clickable line, so it can be muted like chat. Staff cannot be muted.
+  if (staff) fromId = 'staff';
+  if (staff && !voiceAt.has(fromId)) chatLine({ channel: 'system', fromName, text: 'is speaking to you' });
+  else if (!voiceAt.has(fromId)) chatLine({ channel: 'system', fromId, fromName, text: 'is talking nearby (click to mute)' }); // browsers allow audio only after the first key or click
   const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
   const pcm = new Int16Array(bytes.buffer, 0, bytes.length >> 1);
   const buf = voiceCtx.createBuffer(1, pcm.length, VOICE_RATE);

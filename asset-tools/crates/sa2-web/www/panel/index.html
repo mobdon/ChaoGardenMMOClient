@@ -135,6 +135,7 @@
         <h2 id="room-title">Everyone online</h2>
         <div class="row">
           <button id="listen" class="small" aria-pressed="false">Listen to voice</button>
+          <button id="speak" class="small" hidden>Hold to speak</button>
           <label class="row dim" style="font-size:.85rem">For
             <select id="length">
               <option value="10">10 minutes</option><option value="60">1 hour</option>
@@ -216,7 +217,7 @@ async function call(path, body) {
   return data;
 }
 function signOut(why = '') {
-  token = null; clearInterval(timer); listening = false; following = null;
+  token = null; clearInterval(timer); listening = false; following = null; talk = null; speaking = false; $('speak').hidden = true;
   $('newkey').hidden = true; URL.revokeObjectURL($('keyfile').href); $('keyfile').removeAttribute('href');
   $('panel').hidden = true; $('login').hidden = false; $('error').textContent = why; $('password').value = '';
 }
@@ -375,7 +376,10 @@ function draw() {
     const tail = el('button', following === p.id ? 'Stop following' : 'Follow', 'small');
     tail.setAttribute('aria-pressed', following === p.id);
     tail.onclick = () => { following = following === p.id ? null : p.id; if (following) goTo(p.id, false); draw(); };
-    actions.prepend(go, tail);
+    const chat = el('button', talk === p.id ? 'Stop talking' : 'Talk', 'small');
+    chat.setAttribute('aria-pressed', talk === p.id);
+    chat.onclick = () => talkTo(talk === p.id ? null : p);
+    actions.prepend(go, tail, chat);
     if (p.invisible) who.append(el('span', 'invisible', 'tag staff'));
     row.append(who, actions);
     return row;
@@ -432,8 +436,32 @@ async function refresh() {
   } catch (e) { if (token) $('note').textContent = e.message; }
 }
 // Voice: 16-bit 8 kHz mono frames, the same form the game page plays.
-let listening = false, audio = null, after = 0;
+let listening = false, audio = null;
 const playAt = new Map();
+// Plays a room's voice (only one player's when `only` is given) while `alive()` holds.
+async function hear(room, only, alive, heard) {
+  audio ??= new AudioContext();
+  await audio.resume();
+  let after = 0, first = true;
+  while (token && alive()) {
+    const { frames } = await call(`/api/panel/voice?room=${encodeURIComponent(room())}&after=${after}`);
+    for (const f of frames) {
+      after = Math.max(after, f.frame);
+      if (first || (only && f.fromId !== only)) continue; // frames from before this sitting are skipped
+      const bytes = Uint8Array.from(atob(f.data), (c) => c.charCodeAt(0));
+      const pcm = new Int16Array(bytes.buffer, 0, bytes.length >> 1);
+      const buf = audio.createBuffer(1, pcm.length, 8000);
+      buf.getChannelData(0).set(Float32Array.from(pcm, (v) => v / 32768));
+      const node = audio.createBufferSource();
+      node.buffer = buf; node.connect(audio.destination);
+      const at = Math.max(audio.currentTime + 0.05, playAt.get(f.fromId) ?? 0);
+      node.start(at); playAt.set(f.fromId, at + buf.duration);
+      heard(f);
+    }
+    first = false;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+}
 $('listen').onclick = async () => {
   listening = !listening && !!picked;
   $('listen').setAttribute('aria-pressed', listening);
@@ -441,33 +469,53 @@ $('listen').onclick = async () => {
   $('heard').textContent = listening ? `Listening to ${roomName(picked)}. This is in the audit log; nothing is recorded.` : '';
   draw();
   if (!listening) return;
-  audio ??= new AudioContext();
-  await audio.resume();
-  after = 0;
   const room = picked;
-  let first = true;
-  while (listening && token && picked === room) {
-    try {
-      const { frames } = await call(`/api/panel/voice?room=${encodeURIComponent(room)}&after=${after}`);
-      for (const f of frames) {
-        after = Math.max(after, f.frame);
-        if (first) continue; // frames from before this sitting are skipped
-        const bytes = Uint8Array.from(atob(f.data), (c) => c.charCodeAt(0));
-        const pcm = new Int16Array(bytes.buffer, 0, bytes.length >> 1);
-        const buf = audio.createBuffer(1, pcm.length, 8000);
-        buf.getChannelData(0).set(Float32Array.from(pcm, (v) => v / 32768));
-        const node = audio.createBufferSource();
-        node.buffer = buf; node.connect(audio.destination);
-        const at = Math.max(audio.currentTime + 0.05, playAt.get(f.fromId) ?? 0);
-        node.start(at); playAt.set(f.fromId, at + buf.duration);
-        $('heard').textContent = `${f.fromName} is talking in ${roomName(room)}`;
-      }
-      first = false;
-    } catch (e) { $('heard').textContent = e.message; break; }
-    await new Promise((r) => setTimeout(r, 300));
-  }
+  try { await hear(() => room, null, () => listening && picked === room, (f) => { $('heard').textContent = `${f.fromName} is talking in ${roomName(room)}`; }); }
+  catch (e) { $('heard').textContent = e.message; }
   if (picked === room && listening) { listening = false; $('listen').setAttribute('aria-pressed', false); $('listen').textContent = 'Listen to voice'; draw(); }
 };
+// Talk to one player: their voice plays here, and holding the button sends this mic to them alone.
+let talk = null, speaking = false, mic = null;
+async function talkTo(p) {
+  talk = p?.id ?? null; speaking = false;
+  $('speak').hidden = !talk;
+  $('heard').textContent = talk ? `Talking with ${p.name}. Hold the button to speak. This is in the audit log; nothing is recorded.` : '';
+  draw();
+  if (!talk) return;
+  if (listening) $('listen').click(); // one voice feed at a time
+  const id = talk, room = () => last.players.find((q) => q.id === id)?.room;
+  try {
+    await micStart();
+    await hear(room, id, () => talk === id && room(), () => { $('heard').textContent = `${p.name} is talking`; });
+  } catch (e) { $('heard').textContent = e.message; }
+  if (talk === id) { talk = null; $('speak').hidden = true; draw(); }
+}
+async function micStart() {
+  audio ??= new AudioContext();
+  await audio.resume();
+  if (mic) return;
+  mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  const proc = audio.createScriptProcessor(2048, 1, 1), step = audio.sampleRate / 8000;
+  let pending = [], phase = 0;
+  proc.onaudioprocess = ({ inputBuffer }) => {
+    const input = inputBuffer.getChannelData(0);
+    if (!speaking || !talk || !token) { pending = []; return; }
+    for (; phase < input.length; phase += step) pending.push(Math.max(-1, Math.min(1, input[phase | 0])) * 32767);
+    phase -= input.length;
+    while (pending.length >= 480) { // 60 ms frames, as the game page sends
+      const pcm = new Int16Array(pending.splice(0, 480));
+      call('/api/panel/talk', { playerId: talk, data: btoa(String.fromCharCode(...new Uint8Array(pcm.buffer))) })
+        .catch((e) => { speaking = false; $('heard').textContent = e.message; });
+    }
+  };
+  audio.createMediaStreamSource(mic).connect(proc);
+  proc.connect(audio.createGain()).connect(audio.destination); // keeps the processor running
+}
+const hold = (on) => () => { speaking = on && !!talk; $('speak').setAttribute('aria-pressed', speaking); };
+$('speak').onpointerdown = hold(true);
+for (const end of ['pointerup', 'pointerleave', 'pointercancel', 'blur']) $('speak').addEventListener(end, hold(false));
+$('speak').onkeydown = (e) => { if (e.key === ' ' && !e.repeat) hold(true)(); };
+$('speak').onkeyup = (e) => { if (e.key === ' ') hold(false)(); };
 </script>
 </body>
 </html>
