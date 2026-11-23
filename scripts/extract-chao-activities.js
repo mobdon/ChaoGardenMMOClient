@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { detectGameFiles } from './game-files.js';
+import { sections } from './ini-sections.js';
 
 const run = promisify(execFile);
 const game = await detectGameFiles(process.argv[2]);
@@ -38,15 +39,6 @@ function peReader(bytes) {
 }
 const exe = await original('sonic2app.exe'), atVA = peReader(exe);
 const hex = value => `0x${value.toString(16).padStart(8, '0')}`;
-function sections(text) {
-  const result = []; let item;
-  for (const line of text.split(/\r?\n/)) {
-    const heading = line.match(/^\[([^\]]+)\]/);
-    if (heading) { item = { name: heading[1], lines: [line], fields: {} }; result.push(item); }
-    else if (item) { item.lines.push(line); const field = line.match(/^([^;=][^=]*)=(.*)$/); if (field) item.fields[field[1].trim()] = field[2].trim(); }
-  }
-  return result;
-}
 const decodeName = bytes => [...bytes.subarray(0, bytes.indexOf(0) < 0 ? bytes.length : bytes.indexOf(0))].map(value => {
   if ((value >= 0x21 && value <= 0x3a) || (value >= 0x41 && value <= 0x5a)) return String.fromCharCode(value + 32);
   if (value >= 0x10 && value <= 0x19) return String.fromCharCode(value + 32);

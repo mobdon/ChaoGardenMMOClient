@@ -2727,7 +2727,8 @@ fn parse_goto(text: &str) -> Option<(u32, u32, Option<[f32; 3]>)> {
         2 => None,
         5 => {
             let p = [v[2].parse::<f32>().ok()?, v[3].parse().ok()?, v[4].parse().ok()?];
-            Some(Some(p).filter(|p| p.iter().all(|x| x.is_finite()))?)
+            Some(p).filter(|p| p.iter().all(|x| x.is_finite()))?;
+            Some(p)
         }
         _ => return None,
     };
