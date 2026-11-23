@@ -9,7 +9,7 @@
 const SLOT = 96 << 20; // a frame's pipe bytes and the game RAM (SA2_MEM1_MB 80 fits; more needs a bigger slot)
 const AUDIO_RING = 1 << 15; // samples (a power of two), half a second
 const PAGES_START = 1024, PAGES_MAX = 16384; // 64 MiB to 1 GiB, as the game build links (browsers commit the maximum)
-import { gotoLine } from './staff-goto.js';
+import { gotoLine, gardenRefused } from './staff-goto.js';
 
 const q = new URLSearchParams(location.search);
 // The MMO has no title or card screen: without a signed-in Chao, go to the login.
@@ -274,8 +274,8 @@ const roomZones = { '': 'hub', 1: 'garden', 2: 'hero', 3: 'dark', 4: 'chao-race'
 let room = null;
 function joinRoom(token, zone) {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws?token=${encodeURIComponent(token)}`);
-  room = { ws, zone };
-  ws.onopen = () => ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: room.zone }));
+  room = { ws, zone, askedAt: performance.now() };
+  ws.onopen = () => { room.askedAt = performance.now(); ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: room.zone })); };
   // The MMO overlay (Inventory, breeding, Tiny Garden) is the client's own module; the game boots without it.
   let overlay = null;
   import('/src/game-overlay.js').then(m => { overlay = m.mountOverlay(ws); }).catch(() => {});
@@ -286,6 +286,13 @@ function joinRoom(token, zone) {
       // The picker's list once the signed-in Chao is known; asked again (every 10 s) until it has a record.
       if (self && !cardIds.size && Date.now() - cardAt > 10000) { cardAt = Date.now(); cardSelf = self; cardChao(token); }
       if (self) firstSheet(self, token);
+      // Not unlocked for this Chao: out of the Hero or Dark garden, back to the lobby.
+      if (self && gardenRefused(room.zone, self.zone, performance.now() - room.askedAt)) {
+        log(`the ${room.zone} garden is not unlocked for this Chao; back to the lobby`, true);
+        room.zone = 'hub';
+        ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: 'hub' }));
+        staffGoto({ room: 'hub' });
+      }
       // Dev (admin) accounts always get the dev menu (gear tuner, debug toggles, info).
       if (self?.admin && !tunerShown) { tunerShown = true; gearTuner(); }
       showCard(self); overlay?.snapshot(m); othersIn(m, token); tagNames(m); breedSnapshot(m);
@@ -604,7 +611,7 @@ function roomArea(area) {
   // Arrived in Chao World from a level (the pause menu's EXIT): no room yet.
   if (!room && zone && mmoToken()) return joinRoom(mmoToken(), zone);
   if (!room || !zone || zone === room.zone) return;
-  room.zone = zone;
+  room.zone = zone; room.askedAt = performance.now();
   if (room.ws.readyState === 1) room.ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: zone }));
 }
 // ---- Chao Karate attack buttons (sa2-boot karate.rs) ----------------------
