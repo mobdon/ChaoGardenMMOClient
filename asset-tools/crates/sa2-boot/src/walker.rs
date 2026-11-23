@@ -85,6 +85,8 @@ static MECH_ROW: AtomicU32 = AtomicU32::new(0);
 /// Ninja's current matrix (3x4, camera included) at the seat node in this display.
 static SEAT: std::sync::Mutex<Option<[[f32; 4]; 3]>> = std::sync::Mutex::new(None);
 static NO_SEAT_SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The seat scale for a (stock pilot root, Chao model root) pair.
+static SCALE: std::sync::Mutex<Option<((u32, u32), f32)>> = std::sync::Mutex::new(None);
 
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
     if !std::env::var("SA2_CHAO_WALKER").is_ok_and(|v| v.trim() == "1") {
@@ -140,6 +142,52 @@ fn node_callback(c: &mut Cpu, m: &mut Mem) {
     }
 }
 
+/// A rest model's height: the y range of its vertices, as the Chao player
+/// measures the Chao (chao_retarget::ChaoRest::height). The walker models
+/// keep their vertex lists in the layout that reader takes.
+fn rest_height(m: &Mem, root: u32) -> Option<f32> {
+    if root == 0 {
+        return None;
+    }
+    let h = crate::chao_retarget::read_chao(&|a| m.r32(a), root, [vec![], vec![]]).height();
+    (h.is_finite() && h > 0.0).then_some(h)
+}
+
+/// The stock pilot's rest height over the player's Chao's (its model root is
+/// at chaowk +0x510, where chao_player reads it), kept per pair of models.
+/// Measured headless: stock pilots 3.989 (Chao Walker) and 3.534 (Dark), a
+/// Dark Chaos Chao 5.451, so 0.73 and 0.65 for that Chao.
+/// unverified: that the seat's frame is upright for the Chao (the stock
+/// pilot's head lies towards -y in it) and where its feet belong; the Chao's
+/// origin is put at the seat node's.
+fn pilot_scale(m: &Mem, seat: u32) -> Option<f32> {
+    let chaowk = crate::chao_player::own_twp(m);
+    if chaowk == 0 {
+        return None;
+    }
+    let key = (m.r32(seat + 0x2C), m.r32(chaowk + 0x510));
+    let mut kept = SCALE.lock().unwrap();
+    if let Some((k, s)) = *kept {
+        if k == key {
+            return Some(s);
+        }
+    }
+    let s = rest_height(m, key.0)? / rest_height(m, key.1)?;
+    eprintln!("chao-walker pilot: seat scale {s} (stock pilot over the Chao's rest height)");
+    *kept = Some((key, s));
+    Some(s)
+}
+
+/// The seat matrix with its axes scaled (its place unchanged).
+fn scaled(mut seat: [[f32; 4]; 3], s: f32) -> [[f32; 4]; 3] {
+    for row in &mut seat {
+        for v in &mut row[..3] {
+            *v *= s;
+        }
+    }
+    seat
+}
+
 fn display(c: &mut Cpu, m: &mut Mem) {
     *SEAT.lock().unwrap() = None;
     original(c, m, WALKER_DISPLAY);
@@ -154,8 +202,9 @@ fn display(c: &mut Cpu, m: &mut Mem) {
         return;
     };
     // Every frame, also before the Chao exists: the first call lets the Chao
-    // player load and make it. Its size is the matrix's scale.
-    // shortcut: scale 1.0 (the Chao at its own model size); scale the seat by the stock pilot's height over the Chao's rest height once both are read (the Chao's is private to chao_player and logged at its first draw).
+    // player load and make it. Its size is the matrix's scale: the stock
+    // pilot's rest height over the Chao's own (1.0 until the Chao exists).
+    let seat = scaled(seat, pilot_scale(m, node).unwrap_or(1.0));
     let drew = crate::chao_player::own_pilot(c, m, &seat);
     // The stock pilot is away only while the player's Chao is drawn in its place.
     set_pilot_hidden(m, node, drew);
@@ -383,6 +432,44 @@ mod tests {
         assert_eq!((m.r32(BODY), m.r32(HEAD)), (6, 0x17), "stock pilot stays");
         m.w8(OBJ2 + 3, 7);
         assert_eq!(seat_node(&m), None, "Eggman's own walker has no seat");
+    }
+
+    #[test]
+    fn a_rest_models_height_and_the_seat_scale() {
+        // Stand-in node with one vertex list in the readers' layout: three
+        // 12-byte vertices at y = -1, 0.5 and 3.
+        const NODE: u32 = 0x8000_8000;
+        let mut m = Mem::default();
+        for k in 0..3 {
+            m.w32(NODE + 32 + 4 * k, 1.0f32.to_bits()); // scale 1
+        }
+        m.w32(NODE + 4, 0x8000_8100);
+        m.w32(0x8000_8100, 0x8000_8200);
+        m.w32(0x8000_8200, 10 << 16 | 0x22);
+        m.w32(0x8000_8204, 3 << 16);
+        for (i, y) in [-1.0f32, 0.5, 3.0].into_iter().enumerate() {
+            m.w32(0x8000_8208 + 12 * i as u32 + 4, y.to_bits());
+        }
+        m.w32(0x8000_8200 + 4 + 40, 0xFF);
+        assert_eq!(rest_height(&m, NODE), Some(4.0));
+        assert_eq!(rest_height(&m, 0), None);
+        assert_eq!(pilot_scale(&m, NODE), None, "no Chao yet");
+        let seat = scaled(
+            [
+                [1.0, 0.0, 0.0, 5.0],
+                [0.0, 2.0, 0.0, 6.0],
+                [0.0, 0.0, 1.0, 7.0],
+            ],
+            0.5,
+        );
+        assert_eq!(
+            seat,
+            [
+                [0.5, 0.0, 0.0, 5.0],
+                [0.0, 1.0, 0.0, 6.0],
+                [0.0, 0.0, 0.5, 7.0]
+            ]
+        );
     }
 
     #[test]
