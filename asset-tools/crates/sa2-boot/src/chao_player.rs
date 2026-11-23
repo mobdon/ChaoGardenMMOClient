@@ -1722,6 +1722,25 @@ thread_local! {
     static PILOT_SAID: Cell<bool> = const { Cell::new(false) };
 }
 
+thread_local! {
+    /// The character exec that ran last (Sonic's, Knuckles's or the walkers').
+    static LAST_EXEC: Cell<u32> = const { Cell::new(0) };
+    /// The handler another module had on the voice start before ours.
+    static PREV_VOICE: Cell<Option<sa2_recomp::rt::Func>> = const { Cell::new(None) };
+}
+
+/// The player's Chao rest model height in its own model units (the y range
+/// of its vertices), once the Chao is live; for scaling the walker's seat.
+pub(crate) fn chao_rest_height(m: &Mem) -> Option<f32> {
+    let Step::Live(chao) = STEP.get() else { return None };
+    let cw = m.r32(chao + 0x34);
+    let root = if cw == 0 { 0 } else { m.r32(cw + 0x510) };
+    if !(0x8000_0000..0x8C00_0000).contains(&root) {
+        return None;
+    }
+    CHAO_REST.with_borrow_mut(|r| Some(r.get_or_insert_with(|| crate::chao_retarget::read_chao(&|a| m.r32(a), root, [vec![], vec![]])).height()))
+}
+
 /// The pilot was drawn this frame or the last: the Chao task's own display
 /// (at the hidden character) stands down.
 fn pilot_recent() -> bool {
@@ -1838,7 +1857,10 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(SONIC_EXEC, |c, m| exec(c, m, SONIC_EXEC));
     c.rt.set_override(KNUX_EXEC, |c, m| exec(c, m, KNUX_EXEC));
     // The walkers' exec: only once walker.rs asks for the pilot (own_pilot).
-    c.rt.set_override(WALKER_EXEC, |c, m| if PILOT_USED.get() { exec(c, m, WALKER_EXEC) } else { original(c, m, WALKER_EXEC) });
+    c.rt.set_override(WALKER_EXEC, |c, m| {
+        LAST_EXEC.set(WALKER_EXEC);
+        if PILOT_USED.get() { exec(c, m, WALKER_EXEC) } else { original(c, m, WALKER_EXEC) }
+    });
     c.rt.set_override(DESTROY_TASK, destroy_task);
     if std::env::var_os("SA2_TEST_CAM").is_some() {
         c.rt.set_override(NJ_SET_CAMERA, test_cam);
@@ -1863,6 +1885,9 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(0x8011_DF44, |c, m| ev_draw(c, m, 0x8011_DF44));
     c.rt.set_override(NODE_TRANSFORM, node_transform);
     sa2_recomp::os::add_frame_hook(ev_frame_hook);
+    // walker.rs (SA2_CHAO_WALKER) installs its own handler there first: kept, and
+    // it takes the voice task's calls while a walker is the character (voice).
+    PREV_VOICE.set(c.rt.overrides.get(&ADX_START_AFS).copied());
     c.rt.set_override(ADX_START_AFS, voice);
     c.rt.set_override(SONIC_DISP, |c, m| display(c, m, SONIC_DISP));
     // SA2_CHAO_KNUX_DISP=0 (debug): leave Knuckles's and Rouge's displays alone.
@@ -1898,6 +1923,11 @@ pub(crate) fn own_chao_twp(m: &Mem) -> u32 {
 fn voice(c: &mut Cpu, m: &mut Mem) {
     // From the start of the run: the drop line plays before the Chao is loaded.
     if c.lr == FROM_VOICE_TASK {
+        // In a walker stage the walker's own handler (its sound in place of
+        // the line) takes the call, when walker.rs installed one.
+        if let (true, Some(prev)) = (LAST_EXEC.get() == WALKER_EXEC, PREV_VOICE.get()) {
+            return prev(c, m);
+        }
         // MMO choice: the player's own voice line is dropped, with no replacement.
         return;
     }
@@ -3230,6 +3260,7 @@ thread_local! {
 }
 
 fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
+    LAST_EXEC.set(addr);
     let task = c.r[3];
     // In Chao World the area is ChaoMain's AL_GetStageNumber (.text 0x27FA0).
     let area = if chao_world(m) && module_linked(m, 60) { call(c, m, rt::sec(m, 60, 1) + 0x27FA0, &[]) as u16 } else { 0 };
