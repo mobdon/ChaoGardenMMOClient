@@ -95,6 +95,7 @@ test('a strip from the game files blends, drops alpha of 64 or less, writes dept
       assert.equal(mat.transparencyMode, 3);
       assert.equal(mat.alphaCutOff, 65 / 255);
       assert.equal(mat.forceDepthWrite, true);
+      assert.equal(mat.depthFunction, Engine.LESS);
     }
     assert.equal(plain.backFaceCulling, true);
     assert.equal(fin.backFaceCulling, false);
