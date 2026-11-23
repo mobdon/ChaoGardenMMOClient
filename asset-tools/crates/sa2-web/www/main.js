@@ -112,10 +112,16 @@ canvas.addEventListener('dblclick', () => document.fullscreenElement ? document.
 // LT/RT = L/R (analog), d-pad.
 const BUTTONS = [[0, 0x0100], [2, 0x0200], [1, 0x0400], [3, 0x0800], [9, 0x1000], [5, 0x0010],
   [14, 0x0001], [15, 0x0002], [13, 0x0004], [12, 0x0008]];
+let cheering = false;
 function writePad() {
   writeExtras();
   const g = [...(navigator.getGamepads ? navigator.getGamepads() : [])].find((p) => p && p.connected);
   const keys = held | (g && g.buttons[8] && g.buttons[8].pressed ? TAB : 0);
+  // A queued Karate bout: each new A press (Space, or the gamepad's A) is the game's cheer for a
+  // discouraged Chao, and the server's bout takes it (queue.rs queue-cheer).
+  const a = !!(held & 16) || !!(g && g.buttons[0] && g.buttons[0].pressed);
+  if (a && !cheering && queue.started && room?.ws.readyState === 1) room.ws.send(JSON.stringify({ type: 'action', action: 'queue-cheer' }));
+  cheering = a;
   pad[0] = keys & 0xff;
   pad[1] = keys >> 8;
   if (!g) {

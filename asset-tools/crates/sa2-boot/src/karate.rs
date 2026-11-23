@@ -83,6 +83,8 @@ const GARDEN_CHAO: u32 = 0xA64;
 const KNOCKED_OUT: u16 = 0x1000;
 /// chao_player.rs INFO: the 0x800 record the player's own Chao is made from.
 const OWN_INFO: u32 = 0x82F0_1000;
+/// main.dol playertwp[0]: player 1's task work.
+const PLAYER: u32 = 0x801E_7768;
 /// main.dol lbl_801E55D8: the pads; *(+0) +0x10 is pad 1's presses, 4 is A.
 const PADS: u32 = 0x801E_55D8;
 const STRONG_ABOVE: f32 = 1600.0;
@@ -260,6 +262,17 @@ fn menu(c: &mut Cpu, m: &mut Mem) {
     let task = c.r[3];
     let work = m.r32(task + 0x34);
     let Some((_, bss)) = sections(m) else { return rel_original(c, m, HOOKED.get() + MENU, menu) };
+    // The ring's floor: main.dol fn_8002334C builds each frame's collision
+    // list around player 1 (playertwp[0], 0x801E7768, position +0x14), and
+    // MOV_DetectCollision (0x8002D8E0, via fn_80023808) only sees that list.
+    // Seen headless 2026-11-23: in this build player 1 falls without end in
+    // the Karate stage (150, -185115, 0 and going), so the fighters found no
+    // floor; held at the ring's height (fn_72_5020's start height, 8) they
+    // land at 7.5 and fight. MMO glue, not the game's own.
+    let player = m.r32(PLAYER);
+    if player != 0 {
+        m.w32(player + 0x18, 8.0f32.to_bits());
+    }
     let state = m.r32(bss + 8);
     if state != 0 {
         let pvp = PVP.get();
@@ -318,9 +331,8 @@ fn fighter(c: &mut Cpu, m: &mut Mem) {
     }
     let i = usize::from(m.r16(work + 2) & 1);
     let f = pvp.fighters[i];
-    // The fighter stands where the server has it. Seen headless 2026-11-23:
-    // left to MOV_DetectCollision the fighters find no floor in this build
-    // and fall from their first frame, which fn_72_F5B0 calls a ring-out.
+    // The fighter stands where the server has it, whatever its own movement
+    // and floor collision made of the frame.
     let place = |m: &mut Mem| {
         for (k, p) in f.pos.iter().enumerate() {
             m.w32(twp + 0x14 + 4 * k as u32, p.to_bits());
