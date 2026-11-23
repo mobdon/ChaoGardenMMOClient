@@ -335,9 +335,13 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
         }
         RIDER_OBJ.set(obj);
     } else if n > 0 && SELF_CAP.get() {
-        // Self mode: the ball as he draws it, under the view scaled to the Chao.
-        (c.r, c.f[1]) = (regs, f1);
-        original(c, m, addr);
+        // Self mode (Chao World): no spin ball; the Chao stays and plays its
+        // own motion in the air (mob 2026-11-23: the ball only in Sonic's and
+        // Shadow's own levels). SA2_SELF_BALL=1 (debug): the ball as he draws it.
+        if std::env::var("SA2_SELF_BALL").is_ok_and(|v| v == "1") {
+            (c.r, c.f[1]) = (regs, f1);
+            original(c, m, addr);
+        }
     } else if n > 0 {
         // In the ball the motion draw is the ball model alone (2 nodes, lvl9\g30b).
         let obj2 = m.r32(P1_OBJ2);
@@ -1892,10 +1896,20 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
         m.w32(cw + 0x08, 0);
         m.w32(cw + 0x10, 0);
     }
+    // Swimming: drawn where the native swim holds a Chao, just under the
+    // surface, while the hidden character walks the pond's floor.
+    let keep_y = m.r32(cw.wrapping_add(0x18));
+    let swim = SWIM.get().filter(|_| own);
+    if let Some(level) = swim {
+        m.w32(cw + 0x18, (level - SWIM_HEIGHT).to_bits());
+    }
     if turn {
         m.w32(cw + 0x0C, chao_yaw(keep_yaw));
     }
     chao_display_inner(c, m);
+    if swim.is_some() {
+        m.w32(cw + 0x18, keep_y);
+    }
     if own {
         m.w32(cw + 0x08, keep.0);
         m.w32(cw + 0x10, keep.1);
@@ -2566,7 +2580,10 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
         // The player's Chao on its native rig: its foot nodes for the boots.
         if NATIVE_DRAW.get() {
             let i = CHAO_NODE.replace(CHAO_NODE.get() + 1);
-            if i == 6 { DRAWN_FOOT.set(c.r[3]); }
+            // Only a real model node: in the Chao's fly and swim motions (130,
+            // 142) the walker's r3 here is not one, and reading it as a model
+            // ran into unmapped memory (the game stopped 15 frames into a jump).
+            if i == 6 { DRAWN_FOOT.set(if plain_object(m, c.r[3]) { c.r[3] } else { 0 }); }
             let own = mtx(m, m.r32(NJ_CURRENT_MATRIX));
             // Wearing Shadow's shoes and moving: the web hub's skate overlay
             // (skate.rs) on its 8 mapped nodes, from the rider's live pose.
@@ -2860,6 +2877,11 @@ fn skate_blend(step: bool) -> f32 {
     if LEVEL_RIG.get() {
         return 1.0;
     }
+    // Swimming or in the air in Chao World the Chao plays its own motion: no overlay, no jets.
+    if SWIM.get().is_some() || AIR.get() {
+        SKATE_PROGRESS.set(0.0);
+        return 0.0;
+    }
     if step {
         // While it moves at all (walk 578 or run 119): the hidden character's
         // skeleton is in its walk, run or skate then, and the Chao's body,
@@ -3008,6 +3030,20 @@ thread_local! {
     static SONIC_MODELS: std::cell::RefCell<std::collections::BTreeMap<u32, u32>> = Default::default();
     /// This draw's view-space matrices of the Chao nodes the try-on uses.
     static NODE_MATS: std::cell::RefCell<std::collections::BTreeMap<usize, [[f32; 4]; 3]>> = Default::default();
+}
+
+/// A Ninja object that can be read as a model: itself, its model's two lists
+/// and its child and sibling links all in RAM (or absent), one level down too.
+fn plain_object(m: &Mem, o: u32) -> bool {
+    let ram = |a: u32| (0x8000_0000..0x8C00_0000).contains(&a);
+    let node = |o: u32| {
+        if !ram(o) {
+            return false;
+        }
+        let (mdl, child, sib) = (m.r32(o + 4), m.r32(o + 0x2C), m.r32(o + 0x30));
+        (mdl == 0 || (ram(mdl) && [m.r32(mdl), m.r32(mdl + 4)].iter().all(|&l| l == 0 || ram(l)))) && [child, sib].iter().all(|&l| l == 0 || ram(l))
+    };
+    node(o) && [m.r32(o + 0x2C), m.r32(o + 0x30)].iter().all(|&l| l == 0 || node(l))
 }
 
 /// Under the hub's shoes the Chao's own foot is not drawn, as the hub hides
@@ -3516,6 +3552,10 @@ fn spin_flash(c: &mut Cpu, m: &mut Mem) {
     if !self_drive(m) || w == 0 || cw == 0 || m.r8(w + 1) != 0 {
         return original(c, m, SPIN_FLASH_DISP);
     }
+    // Chao World: no spin effect either (it goes with the ball).
+    if !std::env::var("SA2_SELF_BALL").is_ok_and(|v| v == "1") {
+        return;
+    }
     let keep: Vec<u32> = (0..4).map(|i| m.r32(w + 4 + 4 * i)).collect();
     let (s, keep_scale) = (BOARD_SCALE, m.r32(w + 0x1C));
     for i in 0..3u32 {
@@ -3784,6 +3824,10 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             eprintln!("yaw: frame {} char {:#06x} native pos ({:.2},{:.2})", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r32(own + 0x0C) & 0xFFFF, f(own + 0x14), f(own + 0x1C));
         }
     } else if let (true, Step::Live(chao)) = (pmove, STEP.get()) {
+        let pwp = m.r32(P1_OBJ2);
+        if (0x8000_0000..0x8C00_0000).contains(&pwp) {
+            PRE_VY.set(f32::from_bits(m.r32(pwp + 0x68)));
+        }
         player_move(c, m, addr, task, chao);
     }
     // A new stage or Chao World area drops the Chao task:
@@ -3894,7 +3938,9 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             let last = LAST_MOTION.get();
             let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
             let on_board = !chao_world(m) && BOARD.with_borrow(|b| b.as_ref().is_some_and(|b| f <= b.0 + 1));
-            let want = if d < 0.01 || on_board { 0 } else if d >= if last == 119 { 0.9 } else { 1.0 } { 119 } else { 578 };
+            // Chao World: swimming or in the air the Chao plays its own motion for it.
+            let own_state = if me { chao_world_state(c, m, task, chao, area) } else { (SWIM.set(None), AIR.set(false)); None };
+            let want = if let Some(mo) = own_state { mo } else if d < 0.01 || on_board { 0 } else if d >= if last == 119 { 0.9 } else { 1.0 } { 119 } else { 578 };
             if want != last {
                 call(c, m, rt::sec(m, 60, 1) + AL_SET_MOTION_LINK, &[chao, want]);
                 LAST_MOTION.set(want);
@@ -4077,6 +4123,172 @@ const MIXED_ACTIONS: u32 = 0x82F0_2000;
 thread_local! {
     static SHADOW_MOVES: Cell<bool> = const { Cell::new(false) };
     static SHADOW_STYLE: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+// ---- Chao World: swimming, the jump's look and flying (mob 2026-11-23) ----
+// The hidden character still moves the body (player_move); these change what
+// the Chao plays and, in flight, his fall and forward speed.
+
+/// Garden water levels by ChaoMain's stage number (AL_CheckWater .text
+/// 0x48964, .rodata 0x9308..0x9310): Neutral, Hero, Dark. No other area has water.
+const WATER_LEVEL: [(u16, f32); 3] = [(1, -2.2), (2, -1.5), (3, -1.0)];
+/// AL_CheckWater: in the water when the level is above the Chao's spot by more than this (.rodata 0x9318).
+const WATER_DEPTH: f32 = 2.0;
+/// The swim behaviour holds the Chao this far below the level (fn_60_482DC, .rodata 0x92CC).
+const SWIM_HEIGHT: f32 = 2.1;
+/// The Chao's swim motion by its Swim skill (fn_60_47A50 and the race's
+/// fn_76_CB54: below ChaoGlobal +310 (300) motion 142, below +312 (2000) 148, else 145).
+const SWIM_MOTIONS: [u32; 3] = [142, 148, 145];
+/// The Chao's motion in the air: 130, what the race plays when a Chao leaves
+/// a ledge and while it flies (ChaoStgRace fn_76_CA0C / fn_76_D1A4).
+/// shortcut: no separate native jump motion was identified; upgrade when one is.
+const AIR_MOTION: u32 = 130;
+const AL_PARAMETER_GET_SKILL: u32 = 0x2_0934;
+const CHAO_GLOBAL: u32 = 0x2A50; // ChaoMain .data
+
+/// A flag the pad read sees too (the game reads the pad on another thread than its tasks run on).
+struct Flag(std::sync::atomic::AtomicBool);
+impl Flag {
+    const fn new() -> Self { Flag(std::sync::atomic::AtomicBool::new(false)) }
+    fn get(&self) -> bool { self.0.load(std::sync::atomic::Ordering::Relaxed) }
+    fn set(&self, v: bool) { self.0.store(v, std::sync::atomic::Ordering::Relaxed) }
+    fn replace(&self, v: bool) -> bool { self.0.swap(v, std::sync::atomic::Ordering::Relaxed) }
+}
+/// The hidden character is off the ground (Chao World, self mode).
+static AIR: Flag = Flag::new();
+/// Jump was let go since leaving the ground; the fly press is held; that press is still down.
+static AIR_RELEASED: Flag = Flag::new();
+static FLY: Flag = Flag::new();
+static FLY_MASK: Flag = Flag::new();
+
+thread_local! {
+    /// In garden water: the water level.
+    static SWIM: Cell<Option<f32>> = const { Cell::new(None) };
+    /// Flight speed (forward, up) by the race's rule; his own fall per frame, measured while he is in the air.
+    static FLY_V: Cell<Option<(f32, f32)>> = const { Cell::new(None) };
+    static HIS_GRAVITY: Cell<f32> = const { Cell::new(0.0) };
+    static PRE_VY: Cell<f32> = const { Cell::new(0.0) };
+    static FLY_SEEN: Cell<(u8, u16)> = const { Cell::new((0, 0)) };
+}
+
+pub(crate) fn water_level(area: u16) -> Option<f32> {
+    WATER_LEVEL.iter().find(|w| w.0 == area).map(|w| w.1)
+}
+
+pub(crate) fn in_water(y: f32, level: f32) -> bool {
+    level > y + WATER_DEPTH
+}
+
+pub(crate) fn swim_motion(skill: u32, low: u32, mid: u32) -> u32 {
+    SWIM_MOTIONS[if skill < low { 0 } else if skill < mid { 1 } else { 2 }]
+}
+
+/// One frame of the race's flight (ChaoStgRace fn_76_C500): forward
+/// acceleration 0.018 + 0.067 s/10000, sink 0.01 + 0.005 (10000 - s)/10000,
+/// drag 0.1 on the forward speed and 0.05 on the vertical; s = the Fly skill.
+pub(crate) fn fly_step(v: (f32, f32), skill: f32) -> (f32, f32) {
+    let s = skill.clamp(0.0, 10000.0);
+    let (acc, sink) = (0.018 + 0.067 * s / 10000.0, 0.01 + 0.005 * (10000.0 - s) / 10000.0);
+    ((v.0 + acc) * 0.9, (v.1 - sink) * 0.95)
+}
+
+const PAD_BUTTON_A: u16 = 0x0100;
+
+/// Controller 1 as the game is to read it. In the air in Chao World the
+/// second press of jump starts the Chao's flight and is held back from the
+/// game, so the character's own second-press move (homing attack) never
+/// fires; letting go ends the flight. The held-back press stays held back
+/// after landing until it is let go (it would be a new jump).
+pub(crate) fn pad_filter(mut p: sa2_asset_tools::input::PadStatus) -> sa2_asset_tools::input::PadStatus {
+    let a = p.button & PAD_BUTTON_A != 0;
+    if !a {
+        FLY.set(false);
+        FLY_MASK.set(false);
+        if AIR.get() {
+            AIR_RELEASED.set(true);
+        }
+    } else if AIR.get() && AIR_RELEASED.get() {
+        if !FLY.replace(true) && std::env::var("SA2_FLY_LOG").is_ok_and(|v| v == "1") {
+            eprintln!("fly: second press in the air: held back from the game, flight on");
+        }
+        FLY_MASK.set(true);
+    }
+    if !AIR.get() {
+        AIR_RELEASED.set(false);
+        FLY.set(false);
+    }
+    if FLY_MASK.get() {
+        p.button &= !PAD_BUTTON_A;
+    }
+    p
+}
+
+/// Chao World, self mode, after the hidden character moved the body: is the
+/// Chao swimming or in the air, and the motion it plays then (None: the usual
+/// stand / walk / run). In flight his speed is set by the race's rule.
+fn chao_world_state(c: &mut Cpu, m: &mut Mem, task: u32, chao: u32, area: u16) -> Option<u32> {
+    let (own, cw, pwp) = (m.r32(task + 0x34), m.r32(chao + 0x34), m.r32(P1_OBJ2));
+    if own == 0 || cw == 0 {
+        (SWIM.set(None), AIR.set(false));
+        return None;
+    }
+    let f = |m: &Mem, a: u32| f32::from_bits(m.r32(a));
+    let s1 = rt::sec(m, 60, 1);
+    let level = water_level(area).filter(|&l| in_water(f(m, cw + 0x18), l));
+    if SWIM.replace(level).is_some() != level.is_some() {
+        eprintln!("chao-player: {} (area {area}, height {:.2}, at {:.1} {:.1})", if level.is_some() { "into the water: swimming" } else { "out of the water" }, f(m, cw + 0x18), f(m, cw + 0x14), f(m, cw + 0x1C));
+    }
+    // His status flags (task work +4): bit 0 on the ground (0x1 standing, 0x400 in a jump, seen in the lobby).
+    let air = level.is_none() && m.r16(own + 4) & 1 == 0 && m.r8(own) != 0;
+    if std::env::var("SA2_FLY_LOG").is_ok_and(|v| v == "1") && FLY_SEEN.replace((m.r8(own), m.r16(own + 4))) != (m.r8(own), m.r16(own + 4)) {
+        eprintln!("fly: his state {} flags {:#x} (pad A {}, fly {})", m.r8(own), m.r16(own + 4), crate::pad::port0().button & PAD_BUTTON_A != 0, FLY.get());
+    }
+    if AIR.replace(air) != air && std::env::var("SA2_FLY_LOG").is_ok_and(|v| v == "1") {
+        eprintln!("fly: {} (his state {}, flags {:#x})", if air { "in the air" } else { "landed" }, m.r8(own), m.r16(own + 4));
+    }
+    let speed = |m: &Mem| (0x8000_0000..0x8C00_0000).contains(&pwp).then(|| (f(m, pwp + 0x64), f(m, pwp + 0x68)));
+    if air && !FLY.get() {
+        // His own fall per frame, for the flight to cancel.
+        if let Some((_, vy)) = speed(m) {
+            let g = PRE_VY.get() - vy;
+            if (0.0..1.0).contains(&g) {
+                HIS_GRAVITY.set(g);
+            }
+            if std::env::var("SA2_FLY_LOG").is_ok_and(|v| v == "1") {
+                eprintln!("air: f{} height {:.2} his speed ({:.3}, {:.3}, {:.3}) before his step up {:.3}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), f(m, cw + 0x18), f(m, pwp + 0x64), vy, f(m, pwp + 0x6C), PRE_VY.get());
+            }
+        }
+    }
+    if air && FLY.get() {
+        if let Some(now) = speed(m) {
+            let skill = call(c, m, s1 + AL_PARAMETER_GET_SKILL, &[chao, 1]) as f32;
+            let v = fly_step(FLY_V.get().unwrap_or(now), skill);
+            FLY_V.set(Some(v));
+            // His next step adds his own fall before it moves: given back here.
+            m.w32(pwp + 0x64, v.0.to_bits());
+            m.w32(pwp + 0x68, (v.1 + HIS_GRAVITY.get()).to_bits());
+            // The Chao's own fall also builds up on the shared body in the air
+            // (its MOVE_WORK velocity; measured: a jump tops out at 27 units,
+            // not his 34): cleared in flight, so only the race's sink acts.
+            let mw = m.r32(chao + 0x38);
+            if mw != 0 {
+                m.w32(mw + 0x04, 0);
+                m.w32(mw + 0x10, 0);
+            }
+            if std::env::var("SA2_FLY_LOG").is_ok_and(|v| v == "1") {
+                eprintln!("fly: f{} skill {skill} speed forward {:.3} up {:.3} (his fall {:.3}) height {:.2}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), v.0, v.1, HIS_GRAVITY.get(), f(m, cw + 0x18));
+            }
+        }
+    } else {
+        FLY_V.set(None);
+    }
+    if level.is_some() {
+        let skill = call(c, m, s1 + AL_PARAMETER_GET_SKILL, &[chao, 0]);
+        let g = rt::sec(m, 60, 5) + CHAO_GLOBAL;
+        return Some(swim_motion(skill, u32::from(m.r16(g + 310)), u32::from(m.r16(g + 312))));
+    }
+    // SA2_AIR_MOTION=n (debug): another Chao motion in the air.
+    air.then(|| std::env::var("SA2_AIR_MOTION").ok().and_then(|v| v.parse().ok()).unwrap_or(AIR_MOTION))
 }
 
 /// The Chao's movement follows the shoes it wears (mob 2026-11-23), in Chao
@@ -4495,6 +4707,44 @@ fn create_at(c: &mut Cpu, m: &mut Mem, pos: [u32; 3], param: u32) -> Step {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn garden_water_and_swim_motion_as_the_game_decides() {
+        use super::{in_water, swim_motion, water_level};
+        assert_eq!(water_level(1), Some(-2.2), "Neutral garden");
+        assert_eq!(water_level(7), None, "the lobby has no water");
+        assert!(in_water(-4.3, -2.2) && !in_water(-4.1, -2.2), "two below the level");
+        assert_eq!([swim_motion(0, 300, 2000), swim_motion(300, 300, 2000), swim_motion(2000, 300, 2000)], [142, 148, 145]);
+    }
+
+    #[test]
+    fn flight_settles_at_the_races_speeds() {
+        // Drag against a steady push: forward 9 x acceleration, sink 19 x the sink step.
+        let mut v = (0.0f32, 1.0f32);
+        for _ in 0..600 { v = super::fly_step(v, 0.0); }
+        assert!((v.0 - 0.018 * 9.0).abs() < 1e-3 && (v.1 + 0.015 * 19.0).abs() < 1e-3, "{v:?}");
+        let mut w = (0.0f32, 0.0f32);
+        for _ in 0..600 { w = super::fly_step(w, 10000.0); }
+        assert!(w.0 > v.0 && w.1 > v.1, "a better flier is faster and sinks less: {w:?}");
+    }
+
+    #[test]
+    fn second_jump_press_in_the_air_is_the_flight() {
+        use super::{pad_filter, AIR, FLY, PAD_BUTTON_A};
+        let pad = |a: bool| { let mut p = sa2_asset_tools::input::PadStatus::default(); if a { p.button = PAD_BUTTON_A; } p };
+        AIR.set(false);
+        assert_eq!(pad_filter(pad(true)).button, PAD_BUTTON_A, "the jump press reaches the game");
+        AIR.set(true);
+        assert_eq!(pad_filter(pad(true)).button, PAD_BUTTON_A, "still the same press");
+        assert_eq!(pad_filter(pad(false)).button, 0);
+        assert_eq!(pad_filter(pad(true)).button, 0, "the second press is held back");
+        assert!(FLY.get());
+        AIR.set(false);
+        assert_eq!(pad_filter(pad(true)).button, 0, "held through the landing: not a new jump");
+        assert!(!FLY.get());
+        assert_eq!(pad_filter(pad(false)).button, 0);
+        assert_eq!(pad_filter(pad(true)).button, PAD_BUTTON_A, "a new press on the ground jumps");
+    }
+
     #[test]
     fn fist_two_is_fist_ones_mirror() {
         use super::{mirror_fist, mul34, tune_matrix, tune_values};
