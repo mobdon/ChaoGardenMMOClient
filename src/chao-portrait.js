@@ -107,7 +107,9 @@ export async function openChaoScene(canvas, player, options = {}) {
   if (lightRow) {
     const light = ninjaLight(lightRow);
     // Every frame: the face and the look swap in materials of their own while the Chao is shown.
-    scene.onBeforeRenderObservable.add(() => { for (const mesh of visual.getChildMeshes(false)) applyNinjaLight(mesh.material, light); });
+    // Once now too, so a caller that waits for the scene to be ready (the picture sheet) waits for the lit shaders.
+    const lightAll = () => { for (const mesh of visual.getChildMeshes(false)) applyNinjaLight(mesh.material, light); };
+    lightAll(); scene.onBeforeRenderObservable.add(lightAll);
   }
   const { min, max } = visual.getHierarchyBoundingVectors();
   const height = max.y - min.y;
