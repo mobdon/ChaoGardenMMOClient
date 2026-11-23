@@ -179,3 +179,294 @@ fn transporter_parts_keep_source_hashes_and_geometry() {
             .any(|c| !c.vertices.is_empty()));
     }
 }
+
+/// The DLL reader against the SA Tools split of the same model: same tree, same vertices.
+#[test]
+#[ignore = "requires SA2_DATA_DLL (Steam Data_DLL.dll) and the local SA Tools extraction"]
+fn chao_child_from_the_dll_matches_the_split_model() {
+    let dll = std::fs::read(std::env::var_os("SA2_DATA_DLL").expect("set SA2_DATA_DLL")).unwrap();
+    let ours = sa2_asset_tools::chao_dll::read_chao_model(&dll, 0).unwrap();
+    let split = model::read_model(
+        &std::fs::read(
+            root().join(".local/extracted/pc-chao/Chao/models/AL_RootObject/al_ncz.sa2mdl"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(ours.nodes.len(), 40);
+    assert_eq!(ours.attachments.len(), 16);
+    for (a, b) in ours.nodes.iter().zip(&split.nodes) {
+        assert_eq!(
+            (a.flags, a.position, a.rotation_bams, a.scale),
+            (b.flags, b.position, b.rotation_bams, b.scale)
+        );
+        assert_eq!(a.attach_offset == 0, b.attach_offset == 0);
+    }
+    for (a, b) in ours.attachments.iter().zip(&split.attachments) {
+        let words = |m: &model::ChunkAttachment| {
+            (
+                m.vertex_chunks
+                    .iter()
+                    .map(|c| {
+                        (
+                            c.kind,
+                            c.flags,
+                            c.index_offset,
+                            c.vertices
+                                .iter()
+                                .map(|v| v.raw_words.clone())
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                // Strips only: the split tool rewrites one specular word of material chunks (DLL 0xFF7F, split 0x007F).
+                m.polygon_chunks
+                    .iter()
+                    .filter(|c| c.kind >= 64)
+                    .map(|c| (c.kind, c.flags, c.raw_words.clone()))
+                    .collect::<Vec<_>>(),
+                m.polygon_chunks
+                    .iter()
+                    .map(|c| (c.kind, c.flags, c.raw_words.len()))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(words(a), words(b));
+    }
+}
+
+/// The stand motion's table row and keys from the DLL against the SA Tools split of the same motion.
+#[test]
+#[ignore = "requires SA2_DATA_DLL (Steam Data_DLL.dll) and the local SA Tools extraction"]
+fn chao_stand_motion_from_the_dll_matches_the_split_motion() {
+    let dll = std::fs::read(std::env::var_os("SA2_DATA_DLL").expect("set SA2_DATA_DLL")).unwrap();
+    let ours = sa2_asset_tools::chao_dll::read_chao_motion(&dll, 0).unwrap();
+    // Row 0 as the split's table lists it: LoopProperty 1, TransitionSpeed FFFFFFD8, EndFrame 13, PlaySpeed 0.12.
+    assert_eq!((ours.mode, ours.next, ours.link_step), (1, -1, -40));
+    assert_eq!(
+        (ours.start_frame, ours.end_frame, ours.play_speed),
+        (0., 13., 0.12)
+    );
+    let split = motion::read_motion(
+        &std::fs::read(
+            root().join(".local/extracted/pc-chao/Chao/models/al_motion_table/alm_tati.saanim"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        (ours.motion.frame_count, ours.motion.type_flags),
+        (split.frame_count, split.type_flags)
+    );
+    // Decoded values, not raw words: the split tool stores the DLL's -0.0 as 0.0.
+    let keys = |m: &motion::Motion| {
+        m.parts
+            .iter()
+            .map(|p| {
+                p.channels
+                    .iter()
+                    .map(|c| {
+                        let keys = c
+                            .keys
+                            .iter()
+                            .map(|k| (k.frame, k.floats.clone(), k.integers.clone()));
+                        (c.kind.clone(), keys.collect::<Vec<_>>())
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(keys(&ours.motion), keys(&split));
+}
+
+/// The child Chao with its stand motion as a GLB, from the real game files only.
+/// Writes the file when SA2_CHAO_GLB_OUT is set (kept local, never committed).
+#[test]
+#[ignore = "requires SA2_DATA_DLL and SA2_GD_PC (Steam resource/gd_PC)"]
+fn chao_child_glb_from_the_game_files() {
+    use sa2_asset_tools::{chao_dll, chao_glb, chao_palette};
+    let dll = std::fs::read(std::env::var_os("SA2_DATA_DLL").expect("set SA2_DATA_DLL")).unwrap();
+    let gd = PathBuf::from(std::env::var_os("SA2_GD_PC").expect("set SA2_GD_PC"));
+    let model = chao_dll::read_chao_model(&dll, 0).unwrap();
+    let stand = chao_dll::read_chao_motion(&dll, 0).unwrap();
+    let pngs = chao_glb::body_textures(
+        &model,
+        &std::fs::read(gd.join("al_body.prs")).unwrap(),
+        &chao_palettes(&gd),
+        &chao_palette::Ratios::CHILD,
+    )
+    .unwrap();
+    let glb = chao_glb::export(
+        &model,
+        &pngs,
+        &[("alm_tati", &stand)],
+        &chao_glb::OPEN_EYES_NO_MOUTH,
+    )
+    .unwrap();
+    let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
+    let doc: Value = serde_json::from_slice(&glb[20..20 + json_len]).unwrap();
+    assert_eq!(doc["nodes"].as_array().unwrap().len(), 40);
+    assert_eq!(
+        doc["nodes"][0]["name"].as_str().unwrap().get(..11),
+        Some("000_object_")
+    );
+    assert_eq!(doc["animations"][0]["name"], "alm_tati");
+    for node in chao_glb::OPEN_EYES_NO_MOUTH {
+        assert!(doc["nodes"][node]["mesh"].is_null());
+    }
+    assert!(doc["nodes"][18]["mesh"].is_number() && doc["nodes"][21]["mesh"].is_number());
+    let speed =
+        &doc["asset"]["extras"]["chaoBehaviour"]["clips"][0]["tableProperties"]["PlaySpeed"];
+    assert_eq!(speed.as_f64().unwrap() as f32, 0.12);
+    if let Some(out) = std::env::var_os("SA2_CHAO_GLB_OUT") {
+        std::fs::write(out, &glb).unwrap();
+    }
+}
+
+fn chao_palettes(gd: &std::path::Path) -> Vec<sa2_asset_tools::chao_palette::Colors> {
+    use sa2_asset_tools::chao_palette::{read_slots, SLOT_FILES};
+    let files: Vec<u8> = SLOT_FILES
+        .iter()
+        .flat_map(|name| std::fs::read(gd.join(format!("{name}.GVP"))).unwrap())
+        .collect();
+    read_slots(&files).unwrap()
+}
+
+/// Every model of AL_RootObject converts, each with the type whose palette row holds its
+/// indexed textures (family = index / 6, type = family + 2, children all type 2); and a new
+/// child's blend is al_nc00 itself.
+#[test]
+#[ignore = "requires SA2_DATA_DLL and SA2_GD_PC (Steam resource/gd_PC)"]
+fn every_chao_body_converts_with_its_blended_palette() {
+    use sa2_asset_tools::{chao_dll, chao_glb, chao_palette};
+    let dll = std::fs::read(std::env::var_os("SA2_DATA_DLL").expect("set SA2_DATA_DLL")).unwrap();
+    let gd = PathBuf::from(std::env::var_os("SA2_GD_PC").expect("set SA2_GD_PC"));
+    let body = std::fs::read(gd.join("al_body.prs")).unwrap();
+    let slots = chao_palettes(&gd);
+    let child = chao_palette::blend(&slots, &chao_palette::Ratios::CHILD).unwrap();
+    assert_eq!(child, Some(slots[0]));
+    for index in 0..144 {
+        let family = index / 6;
+        let ratios = chao_palette::Ratios {
+            chao_type: if family < 3 { 2 } else { family as u8 + 2 },
+            h_pos: 0.4,
+            v_pos: -0.7,
+            a_pos: if family == 2 { -1. } else { 1. },
+            growth: 0.5,
+        };
+        let model = chao_dll::read_chao_model(&dll, index).unwrap();
+        chao_glb::body_textures(&model, &body, &slots, &ratios)
+            .unwrap_or_else(|e| panic!("model {index}: {e}"));
+    }
+}
+
+/// Every body family writes as one morphing model: all targets on every mesh, the family
+/// record on the root, the face tagged.
+#[test]
+#[ignore = "requires SA2_DATA_DLL and SA2_GD_PC (Steam resource/gd_PC)"]
+fn every_chao_family_writes_with_its_morph_targets() {
+    use sa2_asset_tools::{chao_dll, chao_glb, chao_palette};
+    let dll = std::fs::read(std::env::var_os("SA2_DATA_DLL").expect("set SA2_DATA_DLL")).unwrap();
+    let gd = PathBuf::from(std::env::var_os("SA2_GD_PC").expect("set SA2_GD_PC"));
+    let body = std::fs::read(gd.join("al_body.prs")).unwrap();
+    let slots = chao_palettes(&gd);
+    let stand = chao_dll::read_chao_motion(&dll, 0).unwrap();
+    for base in (0..108).step_by(6).filter(|b| !(6..18).contains(b)) {
+        let names = chao_glb::family_targets(base).unwrap();
+        let models: Vec<_> = names
+            .iter()
+            .map(|(_, index)| chao_dll::read_chao_model(&dll, *index).unwrap())
+            .collect();
+        let targets: Vec<_> = names.iter().map(|n| n.0.as_str()).zip(&models).collect();
+        let model = chao_dll::read_chao_model(&dll, base).unwrap();
+        let family = base / 6;
+        let ratios = chao_palette::Ratios {
+            chao_type: if family < 3 { 2 } else { family as u8 + 2 },
+            ..chao_palette::Ratios::CHILD
+        };
+        let pngs = chao_glb::body_textures(&model, &body, &slots, &ratios).unwrap();
+        let glb = chao_glb::export_family(
+            &model,
+            &pngs,
+            &[("alm_tati", &stand)],
+            &[],
+            &chao_glb::Family {
+                name: "family",
+                targets: &targets,
+                texture_names: chao_glb::body_texture_names(&body).unwrap(),
+            },
+        )
+        .unwrap_or_else(|e| panic!("family {base}: {e}"));
+        let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
+        let doc: Value = serde_json::from_slice(&glb[20..20 + json_len]).unwrap();
+        for mesh in doc["meshes"].as_array().unwrap() {
+            assert_eq!(
+                mesh["extras"]["targetNames"].as_array().unwrap().len(),
+                names.len()
+            );
+            for primitive in mesh["primitives"].as_array().unwrap() {
+                assert_eq!(primitive["targets"].as_array().unwrap().len(), names.len());
+            }
+        }
+        let nodes = doc["nodes"].as_array().unwrap();
+        let record = &nodes[0]["extras"]["chaoMorph"];
+        assert_eq!(record["targets"].as_array().unwrap().len(), names.len());
+        assert!(record["nodeOffsets"]["p"].is_object());
+        assert_eq!(nodes[18]["extras"]["chaoFace"], "eye");
+        assert_eq!(nodes[22]["extras"]["lidSide"], "right");
+        let mouths: Vec<_> = nodes[40..]
+            .iter()
+            .map(|n| n["extras"]["mouthTexture"].as_str().unwrap())
+            .collect();
+        assert_eq!(mouths.len(), 2, "family {base}: {mouths:?}");
+        assert!(mouths.contains(&"al_mouth02") && mouths.contains(&"al_mouth03"));
+        if base == 0 {
+            if let Some(out) = std::env::var_os("SA2_CHAO_FAMILY_OUT") {
+                std::fs::write(out, &glb).unwrap();
+            }
+        }
+    }
+}
+
+/// The garden egg models and motions read from the game program at their traced addresses.
+#[test]
+#[ignore = "requires SA2_EXE (Steam sonic2app.exe) and SA2_GD_PC"]
+fn garden_eggs_from_the_game_program() {
+    use sa2_asset_tools::{chao_dll, chao_glb, chao_palette};
+    let exe = std::fs::read(std::env::var_os("SA2_EXE").expect("set SA2_EXE")).unwrap();
+    let gd = PathBuf::from(std::env::var_os("SA2_GD_PC").expect("set SA2_GD_PC"));
+    let body = std::fs::read(gd.join("al_body.prs")).unwrap();
+    let slots = chao_palettes(&gd);
+    let frames = |va, parts| chao_dll::read_motion_at(&exe, va, parts, false).unwrap();
+    let (shake, pon, kyoro) = (
+        frames(chao_dll::EGG_SHAKE, 1),
+        frames(chao_dll::HATCH_PON, 3),
+        frames(chao_dll::HATCH_KYORO, 3),
+    );
+    assert_eq!(
+        [
+            shake.motion.frame_count,
+            pon.motion.frame_count,
+            kyoro.motion.frame_count
+        ],
+        [16, 27, 20]
+    );
+    for (va, nodes, clips) in [
+        (chao_dll::EGG, 1, vec![("Egg", &shake)]),
+        (
+            chao_dll::HATCHING_EGG,
+            3,
+            vec![("Pon", &pon), ("Kyoro", &kyoro)],
+        ),
+    ] {
+        let model = chao_dll::read_model_at(&exe, va).unwrap();
+        assert_eq!(model.nodes.len(), nodes);
+        let pngs =
+            chao_glb::body_textures(&model, &body, &slots, &chao_palette::Ratios::CHILD).unwrap();
+        let glb = chao_glb::export(&model, &pngs, &clips, &[]).unwrap();
+        let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
+        let doc: Value = serde_json::from_slice(&glb[20..20 + json_len]).unwrap();
+        assert_eq!(doc["animations"].as_array().unwrap().len(), clips.len());
+        assert!(doc["asset"]["extras"]["chaoBehaviour"]["clips"][0]["tableProperties"].is_null());
+    }
+}

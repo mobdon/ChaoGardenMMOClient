@@ -7,13 +7,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_BIN: usize = 128 * 1024 * 1024;
 #[derive(Default)]
-struct Buffers {
-    bytes: Vec<u8>,
-    views: Vec<Value>,
-    accessors: Vec<Value>,
+pub(crate) struct Buffers {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) views: Vec<Value>,
+    pub(crate) accessors: Vec<Value>,
 }
 impl Buffers {
-    fn view(&mut self, data: &[u8], target: Option<u32>) -> Result<usize> {
+    pub(crate) fn view(&mut self, data: &[u8], target: Option<u32>) -> Result<usize> {
         while !self.bytes.len().is_multiple_of(4) {
             self.bytes.push(0);
         }
@@ -29,7 +29,7 @@ impl Buffers {
         self.bytes.extend_from_slice(data);
         Ok(index)
     }
-    fn attribute<const N: usize>(
+    pub(crate) fn attribute<const N: usize>(
         &mut self,
         values: &[[f32; N]],
         kind: &str,
@@ -75,7 +75,7 @@ fn linear(byte: u8) -> f32 {
         ((v + 0.055) / 1.055).powf(2.4)
     }
 }
-fn wrap(flags: u8, clamp: u8, mirror: u8) -> u32 {
+pub(crate) fn wrap(flags: u8, clamp: u8, mirror: u8) -> u32 {
     if flags & clamp != 0 {
         33071
     } else if flags & mirror != 0 {
@@ -84,7 +84,7 @@ fn wrap(flags: u8, clamp: u8, mirror: u8) -> u32 {
         10497
     }
 }
-fn validate_png(bytes: &[u8]) -> Result<()> {
+pub(crate) fn validate_png(bytes: &[u8]) -> Result<()> {
     let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     let mut reader = decoder
         .read_info()
@@ -256,7 +256,12 @@ pub fn export(visual: &StaticVisual, pngs: &BTreeMap<u16, Vec<u8>>) -> Result<Ve
     if unlit {
         doc["extensionsUsed"] = json!(["KHR_materials_unlit"]);
     }
-    let mut json = serde_json::to_vec(&doc)?;
+    pack(&doc, buffers)
+}
+
+/// The GLB container around a finished document and its binary chunk.
+pub(crate) fn pack(doc: &Value, mut buffers: Buffers) -> Result<Vec<u8>> {
+    let mut json = serde_json::to_vec(doc)?;
     while json.len() % 4 != 0 {
         json.push(b' ');
     }

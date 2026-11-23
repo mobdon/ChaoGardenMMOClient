@@ -28,6 +28,8 @@ export function loadChaoLookManifest(fetcher = fetch) {
   if (manifestTask) return manifestTask;
   manifestTask = (async () => {
     try {
+      manifest = await gameLookManifest();
+      if (manifest) return manifest;
       const response = await fetcher('/api/assets/chao-look.json', { cache: 'no-store' });
       manifest = response.ok ? await response.json() : null;
     } catch {
@@ -92,6 +94,21 @@ export function nodeIndexOf(node) {
 }
 
 // Pure decision of what fn_60_52480 draws for one body node.
+// The same tables from the player's own game files: the colour table from the game program and the
+// jewel (al_body 18..33) and shiny (34) pictures, converted in the browser. Null without the files.
+async function gameLookManifest() {
+  if (typeof indexedDB === 'undefined') return null;
+  const { gameArchiveNames, gameBodyColours, gameTextureUrl } = await import('./game-assets.js');
+  const [names, gxColorTable] = [await gameArchiveNames('al_body'), await gameBodyColours()];
+  if (!names || !gxColorTable) return null;
+  const urls = {}, bodyTextureFiles = {};
+  for (let index = 18; index < 35; index += 1) {
+    const file = bodyTextureFiles[index] = `chao-look-${names[index].toLowerCase()}.png`;
+    if (!(urls[file] = await gameTextureUrl(`al_body/${names[index]}`))) return null;
+  }
+  return { gxColorTable, bodyTextureFiles, urls };
+}
+
 export function lookPlan(look = {}, table = manifest) {
   const jewel = Number.isInteger(look.jewel) ? look.jewel : 0;
   const color = Number.isInteger(look.color) ? look.color : 0;
@@ -138,7 +155,7 @@ function bodyTexture(scene, index) {
   const file = manifest?.bodyTextureFiles?.[index];
   if (!file) return null;
   const key = `${scene.uid}:${file}`; // per scene: the login portraits have scenes of their own
-  if (!textures.has(key)) textures.set(key, new Texture(`/api/assets/${file}`, scene, true, false, Texture.BILINEAR_SAMPLINGMODE));
+  if (!textures.has(key)) textures.set(key, new Texture(manifest?.urls?.[file] ?? `/api/assets/${file}`, scene, true, false, Texture.BILINEAR_SAMPLINGMODE));
   return textures.get(key);
 }
 

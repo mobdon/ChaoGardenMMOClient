@@ -1,5 +1,5 @@
 //! Native SAANIM keyframes without resampling or retargeting.
-use crate::model::{metadata, DecodeBudget, MetadataChunk, Reader};
+use crate::model::{metadata, DecodeBudget, MetadataChunk, Reader, Words};
 use crate::{Error, Result};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -83,6 +83,20 @@ pub fn read_motion(data: &[u8]) -> Result<Motion> {
             .get(..limit)
             .ok_or_else(|| Error::invalid("motion metadata bounds"))?,
     };
+    let mut motion = read_motion_in(&r, offset, part_count, short_rotation)?;
+    motion.version = version;
+    motion.labels = labels;
+    motion.metadata = metadata;
+    Ok(motion)
+}
+
+/// One native motion header at `offset` of `r`, for a model of `part_count` nodes.
+pub(crate) fn read_motion_in<R: Words>(
+    r: &R,
+    offset: u32,
+    part_count: u32,
+    short_rotation: bool,
+) -> Result<Motion> {
     let at = offset as usize;
     let frame_count = r.u32(at + 4)?;
     if frame_count == 0 || frame_count > 1_000_000 {
@@ -252,15 +266,15 @@ pub fn read_motion(data: &[u8]) -> Result<Motion> {
         parts.push(MotionPart { index: i, channels });
     }
     Ok(Motion {
-        version,
+        version: 0,
         offset,
         frame_count,
         type_flags,
         interpolation_and_slots,
         short_rotation,
         part_count,
-        labels,
-        metadata,
+        labels: BTreeMap::new(),
+        metadata: Vec::new(),
         parts,
         unknowns,
     })
