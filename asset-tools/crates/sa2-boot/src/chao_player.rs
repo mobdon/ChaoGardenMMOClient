@@ -1983,7 +1983,71 @@ fn debug_teleport(m: &mut Mem, task: u32) {
     eprintln!("chao-player: debug teleport to {p:?}");
 }
 
+/// A /mmo/goto-in line (sa2-web staff-goto.js): "seq area" or "seq area x y z",
+/// area 0 the lobby. None for anything else.
+fn parse_goto(text: &str) -> Option<(u32, u32, Option<[f32; 3]>)> {
+    let v: Vec<&str> = text.split_whitespace().collect();
+    let (seq, area) = (v.first()?.parse().ok()?, v.get(1)?.parse::<u32>().ok().filter(|a| *a <= 12)?);
+    let at = match v.len() {
+        2 => None,
+        5 => {
+            let p = [v[2].parse::<f32>().ok()?, v[3].parse().ok()?, v[4].parse().ok()?];
+            Some(Some(p).filter(|p| p.iter().all(|x| x.is_finite()))?)
+        }
+        _ => return None,
+    };
+    Some((seq, if area == 0 { crate::start_stage::LOBBY } else { area }, at))
+}
+
+/// SA2_GOTO_IN (staff go-to and follow, the server's `staff-goto` event): each
+/// new line moves the player's Chao to that area, with ChaoMain's own area
+/// change as SA2_CHAO_AREA_AT below, and then to that spot as debug_teleport.
+/// `area` is the current one (0 while loading).
+fn staff_goto(c: &mut Cpu, m: &mut Mem, task: u32, area: u32) {
+    let Ok(path) = std::env::var("SA2_GOTO_IN") else { return };
+    if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 15 == 0 {
+        if let Some((seq, to, at)) = std::fs::read_to_string(path).ok().and_then(|t| parse_goto(&t)) {
+            if GOTO_SEQ.replace(seq) != seq {
+                GOTO.set(Some((to, at, false)));
+            }
+        }
+    }
+    let Some((to, at, asked)) = GOTO.get() else { return };
+    if !chao_world(m) {
+        // In a level: a go-to must not fire later, back in Chao World.
+        return GOTO.set(None);
+    }
+    if area == 0 || !module_linked(m, 60) {
+        return;
+    }
+    if area != to {
+        if !asked {
+            eprintln!("chao-player: staff go-to, area {area} to {to}");
+            call(c, m, rt::sec(m, 60, 1) + 0x27E00, &[to]);
+            GOTO.set(Some((to, at, true)));
+        }
+        return;
+    }
+    let Step::Live(chao) = STEP.get() else { return };
+    let cw = m.r32(chao + 0x34);
+    if cw == 0 {
+        return;
+    }
+    GOTO.set(None);
+    let Some(p) = at else { return };
+    for twp in [cw, m.r32(task + 0x34)] {
+        if twp != 0 {
+            for (i, x) in p.iter().enumerate() {
+                m.w32(twp + 0x14 + 4 * i as u32, x.to_bits());
+            }
+        }
+    }
+}
+
 thread_local! {
+    static GOTO_SEQ: Cell<u32> = const { Cell::new(0) };
+    /// The go-to under way: (area, spot, area change asked).
+    static GOTO: Cell<Option<(u32, Option<[f32; 3]>, bool)>> = const { Cell::new(None) };
     static TP_DONE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
 }
 
@@ -2214,6 +2278,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     crate::kinder_chart::frame(c, m);
     info_out(m, area);
     debug_teleport(m, task);
+    staff_goto(c, m, task, u32::from(area));
     crate::card_box::frame(c, m);
     lobby_exit_hook(c, m);
     // SA2_CHAO_AREA_AT=frame,area (debug): change Chao World area once at that
@@ -2873,6 +2938,17 @@ fn create_at(c: &mut Cpu, m: &mut Mem, pos: [u32; 3], param: u32) -> Step {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn staff_goto_lines_are_an_area_and_maybe_a_spot() {
+        assert_eq!(parse_goto("7 1 1.5 0 -20"), Some((7, 1, Some([1.5, 0.0, -20.0]))));
+        // Area 0 is the lobby, ChaoMain's area 7.
+        assert_eq!(parse_goto("1 0 1 2 3\n"), Some((1, crate::start_stage::LOBBY, Some([1.0, 2.0, 3.0]))));
+        assert_eq!(parse_goto("2 10"), Some((2, 10, None)));
+        for bad in ["", "3", "3 13", "3 -1", "3 1 2", "3 1 2 3 4 5", "3 1 x 2 3", "3 1 inf 2 3", "3 1 NaN 2 3"] {
+            assert_eq!(parse_goto(bad), None, "{bad:?}");
+        }
+    }
 
     #[test]
     fn skills_are_raised_to_the_servers_and_never_lowered() {
