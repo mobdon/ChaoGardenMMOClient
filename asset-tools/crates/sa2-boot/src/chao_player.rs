@@ -2169,6 +2169,16 @@ fn pin(m: &mut Mem, chao: u32, data1: u32) {
     for o in (0..12).step_by(4) {
         m.w32(cw + 0x14 + o, m.r32(data1 + 0x14 + o));
     }
+    // The Chao's own fall (MOVE_WORK Velo.y / Acc.y) kept building up on a
+    // body the character places: in self mode it cut a jump short of his
+    // (measured 27 units, not his own apex), in a level it pulled the Chao's
+    // task work down between pins. Cleared here, where the body is placed.
+    // SA2_CHAO_FALL=1 (debug): left as it was.
+    let mw = m.r32(chao + 0x38);
+    if mw != 0 && !std::env::var("SA2_CHAO_FALL").is_ok_and(|v| v == "1") {
+        m.w32(mw + 0x04, 0);
+        m.w32(mw + 0x10, 0);
+    }
     // Upright: only the rider's yaw. Its pitch/roll would tip the Chao while
     // the emotion ball stays world-up above where the head would be.
     m.w32(cw + 0x08, 0);
@@ -2261,6 +2271,12 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     // walker.rs (SA2_CHAO_WALKER) installs its own handler there first: kept, and
     // it takes the voice task's calls while a walker is the character (voice).
     c.rt.set_override(NATIVE_JETS, native_jets);
+    for (at, tag) in [(SONIC_DISP_LATE, "late"), (SONIC_DISP_2C, "2c")] {
+        // Only where asked for: the probe below is not settled yet.
+        if std::env::var("SA2_GAP_HIDE").is_ok_and(|v| v.split(',').any(|x| x == tag)) {
+            c.rt.set_override(at, match tag { "late" => |c: &mut Cpu, m: &mut Mem| gap_disp(c, m, SONIC_DISP_LATE), _ => |c: &mut Cpu, m: &mut Mem| gap_disp(c, m, SONIC_DISP_2C) });
+        }
+    }
     PREV_VOICE.set(c.rt.overrides.get(&ADX_START_AFS).copied());
     c.rt.set_override(ADX_START_AFS, voice);
     c.rt.set_override(SONIC_DISP, |c, m| display(c, m, SONIC_DISP));
@@ -2293,6 +2309,20 @@ fn native_jets(c: &mut Cpu, m: &mut Mem) {
     if hide {
         m.w32(gate, keep);
     }
+}
+
+/// The character task's other draw functions (task +0x1C and +0x2C, read
+/// from his task in the lobby). SA2_GAP_HIDE=late,2c (debug probe): each is
+/// skipped in Chao World while the player's Chao is not up, to find which
+/// one draws the lone shadow seen on arriving in an area.
+const SONIC_DISP_LATE: u32 = 0x8007_BEB4;
+const SONIC_DISP_2C: u32 = 0x8007_E304;
+
+fn gap_disp(c: &mut Cpu, m: &mut Mem, at: u32) {
+    if chao_world(m) && !matches!(STEP.get(), Step::Live(_)) {
+        return;
+    }
+    original(c, m, at);
 }
 
 /// ADX start from an AFS archive; the voice task calls it at 0x80012760
@@ -3794,6 +3824,7 @@ thread_local! {
     static AREA_DONE: Cell<bool> = const { Cell::new(false) };
     static LIVE_STAGE: Cell<u16> = const { Cell::new(u16::MAX) };
     static SELF_LOGGED: Cell<bool> = const { Cell::new(false) };
+    static TASK_LOGGED: Cell<bool> = const { Cell::new(false) };
 }
 
 fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
@@ -3809,6 +3840,10 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         eprintln!("chao-drive: self mode {me} (stage {}, step {:?})", m.r16(STAGE_NUM), STEP.get());
     }
     let pmove = me && player_move_on();
+    // SA2_TASK_LOG=1 (debug): his task's words, once.
+    if std::env::var("SA2_TASK_LOG").is_ok_and(|v| v == "1") && !TASK_LOGGED.replace(true) {
+        eprintln!("task-log: character task {task:#x} words +0x00..+0x40 {:x?}", (0..0x40).step_by(4).map(|o| m.r32(task + o)).collect::<Vec<_>>());
+    }
     if !me {
         c.r[3] = task;
         // Self mode in Chao World: the character is never seen or heard, also
@@ -3821,7 +3856,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         let own = m.r32(task + 0x34);
         if own != 0 && chao_world(m) && std::env::var("SA2_YAW_LOG").is_ok_and(|v| v == "1") {
             let f = |a: u32| f32::from_bits(m.r32(a));
-            eprintln!("yaw: frame {} char {:#06x} native pos ({:.2},{:.2})", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r32(own + 0x0C) & 0xFFFF, f(own + 0x14), f(own + 0x1C));
+            eprintln!("yaw: frame {} char {:#06x} native pos ({:.2},{:.2}) height {:.2} state {} flags {:#x}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r32(own + 0x0C) & 0xFFFF, f(own + 0x14), f(own + 0x1C), f(own + 0x18), m.r8(own), m.r16(own + 4));
         }
     } else if let (true, Step::Live(chao)) = (pmove, STEP.get()) {
         let pwp = m.r32(P1_OBJ2);
@@ -3868,11 +3903,17 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let stage = m.r16(STAGE_NUM) ^ (area << 8);
     if LIVE_STAGE.replace(stage) != stage {
         RIDER.set(0);
-        if LIVE_STAGE_NUM.replace(m.r16(STAGE_NUM)) != m.r16(STAGE_NUM) {
+        let new_stage = LIVE_STAGE_NUM.replace(m.r16(STAGE_NUM)) != m.r16(STAGE_NUM);
+        if new_stage {
             drop_stage_loads();
         }
-        if let Step::Live(_) = STEP.get() {
+        // A new stage settles for a second before the Chao is made (tick).
+        // An area change inside Chao World does not need it (ChaoMain stays
+        // linked): the second was an empty path on every arrival (mob 2026-11-23).
+        if new_stage && matches!(STEP.get(), Step::Live(_) | Step::Wait(_)) {
             STEP.set(Step::Wait(0));
+        } else if let Step::Live(_) = STEP.get() {
+            STEP.set(Step::Wait(if chao_world(m) { 60 - area_settle() } else { 0 }));
         }
         // The game dropped the remote Chao's tasks too, without freeing their
         // blocks one by one (the remote heap only shrank across a garden ->
@@ -4143,7 +4184,35 @@ const SWIM_MOTIONS: [u32; 3] = [142, 148, 145];
 /// a ledge and while it flies (ChaoStgRace fn_76_CA0C / fn_76_D1A4).
 /// shortcut: no separate native jump motion was identified; upgrade when one is.
 const AIR_MOTION: u32 = 130;
-const AL_PARAMETER_GET_SKILL: u32 = 0x2_0934;
+/// The race's swim (ChaoStgRace fn_76_C6EC): forward acceleration 0.0027 +
+/// 0.018 s/10000 against a drag of 0.06 of the speed, s = the Swim points
+/// (top speed 0.045 a frame untrained, 0.345 at 9999).
+const SWIM_ACC: f32 = 0.0027;
+
+/// A skill of the player's own Chao as the race reads it: the points in its
+/// own record (task work +0x5C, u16 at +0x38 + 2 x skill; 0 Swim, 1 Fly),
+/// which is what ChaoMain AL_ParameterGetSkill (.text 0x20934) returns in the
+/// race. (In the gardens and the lobby that function returns three times the
+/// points; the race's rules are used here with the race's own input.)
+/// SA2_CHAO_SWIM / SA2_CHAO_FLY=points (test only): that value instead; the
+/// record is not touched.
+fn own_skill(m: &Mem, chao: u32, skill: u32) -> u16 {
+    if let Some(v) = std::env::var(["SA2_CHAO_SWIM", "SA2_CHAO_FLY"][skill as usize & 1]).ok().and_then(|v| v.trim().parse().ok()) {
+        return v;
+    }
+    let rec = m.r32(m.r32(chao + 0x34) + 0x5C);
+    let v = if (0x8000_0000..0x8C00_0000).contains(&rec) { m.r16(rec + 0x38 + 2 * skill) } else { 0 };
+    if !SKILL_SAID.replace(true) {
+        eprintln!("chao-player: the Chao's own record {rec:#x}: Swim {} points (level {}), Fly {} points (level {})", m.r16(rec + 0x38), m.r8(rec + 0x30), m.r16(rec + 0x3A), m.r8(rec + 0x31));
+    }
+    v
+}
+
+/// One frame of the race's swim speed: pushed on, it gains the skill's
+/// acceleration against the drag; let go, only the drag acts.
+pub(crate) fn swim_step(v: f32, pushed: bool, skill: f32) -> f32 {
+    v * 0.94 + if pushed { SWIM_ACC + 0.018 * skill / 10000.0 } else { 0.0 }
+}
 const CHAO_GLOBAL: u32 = 0x2A50; // ChaoMain .data
 
 /// A flag the pad read sees too (the game reads the pad on another thread than its tasks run on).
@@ -4169,6 +4238,47 @@ thread_local! {
     static HIS_GRAVITY: Cell<f32> = const { Cell::new(0.0) };
     static PRE_VY: Cell<f32> = const { Cell::new(0.0) };
     static FLY_SEEN: Cell<(u8, u16)> = const { Cell::new((0, 0)) };
+    static CLIMB: Cell<(u32, Option<f32>)> = const { Cell::new((0, None)) };
+    static LAST_FLAT: Cell<Option<[f32; 2]>> = const { Cell::new(None) };
+    static SWIM_V: Cell<f32> = const { Cell::new(0.0) };
+    static SKILL_SAID: Cell<bool> = const { Cell::new(false) };
+    static UP_FOR: Cell<u32> = const { Cell::new(0) };
+    static CLIMB_V: Cell<f32> = const { Cell::new(0.0) };
+    static CLIMB_WIN: Cell<(u32, [f32; 2], f32, bool)> = const { Cell::new((0, [0.0; 2], 0.0, false)) };
+}
+
+/// Pushed against a pool wall: frames before the lift starts, the flat
+/// headway a frame under which the body counts as stopped, the lift a frame
+/// (as a part of the swim speed), and how far above the water it may go.
+const CLIMB_AFTER: u32 = 8;
+const CLIMB_FREE: u32 = 20;
+const CLIMB_WINDOW: u32 = 8;
+const FALL_FRAMES: u32 = 8;
+const CLIMB_STUCK: f32 = 0.5; // of the swim speed
+const CLIMB_RATE: f32 = 0.3;
+const CLIMB_TOP: f32 = 6.0;
+
+/// One frame of the way out of a walled pool. Before the lift: (frames
+/// stopped at a wall, None). Lifting: (frames of headway in a row, the height
+/// the body is held at or above). It starts only in the water, after
+/// CLIMB_AFTER stopped frames; each stopped frame lifts a step, and with
+/// headway the height is held (a slanted wall lets him on a little at each
+/// height). It ends when the stick is let go, after CLIMB_FREE frames of
+/// headway (over the bank), or at CLIMB_TOP over the water.
+pub(crate) fn climb_step(was: (u32, Option<f32>), level: Option<f32>, swimming: bool, pushed: bool, stopped: bool, y: f32) -> (u32, Option<f32>) {
+    let Some(level) = level else { return (0, None) };
+    if !pushed {
+        return (0, None);
+    }
+    match was.1 {
+        None if !(swimming && stopped) => (0, None),
+        None if was.0 + 1 < CLIMB_AFTER => (was.0 + 1, None),
+        None => (0, Some(y + CLIMB_RATE)),
+        Some(to) => {
+            let (free, to) = if stopped { (0, to + CLIMB_RATE) } else { (was.0 + 1, to) };
+            if free >= CLIMB_FREE || to > level + CLIMB_TOP { (0, None) } else { (free, Some(to)) }
+        }
+    }
 }
 
 pub(crate) fn water_level(area: u16) -> Option<f32> {
@@ -4189,7 +4299,7 @@ pub(crate) fn swim_motion(skill: u32, low: u32, mid: u32) -> u32 {
 pub(crate) fn fly_step(v: (f32, f32), skill: f32) -> (f32, f32) {
     let s = skill.clamp(0.0, 10000.0);
     let (acc, sink) = (0.018 + 0.067 * s / 10000.0, 0.01 + 0.005 * (10000.0 - s) / 10000.0);
-    ((v.0 + acc) * 0.9, (v.1 - sink) * 0.95)
+    (v.0 * 0.9 + acc, v.1 * 0.95 - sink)
 }
 
 const PAD_BUTTON_A: u16 = 0x0100;
@@ -4226,20 +4336,91 @@ pub(crate) fn pad_filter(mut p: sa2_asset_tools::input::PadStatus) -> sa2_asset_
 /// Chao World, self mode, after the hidden character moved the body: is the
 /// Chao swimming or in the air, and the motion it plays then (None: the usual
 /// stand / walk / run). In flight his speed is set by the race's rule.
-fn chao_world_state(c: &mut Cpu, m: &mut Mem, task: u32, chao: u32, area: u16) -> Option<u32> {
+fn chao_world_state(_c: &mut Cpu, m: &mut Mem, task: u32, chao: u32, area: u16) -> Option<u32> {
     let (own, cw, pwp) = (m.r32(task + 0x34), m.r32(chao + 0x34), m.r32(P1_OBJ2));
     if own == 0 || cw == 0 {
         (SWIM.set(None), AIR.set(false));
         return None;
     }
     let f = |m: &Mem, a: u32| f32::from_bits(m.r32(a));
-    let s1 = rt::sec(m, 60, 1);
     let level = water_level(area).filter(|&l| in_water(f(m, cw + 0x18), l));
+    // Swimming goes at the Chao's own Swim skill, by the race's rule
+    // (swim_step): what the character moved this frame is cut to that speed,
+    // back along the way he came, and his own speed is set to it.
+    let now = [f(m, cw + 0x14), f(m, cw + 0x1C)];
+    let was = LAST_FLAT.replace(Some(now)).unwrap_or(now);
+    let moved = ((now[0] - was[0]).powi(2) + (now[1] - was[1]).powi(2)).sqrt();
+    let pushed = { let s = crate::pad::port0().stick; i32::from(s[0]).pow(2) + i32::from(s[1]).pow(2) > 30 * 30 };
+    let swim_v = if level.is_some() {
+        let v = swim_step(SWIM_V.get(), pushed, f32::from(own_skill(m, chao, 0)));
+        if moved > v && moved > 0.0 {
+            let k = v / moved;
+            let to = [was[0] + (now[0] - was[0]) * k, was[1] + (now[1] - was[1]) * k];
+            m.w32(cw + 0x14, to[0].to_bits());
+            m.w32(cw + 0x1C, to[1].to_bits());
+            LAST_FLAT.set(Some(to));
+        }
+        if (0x8000_0000..0x8C00_0000).contains(&pwp) && f(m, pwp + 0x64) > v {
+            m.w32(pwp + 0x64, v.to_bits());
+        }
+        if std::env::var("SA2_FLY_LOG").is_ok_and(|v| v == "1") {
+            eprintln!("swim: f{} skill {} speed {v:.4} (he moved {moved:.4}) motion {}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), own_skill(m, chao, 0), swim_motion(u32::from(own_skill(m, chao, 0)), 300, 2000));
+        }
+        v
+    } else {
+        0.0
+    };
+    SWIM_V.set(swim_v);
+    // Out of a walled pool (the Hero garden): the hidden character walks the
+    // pool floor and its wall stopped him, so the Chao could only jump out.
+    // Pushed against a wall while swimming, the body is lifted up the wall
+    // until it passes over the bank.
+    // MMO glue, not the game: a garden Chao has no such wall to pass (its own
+    // collision is not the character collision used here).
+    // Stopped = no headway the way he faces (his yaw goes along (cos, sin)):
+    // sliding along the wall does not count as getting on.
+    let yaw = (m.r32(cw + 0x0C) & 0xFFFF) as f32 * std::f32::consts::TAU / 65536.0;
+    let headway = (now[0] - was[0]) * yaw.cos() + (now[1] - was[1]) * yaw.sin();
+    // (Lifted above the water he no longer swims: the speed he swam at still sets what counts as headway.)
+    if level.is_some() {
+        CLIMB_V.set(swim_v.max(SWIM_ACC));
+    }
+    // Judged over CLIMB_WINDOW frames: too little headway in sum, or too little
+    // ground covered (an untrained swimmer is so slow that at a wall his
+    // heading flips from frame to frame and single frames show headway).
+    let here = LAST_FLAT.get().unwrap_or(now);
+    let (n, from, sum, mut stopped) = CLIMB_WIN.get();
+    let (n, sum) = (n + 1, sum + headway);
+    if n >= CLIMB_WINDOW {
+        let need = CLIMB_STUCK * CLIMB_V.get() * CLIMB_WINDOW as f32;
+        stopped = sum < need || ((here[0] - from[0]).powi(2) + (here[1] - from[1]).powi(2)).sqrt() < need;
+        CLIMB_WIN.set((0, here, 0.0, stopped));
+    } else {
+        CLIMB_WIN.set((n, from, sum, stopped));
+    }
+    let climb = climb_step(CLIMB.get(), water_level(area), level.is_some(), pushed, stopped, f(m, cw + 0x18));
+    if climb.1.is_some() != CLIMB.get().1.is_some() {
+        eprintln!("chao-player: {} (height {:.2}, at {:.1} {:.1})", if climb.1.is_some() { "at a pool wall: up the bank" } else { "off the pool wall" }, f(m, cw + 0x18), f(m, cw + 0x14), f(m, cw + 0x1C));
+    }
+    CLIMB.set(climb);
+    if let Some(y) = climb.1.filter(|&to| to > f(m, cw + 0x18)) {
+        m.w32(cw + 0x18, y.to_bits());
+        if (0x8000_0000..0x8C00_0000).contains(&pwp) {
+            m.w32(pwp + 0x68, 0);
+        }
+    }
+    let climbing = climb.1.is_some();
     if SWIM.replace(level).is_some() != level.is_some() {
         eprintln!("chao-player: {} (area {area}, height {:.2}, at {:.1} {:.1})", if level.is_some() { "into the water: swimming" } else { "out of the water" }, f(m, cw + 0x18), f(m, cw + 0x14), f(m, cw + 0x1C));
     }
     // His status flags (task work +4): bit 0 on the ground (0x1 standing, 0x400 in a jump, seen in the lobby).
-    let air = level.is_none() && m.r16(own + 4) & 1 == 0 && m.r8(own) != 0;
+    // In the air: his jump (state 6) at once; any other time off the ground
+    // only after FALL_FRAMES, as uneven ground (the Neutral garden) drops him
+    // for a few frames at a time, which is not a fall to play the air motion for.
+    let up = level.is_none() && !climbing && m.r16(own + 4) & 1 == 0 && m.r8(own) != 0;
+    let up_for = if up { UP_FOR.get() + 1 } else { 0 };
+    UP_FOR.set(up_for);
+    let air = up && (m.r8(own) == 6 || AIR.get() || up_for >= FALL_FRAMES);
     if std::env::var("SA2_FLY_LOG").is_ok_and(|v| v == "1") && FLY_SEEN.replace((m.r8(own), m.r16(own + 4))) != (m.r8(own), m.r16(own + 4)) {
         eprintln!("fly: his state {} flags {:#x} (pad A {}, fly {})", m.r8(own), m.r16(own + 4), crate::pad::port0().button & PAD_BUTTON_A != 0, FLY.get());
     }
@@ -4261,20 +4442,13 @@ fn chao_world_state(c: &mut Cpu, m: &mut Mem, task: u32, chao: u32, area: u16) -
     }
     if air && FLY.get() {
         if let Some(now) = speed(m) {
-            let skill = call(c, m, s1 + AL_PARAMETER_GET_SKILL, &[chao, 1]) as f32;
+            let skill = f32::from(own_skill(m, chao, 1));
             let v = fly_step(FLY_V.get().unwrap_or(now), skill);
             FLY_V.set(Some(v));
             // His next step adds his own fall before it moves: given back here.
             m.w32(pwp + 0x64, v.0.to_bits());
             m.w32(pwp + 0x68, (v.1 + HIS_GRAVITY.get()).to_bits());
-            // The Chao's own fall also builds up on the shared body in the air
-            // (its MOVE_WORK velocity; measured: a jump tops out at 27 units,
-            // not his 34): cleared in flight, so only the race's sink acts.
-            let mw = m.r32(chao + 0x38);
-            if mw != 0 {
-                m.w32(mw + 0x04, 0);
-                m.w32(mw + 0x10, 0);
-            }
+            // (The Chao's own fall is cleared in pin, so only the race's sink acts.)
             if std::env::var("SA2_FLY_LOG").is_ok_and(|v| v == "1") {
                 eprintln!("fly: f{} skill {skill} speed forward {:.3} up {:.3} (his fall {:.3}) height {:.2}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), v.0, v.1, HIS_GRAVITY.get(), f(m, cw + 0x18));
             }
@@ -4282,10 +4456,9 @@ fn chao_world_state(c: &mut Cpu, m: &mut Mem, task: u32, chao: u32, area: u16) -
     } else {
         FLY_V.set(None);
     }
-    if level.is_some() {
-        let skill = call(c, m, s1 + AL_PARAMETER_GET_SKILL, &[chao, 0]);
+    if level.is_some() || climbing {
         let g = rt::sec(m, 60, 5) + CHAO_GLOBAL;
-        return Some(swim_motion(skill, u32::from(m.r16(g + 310)), u32::from(m.r16(g + 312))));
+        return Some(swim_motion(u32::from(own_skill(m, chao, 0)), u32::from(m.r16(g + 310)), u32::from(m.r16(g + 312))));
     }
     // SA2_AIR_MOTION=n (debug): another Chao motion in the air.
     air.then(|| std::env::var("SA2_AIR_MOTION").ok().and_then(|v| v.parse().ok()).unwrap_or(AIR_MOTION))
@@ -4366,6 +4539,7 @@ const P1_OBJ2: u32 = 0x801E_7728;
 /// Row = the character id byte obj2+3 (0x8004F838 multiplies it by 0x84);
 /// Metal Sonic's loader 0x80086BA4 stores 0xC there (Sonic's 0x800874C0: 0).
 const METAL_ROW: u32 = 12;
+const ROW_JUMP_SPEED: u32 = 0x18;
 
 fn physics_row(m: &mut Mem) {
     let obj2 = m.r32(P1_OBJ2);
@@ -4389,13 +4563,27 @@ fn physics_row(m: &mut Mem) {
         r.clone().unwrap_or_default()
     });
     let metal = if chao_world(m) { crate::chao_speed::row(m, INFO, &own, &metal) } else { metal };
+    // mob 2026-11-23: every Chao jumps as Sonic does; only mob's own Chao has
+    // Metal Sonic's jump. The jump is the row's jump speed (+0x18: Sonic 1.66,
+    // Metal Sonic 2.52; the hold time +0x00 and hold lift +0x38 are the same in
+    // both rows). The client is told nothing about whose account it is, so
+    // Metal's jump is behind SA2_CHAO_JUMP=metal (test only) until it is.
+    let metal_jump = std::env::var("SA2_CHAO_JUMP").is_ok_and(|v| v.trim() == "metal");
     for (i, o) in (0..0x84).step_by(4).enumerate() {
-        m.w32(obj2 + 0xC0 + o, if board { own[i] } else { metal[i] });
+        let his = board || (o == ROW_JUMP_SPEED && !metal_jump && own.len() > i);
+        m.w32(obj2 + 0xC0 + o, if his { own[i] } else { metal[i] });
     }
 }
 
 thread_local! {
     static SONIC_ROW: std::cell::RefCell<Option<Vec<u32>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Frames an area change inside Chao World waits before the Chao is made again.
+const AREA_SETTLE: u32 = 3;
+/// SA2_AREA_WAIT=frames (debug) sets it.
+fn area_settle() -> u32 {
+    std::env::var("SA2_AREA_WAIT").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(AREA_SETTLE).min(60)
 }
 
 /// The ChaoMain load/create steps, driven once a frame from Sonic's exec in a
@@ -4455,7 +4643,7 @@ fn tick(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) {
         no_chao();
     }
     if next != STEP.get() && !matches!(next, Step::Wait(_)) {
-        eprintln!("chao-player: {next:x?}");
+        eprintln!("chao-player: {next:x?} (frame {})", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed));
     }
     STEP.set(next);
 }
@@ -4571,8 +4759,9 @@ fn destroy_task(c: &mut Cpu, m: &mut Mem) {
     let t = c.r[3];
     if let Step::Live(chao) = STEP.get() {
         if t == chao {
-            eprintln!("chao-player: the game destroyed the player's Chao task {t:#x}; making it again");
-            STEP.set(Step::Wait(0));
+            eprintln!("chao-player: the game destroyed the player's Chao task {t:#x} at frame {}; making it again", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed));
+            // Chao World (an area change): made again after AREA_SETTLE frames, not a second.
+            STEP.set(Step::Wait(if chao_world(m) { 60 - area_settle() } else { 0 }));
             RIDER.set(0);
         }
     }
@@ -4718,13 +4907,52 @@ mod tests {
 
     #[test]
     fn flight_settles_at_the_races_speeds() {
-        // Drag against a steady push: forward 9 x acceleration, sink 19 x the sink step.
+        // Drag against a steady push: forward acceleration / 0.1, sink step / 0.05.
         let mut v = (0.0f32, 1.0f32);
         for _ in 0..600 { v = super::fly_step(v, 0.0); }
-        assert!((v.0 - 0.018 * 9.0).abs() < 1e-3 && (v.1 + 0.015 * 19.0).abs() < 1e-3, "{v:?}");
+        assert!((v.0 - 0.18).abs() < 1e-3 && (v.1 + 0.3).abs() < 1e-3, "{v:?}");
         let mut w = (0.0f32, 0.0f32);
         for _ in 0..600 { w = super::fly_step(w, 10000.0); }
         assert!(w.0 > v.0 && w.1 > v.1, "a better flier is faster and sinks less: {w:?}");
+    }
+
+    #[test]
+    fn swim_speed_settles_at_the_races_speed_for_the_skill() {
+        let top = |skill: f32| (0..400).fold(0.0, |v, _| swim_step(v, true, skill));
+        assert!((top(0.0) - 0.045).abs() < 1e-4, "{}", top(0.0));
+        assert!((top(9999.0) - 0.345).abs() < 1e-3, "{}", top(9999.0));
+        // let go: it dies away
+        assert!((0..200).fold(0.345, |v, _| swim_step(v, false, 9999.0)) < 1e-4);
+        // the motion by the same points: under 300, under 2000, above
+        assert_eq!([0, 299, 300, 1999, 2000, 9999].map(|s| swim_motion(s, 300, 2000)), [142, 142, 148, 148, 145, 145]);
+    }
+
+    #[test]
+    fn stopped_at_a_pool_wall_the_body_is_lifted_over_the_bank() {
+        // Hero garden numbers: floor -6.5, water -1.5, bank 0.
+        let w = Some(-1.5);
+        // swimming freely, or stopped without pushing: nothing
+        assert_eq!(climb_step((0, None), w, true, true, false, -6.5), (0, None));
+        assert_eq!(climb_step((5, None), w, true, false, true, -6.5), (0, None));
+        // stopped at the wall: waits, then rises a step a frame, on above the water
+        let (mut s, mut y) = ((0, None), -6.5f32);
+        for _ in 0..CLIMB_AFTER + 24 {
+            s = climb_step(s, w, in_water(y, -1.5), true, true, y);
+            y = s.1.map_or(y, |to| to.max(y));
+        }
+        assert!(y > 0.0 && y <= -1.5 + CLIMB_TOP, "{y}");
+        // headway: the height is held, and after CLIMB_FREE frames of it the lift ends
+        let held = s.1;
+        s = climb_step(s, w, false, true, false, y);
+        assert_eq!(s, (1, held));
+        for _ in 1..CLIMB_FREE { s = climb_step(s, w, false, true, false, y); }
+        assert_eq!(s, (0, None));
+        // never starts out of the water, or where there is none
+        assert_eq!(climb_step((CLIMB_AFTER, None), w, false, true, true, 0.0), (0, None));
+        assert_eq!(climb_step((CLIMB_AFTER, None), None, true, true, true, 0.0), (0, None));
+        // held at the top without getting over, or the stick let go: ends
+        assert_eq!(climb_step((0, Some(-1.5 + CLIMB_TOP)), w, false, true, true, 4.5), (0, None));
+        assert_eq!(climb_step((0, Some(0.0)), w, false, false, true, 0.0), (0, None));
     }
 
     #[test]
