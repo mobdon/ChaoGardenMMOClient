@@ -1847,6 +1847,23 @@ fn test_cam(c: &mut Cpu, m: &mut Mem) {
     let Ok(v) = std::env::var("SA2_TEST_CAM") else { return };
     let Step::Live(chao) = STEP.get() else { return };
     let cw = m.r32(chao + 0x34);
+    // SA2_TAKEOFF's second Chao, while it is out: the camera follows that one.
+    let other = Some(TAKEOFF.get()).filter(|&t| t != 0 && t != u32::MAX).map(|t| m.r32(t + 0x34)).filter(|&w| w != 0);
+    if let Some(w) = other {
+        let f = |a: u32| f32::from_bits(m.r32(a));
+        let mut it = v.split(',').skip(1);
+        let dist: f32 = it.next().and_then(|d| d.trim().parse().ok()).unwrap_or(9.0);
+        let height: f32 = it.next().and_then(|d| d.trim().parse().ok()).unwrap_or(3.0);
+        let yaw = (m.r32(w + 0x0C) & 0xFFFF) as f32 * std::f32::consts::TAU / 65536.0;
+        // To its right (it faces (sin, cos)); "world" keeps the camera still, looking at where it started.
+        let at = [f(w + 0x14), f(w + 0x18) + height, f(w + 0x1C)];
+        let view = look_at([at[0] + yaw.cos() * dist, at[1] + 0.5, at[2] - yaw.sin() * dist], at);
+        let (base, cur) = (m.r32(NJ_BASE_MATRIX), m.r32(NJ_CURRENT_MATRIX));
+        for a in [base, cur] {
+            for r in 0..3 { for k in 0..4 { m.w32(a + 4 * (4 * r + k) as u32, view[r][k].to_bits()); } }
+        }
+        return;
+    }
     // In a level: by the hidden character's own yaw (his task work).
     let rider = if self_drive(m) { 0 } else { RIDER.get() };
     if cw == 0 || (!self_drive(m) && rider == 0) {
@@ -3877,6 +3894,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         crate::name_tags::flush();
     }
     crate::kinder_chart::frame(c, m);
+    takeoff_test(c, m);
     info_out(m, area);
     debug_teleport(m, task);
     crate::card_box::frame(c, m);
@@ -5542,6 +5560,67 @@ fn free_to_heap(c: &mut Cpu, m: &mut Mem) {
         return;
     }
     original(c, m, OS_FREE_TO_HEAP);
+}
+
+/// ChaoMain's garden flight behaviour (fn_60_3D978) and AL_SetBehavior.
+const ALBHV_FLY: u32 = 0x3_D978;
+const AL_SET_BEHAVIOR: u32 = 0x7C4;
+const INFO2: u32 = 0x82F0_2000;
+const POS2: u32 = 0x82F0_0300;
+
+thread_local! {
+    static TAKEOFF: Cell<u32> = const { Cell::new(0) };
+}
+
+/// SA2_TAKEOFF=frame[,Fly points[,height]] (test only): to film the garden's
+/// own flight. At that frame a second, ordinary garden Chao (the player's
+/// record copied, its Fly points set in the copy only) is made beside the
+/// player's Chao, `height` above the ground, and put into the game's own
+/// flight behaviour with AL_SetBehavior: forced, the game itself starts it
+/// only when a walking Chao with Fly 400 or more (three times its points)
+/// comes to a drop, four times in ten. Its own AI runs (it is not the
+/// player's Chao and not a remote one), and SA2_TEST_CAM follows it.
+/// One line a frame while it flies. Nothing of it is saved or sent.
+fn takeoff_test(c: &mut Cpu, m: &mut Mem) {
+    let Some((at, pts, height)) = std::env::var("SA2_TAKEOFF").ok().and_then(|v| {
+        let mut it = v.split(',').map(|x| x.trim().parse::<f32>().ok());
+        Some((it.next()?? as u64, it.next().flatten().unwrap_or(1000.0) as u16, it.next().flatten().unwrap_or(0.0)))
+    }) else { return };
+    let (Step::Live(own), true) = (STEP.get(), chao_world(m) && module_linked(m, 60)) else { return };
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let s1 = rt::sec(m, 60, 1);
+    let g = |m: &Mem, a: u32| f32::from_bits(m.r32(a));
+    if TAKEOFF.get() == 0 && f >= at {
+        let cw = m.r32(own + 0x34);
+        let Some(heap) = remote_heap(c, m) else { return };
+        let rec: Vec<u8> = (0..0x800).map(|o| m.r8(INFO + o)).collect();
+        m.load(INFO2, &rec);
+        m.w16(INFO2 + 0x3A, pts);
+        for (i, d) in [8.0, height, 8.0].into_iter().enumerate() {
+            m.w32(POS2 + 4 * i as u32, (g(m, cw + 0x14 + 4 * i as u32) + d).to_bits());
+        }
+        let cur = c.r[13].wrapping_sub(SY_HEAP_SDA);
+        let old = m.r32(cur);
+        m.w32(cur, heap);
+        let t = call(c, m, s1 + 0x3148C, &[INFO2, 0, 0, POS2, 0]);
+        m.w32(cur, old);
+        if t == 0 {
+            TAKEOFF.set(u32::MAX);
+            return eprintln!("takeoff: no second Chao");
+        }
+        EXTRA_TASKS.with_borrow_mut(|x| x.insert(t));
+        call(c, m, s1 + AL_SET_BEHAVIOR, &[t, s1 + ALBHV_FLY]);
+        TAKEOFF.set(t);
+        eprintln!("takeoff: f{f} second Chao {t:#x} with Fly {pts} points, forced into the garden flight (fn_60_3D978)");
+    }
+    let t = TAKEOFF.get();
+    if t != 0 && t != u32::MAX {
+        let (tw, mw) = (m.r32(t + 0x34), m.r32(t + 0x38));
+        if tw != 0 && mw != 0 && f % 5 == 0 {
+            eprintln!("takeoff: f{f} at ({:.2}, {:.2}, {:.2}) speed ({:.3}, {:.3}, {:.3}) gravity {:.4} ground flag {} behaviour step {} timer {} motion flags {:#x}",
+                g(m, tw + 0x14), g(m, tw + 0x18), g(m, tw + 0x1C), g(m, mw), g(m, mw + 4), g(m, mw + 8), g(m, mw + 0x48), m.r16(mw + 0x40) & 0x400 != 0, m.r16(tw + 438), m.r32(tw + 448), m.r16(mw + 0x40));
+        }
+    }
 }
 
 /// A Chao of its own kind (CreateChaoExtra type 1, as the Chao Select
