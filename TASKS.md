@@ -1,6 +1,6 @@
 # Chao Garden MMO — task list
 
-Updated: November 18, 2026. Design: [docs/DESIGN.md](docs/DESIGN.md). Request history: [docs/REQUESTS.md](docs/REQUESTS.md). Full installed-file inventory: [docs/INVENTORY.md](docs/INVENTORY.md).
+Updated: November 18, 2026. Design: [docs/DESIGN.md](docs/DESIGN.md). Request history: [docs/REQUESTS.md](docs/REQUESTS.md). Paths under `archive/old-hub` were removed from `main` and are in the git history (last present at commit 420f1eb). Full installed-file inventory: [docs/INVENTORY.md](docs/INVENTORY.md).
 
 Status: **DONE** = implemented with recorded evidence; **VERIFY** = implemented but acceptance still needs a live check; **ACTIVE** = being worked on; **TODO** = queued; **IDEA** = a possibility requiring a prototype/decision. Task IDs remain stable across sessions.
 

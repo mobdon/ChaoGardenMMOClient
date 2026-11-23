@@ -39,7 +39,7 @@ export const NATIVE_GARDENS = {
 
 // Exit bounds are measured from the native dark recess triangles after these
 // exact stage transforms. They adapt a click target, not SA2 trigger volumes.
-// See archive/old-hub/docs/NATIVE-GARDEN-EXITS.md; all coordinates remain canonical world units.
+// See archive/old-hub/docs/NATIVE-GARDEN-EXITS.md (git history, last at 420f1eb); all coordinates remain canonical world units.
 
 export function isNativeTerrainMesh(name, sizeX, sizeZ, vertexCount, zone) {
   const layout = NATIVE_GARDENS[zone];
