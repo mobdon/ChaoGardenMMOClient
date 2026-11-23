@@ -392,7 +392,8 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             LEAVING.set([0; 3]);
             STANDING_TASK.set(0);
         }
-        if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
+        // As the egg: ENTRY is the arrival point only once the area has placed the player (mob 2026-11-23).
+        if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 && player_placed(m) {
             RESIDENTS_OUT.set(true);
             let at = m.r32(PLAYERTWP) + 0x14;
             ENTRY.set([0, 4, 8].map(|o| f32::from_bits(m.r32(at + o))));
