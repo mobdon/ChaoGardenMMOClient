@@ -17,6 +17,7 @@
           <button class="nav-button active" data-panel="world">The world</button>
           <button class="nav-button" data-panel="character">My Chao <span class="key-hint">C</span></button>
           <button class="nav-button" data-panel="journal">Journal <span class="key-hint">J</span></button>
+          <button id="school-open" hidden>Kindergarten</button>
           <button class="nav-button" id="shop-open">Chao shop <span class="key-hint">B</span></button>
           <button class="nav-button" id="stages-open">Stage select</button>
           <button class="nav-button" id="watch-toggle" type="button" aria-pressed="false" disabled>Watch off</button>
@@ -55,6 +56,7 @@
         <div class="stat-heading"><span>ABILITY</span><span>LEVEL / POINTS</span><span>GRADE</span></div>
         <div id="stats-list" class="stats-list"></div>
         <details class="hidden-stats"><summary>Hidden potential <span>↗</span></summary><div id="hidden-stats-list"></div><p>Hidden grades use a 0–255 scale; 255 is maximum.</p></details>
+        <label id="dev-roster-row" hidden class="dev-roster-row"><span>DEV · CHARACTER SELECT</span><select id="dev-roster" aria-label="Dev character select"><option value="">My Chao</option></select></label><small id="dev-tech-help" hidden></small>
         <details class="owner-loadout"><summary>GEAR &amp; CHAOS FORM <span>↗</span></summary>
           <button id="owner-dark-form" class="owner-form-button" hidden>ADMIN · Dark Chaos form <span>✦</span></button>
           <button id="owner-walker" class="owner-form-button" hidden aria-pressed="false">Pilot Dark Chao Walker <span>↗</span></button>
@@ -123,7 +125,13 @@
         <div id="setup-content" class="setup-content">Checking the installation…</div>
         <p class="fine-print">File discovery identifies content, and does not authenticate Steam ownership. BATTLE entitlement must be checked in Steam.</p>
       </dialog>
-      <dialog id="shop-dialog" class="shop-dialog">
+      <dialog id="school-dialog" class="shop-dialog">
+      <div class="panel-heading"><span class="eyebrow">CHAO KINDERGARTEN</span><button class="close-button" id="school-close" aria-label="Leave Kindergarten">×</button></div>
+      <h2>Health Center</h2><p id="school-report"></p>
+      <h3>Name your Chao</h3><form id="school-name-form"><label>Chao name <input id="school-name" maxlength="18" required></label> <button class="soft-button">Save name</button></form>
+      <hr><button class="soft-button" id="school-market">Visit the Black Market ↗</button>
+    </dialog>
+    <dialog id="shop-dialog" class="shop-dialog">
         <div class="panel-heading"><span class="eyebrow">AMY CHAO’S BLACK MARKET</span><button class="close-button" id="shop-close" aria-label="Close Chao shop">×</button></div>
         <div class="shop-heading"><div><small>WELCOME, LITTLE ADVENTURER</small><h2>CHAO SHOP<span>★</span></h2></div><div class="shop-wallet"><span class="ring-icon"></span><strong id="shop-balance">0</strong><span>RINGS</span></div></div>
         <p>Bring your rings. Build your legend.</p>

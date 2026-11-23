@@ -19,8 +19,10 @@ const library=JSON.parse(await readFile('.local/imports/activity-motions/convers
 const evidence=library.actions.find(row=>row.name==='alm_run');assert.ok(evidence);
 const nativeFile=`.local/extracted/activity-motions/${state.nativeFile}`;
 assert.equal(digest(await readFile(nativeFile)),evidence.sourceSha256);
-const selected=document.animations.filter(animation=>animation.name==='alm_run');
-assert.equal(selected.length,1);assert.equal(selected[0].channels.length,120);
+const sit=manifest.commonStates.find(row=>row.index===81);
+assert.equal(sit.nativeName,'alm_sit_dowwwn');
+const selected=[state,sit].map(row=>document.animations.find(a=>a.name===row.nativeName));
+assert.ok(selected.every(Boolean));assert.equal(selected[0].channels.length,120);
 const retained=structuredClone(document);retained.animations=structuredClone(selected);
 const accessorIds=new Set();
 for(const mesh of retained.meshes)for(const primitive of mesh.primitives){
@@ -44,7 +46,7 @@ for(const skin of retained.skins||[])if(skin.inverseBindMatrices!==undefined)ski
 for(const animation of retained.animations)for(const sampler of animation.samplers){sampler.input=accessorMap.get(sampler.input);sampler.output=accessorMap.get(sampler.output);}
 for(const image of retained.images||[])if(image.bufferView!==undefined)image.bufferView=viewMap.get(image.bufferView);
 retained.buffers=[{byteLength:length}];
-retained.asset.extras={...retained.asset.extras,chaoLocomotion:{nativeState:119,nativeName:state.nativeName,nativeMotionLabel:state.nativeMotionLabel,nativeFile,sourceSha256:evidence.sourceSha256,tableProperties:state.tableProperties,referenceFps:60,note:'Genuine Chao Run only; original hierarchy/rest/geometry/channel bytes preserved. Runtime native-to-Chaos retargeting remains separate.'}};
+retained.asset.extras={...retained.asset.extras,chaoLocomotion:{nativeState:119,nativeName:state.nativeName,nativeMotionLabel:state.nativeMotionLabel,nativeFile,sourceSha256:evidence.sourceSha256,tableProperties:state.tableProperties,referenceFps:60,seatedPilot:{state:81,name:sit.nativeName,endFrame:Number(sit.tableProperties.EndFrame)},note:'Genuine Chao Run and sit-down; original hierarchy/rest/geometry/channel bytes preserved. Runtime native-to-Chaos retargeting remains separate.'}};
 let encoded=Buffer.from(JSON.stringify(retained));encoded=Buffer.concat([encoded,Buffer.alloc((-encoded.length)&3,0x20)]);
 let compact=Buffer.concat(parts);compact=Buffer.concat([compact,Buffer.alloc((-compact.length)&3)]);
 const header=Buffer.alloc(20);header.writeUInt32LE(0x46546c67,0);header.writeUInt32LE(2,4);header.writeUInt32LE(28+encoded.length+compact.length,8);header.writeUInt32LE(encoded.length,12);header.writeUInt32LE(0x4e4f534a,16);

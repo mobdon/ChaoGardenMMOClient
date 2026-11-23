@@ -268,6 +268,9 @@ def preview_driver(pilot_seat, minimum, maximum):
 if __name__ == '__main__':
     if '--audit' in sys.argv:
         inspect_model()
+    elif '--weapons' in sys.argv:
+        for idx, name in [(267, 'shot'), (481, 'rocket-launcher'), (482, 'rocket')]:
+            export_effect(idx, 'dark-walker-' + name)
     else:
         export_walker()
         export_effect(267, 'dark-walker-shot')

@@ -1,0 +1,416 @@
+{
+  "assets": [
+    {
+      "filename": "garden-normal-0.png",
+      "height": 360,
+      "sha256": "62701bc8e8f1897c4d0a3337854991be70152479f4d5957b5ef2283c26849e86",
+      "source": {
+        "game": "A2NE-Garden",
+        "native": {
+          "anchor": [
+            20,
+            35
+          ],
+          "cell": [
+            40,
+            40
+          ],
+          "descriptor": 132020,
+          "emotion": "neutral at settled native anchor; no independent bob/alternate expression",
+          "frames": 67
+        }
+      },
+      "width": 320
+    },
+    {
+      "filename": "garden-normal-1.png",
+      "height": 360,
+      "sha256": "6a109ab7cbd512882bc07d9d939da819824b6515eeff37ccd7ef30412a3ba46e",
+      "source": {
+        "game": "A2NE-Garden",
+        "native": {
+          "anchor": [
+            20,
+            35
+          ],
+          "cell": [
+            40,
+            40
+          ],
+          "descriptor": 132052,
+          "emotion": "neutral at settled native anchor; no independent bob/alternate expression",
+          "frames": 67
+        }
+      },
+      "width": 320
+    },
+    {
+      "filename": "garden-toy-0-0.png",
+      "height": 16,
+      "sha256": "c22c353579841fed282f006d6455ddda7ad438d7a3f89f7ec12a82d7624515ed",
+      "source": {
+        "game": "A2NE-Garden",
+        "native": {
+          "anchorOffset": [
+            -8,
+            -15
+          ],
+          "descriptor": 132580,
+          "frame": 0,
+          "id": 0
+        }
+      },
+      "width": 16
+    },
+    {
+      "filename": "garden-toy-1-0.png",
+      "height": 32,
+      "sha256": "b0b85265d92ab3d7805ae1ae813545bcd97d5b88fc153cd7520259f62e0cd29f",
+      "source": {
+        "game": "A2NE-Garden",
+        "native": {
+          "anchorOffset": [
+            -16,
+            -27
+          ],
+          "descriptor": 132612,
+          "frame": 0,
+          "id": 1
+        }
+      },
+      "width": 32
+    },
+    {
+      "filename": "garden-toy-2-0.png",
+      "height": 24,
+      "sha256": "a9703ff4ed3afe6a00d94cc9fe6119b148f46507a26b324d75f4ddbada866306",
+      "source": {
+        "game": "A2NE-Garden",
+        "native": {
+          "anchorOffset": [
+            -12,
+            -23
+          ],
+          "descriptor": 132628,
+          "frame": 0,
+          "id": 2
+        }
+      },
+      "width": 24
+    },
+    {
+      "filename": "garden-toy-2-1.png",
+      "height": 24,
+      "sha256": "11d329bcac1a03f92753a6211eeaf3654d30b340d8fe43796b429c68dcd854d6",
+      "source": {
+        "game": "A2NE-Garden",
+        "native": {
+          "anchorOffset": [
+            -12,
+            -23
+          ],
+          "descriptor": 132620,
+          "frame": 1,
+          "id": 2
+        }
+      },
+      "width": 24
+    },
+    {
+      "filename": "garden-shop-panel.png",
+      "height": 160,
+      "sha256": "8b70ffa9c360779a69cd917d8e75c9455b198049d6cf9a3df7ac29b904431d91",
+      "source": {
+        "game": "A2NE-Garden",
+        "native": {
+          "anchorOffset": [
+            0,
+            -80
+          ],
+          "composition": {
+            "parts": [
+              {
+                "affine": false,
+                "anchorOffset": [
+                  0,
+                  -80
+                ],
+                "attr0High": 0,
+                "attr1High": 64,
+                "attr2High": 252,
+                "matrixIndex": null,
+                "nativeCanvasSize": [
+                  16,
+                  16
+                ],
+                "objMode": 0,
+                "textureSize": [
+                  16,
+                  16
+                ],
+                "tile": 309
+              },
+              {
+                "affine": false,
+                "anchorOffset": [
+                  0,
+                  -64
+                ],
+                "attr0High": 128,
+                "attr1High": 128,
+                "attr2High": 252,
+                "matrixIndex": null,
+                "nativeCanvasSize": [
+                  16,
+                  32
+                ],
+                "objMode": 0,
+                "textureSize": [
+                  16,
+                  32
+                ],
+                "tile": 313
+              },
+              {
+                "affine": false,
+                "anchorOffset": [
+                  0,
+                  -32
+                ],
+                "attr0High": 128,
+                "attr1High": 128,
+                "attr2High": 252,
+                "matrixIndex": null,
+                "nativeCanvasSize": [
+                  16,
+                  32
+                ],
+                "objMode": 0,
+                "textureSize": [
+                  16,
+                  32
+                ],
+                "tile": 313
+              },
+              {
+                "affine": false,
+                "anchorOffset": [
+                  0,
+                  0
+                ],
+                "attr0High": 128,
+                "attr1High": 128,
+                "attr2High": 252,
+                "matrixIndex": null,
+                "nativeCanvasSize": [
+                  16,
+                  32
+                ],
+                "objMode": 0,
+                "textureSize": [
+                  16,
+                  32
+                ],
+                "tile": 313
+              },
+              {
+                "affine": false,
+                "anchorOffset": [
+                  0,
+                  32
+                ],
+                "attr0High": 128,
+                "attr1High": 128,
+                "attr2High": 252,
+                "matrixIndex": null,
+                "nativeCanvasSize": [
+                  16,
+                  32
+                ],
+                "objMode": 0,
+                "textureSize": [
+                  16,
+                  32
+                ],
+                "tile": 313
+              },
+              {
+                "affine": false,
+                "anchorOffset": [
+                  0,
+                  64
+                ],
+                "attr0High": 0,
+                "attr1High": 96,
+                "attr2High": 252,
+                "matrixIndex": null,
+                "nativeCanvasSize": [
+                  16,
+                  16
+                ],
+                "objMode": 0,
+                "textureSize": [
+                  16,
+                  16
+                ],
+                "tile": 309
+              },
+              {
+                "affine": false,
+                "anchorOffset": [
+                  16,
+                  -80
+                ],
+                "attr0High": 64,
+                "attr1High": 128,
+                "attr2High": 252,
+                "matrixIndex": null,
+                "nativeCanvasSize": [
+                  32,
+                  16
+                ],
+                "objMode": 0,
+                "textureSize": [
+                  32,
+                  16
+                ],
+                "tile": 277
+              },
+              {
+                "affine": false,
+                "anchorOffset": [
+                  16,
+                  -64
+                ],
+                "attr0High": 0,
+                "attr1High": 128,
+                "attr2High": 252,
+                "matrixIndex": null,
+                "nativeCanvasSize": [
+                  32,
+                  32
+                ],
+                "objMode": 0,
+                "textureSize": [
+                  32,
+                  32
+                ],
+                "tile": 285
+              },
+              {
+                "affine": false,
+                "anchorOffset": [
+                  16,
+                  -32
+                ],
+                "attr0High": 0,
+                "attr1High": 128,
+                "attr2High": 252,
+                "matrixIndex": null,
+                "nativeCanvasSize": [
+                  32,
+                  32
+                ],
+                "objMode": 0,
+                "textureSize": [
+                  32,
+                  32
+                ],
+                "tile": 285
+              },
+              {
+                "affine": false,
+                "anchorOffset": [
+                  16,
+                  0
+                ],
+                "attr0High": 0,
+                "attr1High": 128,
+                "attr2High": 252,
+                "matrixIndex": null,
+                "nativeCanvasSize": [
+                  32,
+                  32
+                ],
+                "objMode": 0,
+                "textureSize": [
+                  32,
+                  32
+                ],
+                "tile": 285
+              },
+              {
+                "affine": false,
+                "anchorOffset": [
+                  16,
+                  32
+                ],
+                "attr0High": 0,
+                "attr1High": 128,
+                "attr2High": 252,
+                "matrixIndex": null,
+                "nativeCanvasSize": [
+                  32,
+                  32
+                ],
+                "objMode": 0,
+                "textureSize": [
+                  32,
+                  32
+                ],
+                "tile": 285
+              },
+              {
+                "affine": false,
+                "anchorOffset": [
+                  16,
+                  64
+                ],
+                "attr0High": 64,
+                "attr1High": 128,
+                "attr2High": 252,
+                "matrixIndex": null,
+                "nativeCanvasSize": [
+                  32,
+                  16
+                ],
+                "objMode": 0,
+                "textureSize": [
+                  32,
+                  16
+                ],
+                "tile": 301
+              }
+            ],
+            "pixelSpace": "Original OAM composition before native blend/window effects",
+            "requiresNativeAffine": false
+          },
+          "descriptor": 132668,
+          "packed": 252,
+          "tile": 277
+        }
+      },
+      "width": 48
+    },
+    {
+      "filename": "garden-shop-digits.png",
+      "height": 8,
+      "sha256": "7ad4ecdd150f4f31b9933d4b7d5dbc98df5a62bd86f5ee5be9bc740d82565e66",
+      "source": {
+        "game": "A2NE-Garden",
+        "native": {
+          "cell": [
+            8,
+            8
+          ],
+          "count": 10,
+          "descriptor": 132764,
+          "paletteBank": 1,
+          "tile": 321
+        }
+      },
+      "width": 80
+    }
+  ],
+  "sourceSha256": "84d4df3f397e25885768d212a46287db706857651102b9145595cfda30cee7ca"
+}

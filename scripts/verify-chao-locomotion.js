@@ -15,7 +15,11 @@ function accessorData(asset,index){
 function equalAccessor(a,ai,b,bi){const x=accessorData(a,ai),y=accessorData(b,bi);assert.deepEqual(x.descriptor,y.descriptor);assert.ok(x.bytes.equals(y.bytes),'Accessor values changed.');}
 const source=await glb('.local/imports/activity-motions/chao-actions.glb'),output=await glb('.local/imports/chao-locomotion.glb');
 const original=source.document.animations.find(a=>a.name==='alm_run'),selected=output.document.animations[0];
-assert.equal(output.document.animations.length,1);assert.equal(selected.name,'alm_run');
+assert.equal(output.document.animations.length,2);
+const sit=output.document.animations.find(a=>a.name==='alm_sit_dowwwn'),nativeSit=source.document.animations.find(a=>a.name===sit.name);
+assert.deepEqual(sit.channels,nativeSit.channels);
+for(const [i,sampler] of sit.samplers.entries()){equalAccessor(source,nativeSit.samplers[i].input,output,sampler.input);equalAccessor(source,nativeSit.samplers[i].output,output,sampler.output);}
+assert.equal(selected.name,'alm_run');
 assert.deepEqual(output.document.nodes,source.document.nodes);assert.deepEqual(output.document.scenes,source.document.scenes);assert.deepEqual(output.document.materials,source.document.materials);assert.deepEqual(output.document.textures,source.document.textures);
 assert.deepEqual(selected.channels,original.channels);
 for(let i=0;i<original.samplers.length;i++){

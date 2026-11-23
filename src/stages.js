@@ -1,5 +1,8 @@
 import catalog from '../shared/stage-catalog.json';
 
+// shortcut: the browser game's page path is assumed until the site's hosting is set up; change it there.
+const SA2_PAGE = '/sa2/';
+
 const familyNames = { speed: 'Speed', hunt: 'Treasure hunt', mech: 'Mech', boss: 'Boss', chao: 'Chao', kart: 'Kart', other: 'Other' };
 
 export function createStageSelect(dialog, { onAction, onChange }) {
@@ -25,9 +28,14 @@ export function createStageSelect(dialog, { onAction, onChange }) {
       title.textContent = stage.name;
       const character = document.createElement('p');
       character.textContent = stage.character || 'Chao adventure';
-      const status = document.createElement('span');
-      status.className = 'stage-coming';
-      status.textContent = 'Coming later';
+      // One-player stages start straight from boot in the browser game (sa2-web, ?stage=).
+      // Not 2P stages, and Cannon's Core only from its start (34), as the game's own Stage Select.
+      const playable = Number.isInteger(stage.id) && ['speed', 'hunt', 'mech'].includes(stage.family)
+        && !stage.name.includes('(2P)') && !(stage.id >= 35 && stage.id <= 38);
+      const status = document.createElement(playable ? 'a' : 'span');
+      status.className = playable ? 'stage-play' : 'stage-coming';
+      status.textContent = playable ? 'Play as your Chao ↗' : 'Coming later';
+      if (playable) status.href = `${SA2_PAGE}?stage=${stage.id}`;
       card.append(badge, title, character, status);
       list.append(card);
     }
@@ -62,5 +70,5 @@ export function createStageSelect(dialog, { onAction, onChange }) {
   }
   dialog.addEventListener('close', onChange);
   render();
-  return { open() { dialog.showModal(); onChange(); search.focus(); } };
+  return { open() { if (dialog.open) dialog.close(); dialog.showModal(); onChange(); search.focus(); } };
 }
