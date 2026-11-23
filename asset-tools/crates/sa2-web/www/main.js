@@ -250,7 +250,13 @@ function pickedUp(item) {
   const token = mmoToken();
   if (!token) return;
   fetch('/api/gear-pickup', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ item }) }).then(r => r.ok, () => false).then(ok => ok || log(`could not tell the server about ${item}`, true));
+    body: JSON.stringify({ item }) }).then(r => r.status, () => 0).then(status => {
+    if (status >= 200 && status < 300) return;
+    log(`could not tell the server about ${item}`, true);
+    // The game tells a pickup once a run: a lost request or a server fault is
+    // sent again here until it lands. A refusal (4xx) would not change.
+    if (status === 0 || status >= 500) setTimeout(pickedUp, 10000, item);
+  });
 }
 // In a Chao World area from a hub portal, stay in that zone's shared room on
 // the MMO server (same socket and messages as the hub page, src/main.js).
