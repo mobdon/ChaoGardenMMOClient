@@ -86,10 +86,6 @@ fn host(main_crate: &Path, rels_crate: &Path, out: &Path) -> Result<(), String> 
         \x20       files.insert(0, Box::new(FlatDir { dir: dir.into() }));\n\
         \x20   }\n\
         \x20   sa2_boot::install_all(c, m, Box::new(Layered(files)));\n\
-        \x20   // SA2_SERVE: an MMO server drives the game over stdin/stdout (sa2_boot::serve).\n\
-        \x20   if sa2_boot::serve::enabled() {\n\
-        \x20       sa2_recomp::os::add_frame_hook(sa2_boot::serve::hook);\n\
-        \x20   }\n\
         \x20   // SA2_WINDOW: show the game in a window; the keyboard is controller 0.\n\
         \x20   if std::env::var_os(\"SA2_WINDOW\").is_some() {\n\
         \x20       sa2_boot::window::start();\n\

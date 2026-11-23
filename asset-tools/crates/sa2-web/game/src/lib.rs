@@ -166,9 +166,8 @@ fn copy_disp(c: &mut Cpu, m: &mut Mem) {
 /// Each OS frame: controller 1 from the page, then hold the game to 60.
 /// SA2_INPUT presses are added, as in the window (the keyboard works
 /// throughout and has the pad to itself once the script is done).
-fn frame(c: &mut Cpu, m: &mut Mem) {
+fn frame(_c: &mut Cpu, _m: &mut Mem) {
     let mut p = pad();
-    sa2_boot::pause_extras::apply(c, m);
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
     if let Some(s) = sa2_boot::pad::script(f) {
         p.button |= s.button;
@@ -176,14 +175,9 @@ fn frame(c: &mut Cpu, m: &mut Mem) {
             p.stick = s.stick;
         }
     }
-    sa2_boot::pause_extras::set_input(p.button, p.stick[0]);
     sa2_boot::pad::set_port0(p);
     let t = std::time::Instant::now();
-    // Hidden boot logos before an MMO start: no 60 Hz wait, so they pass in
-    // a second or two instead of ~9 (MMO glue; the logos still run in full).
-    if !sa2_boot::start_stage::logos_hidden() {
-        pace();
-    }
+    pace();
     // SA2_PROFILE: where each second's frame time went (game, limiter sleep).
     if sa2_boot::prof::on() {
         sa2_boot::prof::add(&sa2_boot::prof::SLEEP, t);
@@ -191,14 +185,11 @@ fn frame(c: &mut Cpu, m: &mut Mem) {
     }
 }
 
-/// `/dev/pad`: 24 bytes. Keys held (u16, bits as [`KEYS`], bit 15 Tab); then the
+/// `/dev/pad`: 16 bytes. Keys held (u16, bits as [`KEYS`]); then the
 /// gamepad: connected (u8), unused (u8), buttons (u16, GC bits), stick
-/// x/y, C-stick x/y (i8), L/R (u8); the Extras settings
-/// ([`sa2_boot::pause_extras::set_page_settings`], 4 bytes); then the last left
-/// click (u16 each): canvas x, y (0..=65535), canvas aspect in thousandths
-/// (0 = 4:3), a count that changes per click.
-fn read_pad() -> [u8; 24] {
-    let mut b = [0u8; 24];
+/// x/y, C-stick x/y (i8), L/R (u8).
+fn read_pad() -> [u8; 16] {
+    let mut b = [0u8; 16];
     if let Ok(mut f) = std::fs::File::open("/dev/pad") {
         let _ = f.read_exact(&mut b);
     }
@@ -217,23 +208,15 @@ const KEYS: [u16; 15] = [
 /// desktop window combines them.
 fn pad() -> PadStatus {
     let b = read_pad();
-    sa2_boot::pause_extras::set_page_settings([b[12], b[13], b[14], b[15]]);
     let h = u16::from_le_bytes([b[0], b[1]]);
     let on = |i: usize| h >> i & 1 != 0;
     let mut p = PadStatus::default();
-    let w = |i: usize| u16::from_le_bytes([b[i], b[i + 1]]);
-    sa2_boot::kinder_chart::set_click(w(16), w(18), w(20), w(22));
-    sa2_boot::card_box::set_aspect(w(20));
-    // The left mouse (key 13) picks the chart's tabs while it is open.
-    let chart = sa2_boot::kinder_chart::is_open();
     for (i, bit) in KEYS.iter().enumerate() {
-        if *bit != 0 && on(i) && !(chart && i == 13) {
+        if *bit != 0 && on(i) {
             p.button |= bit;
         }
     }
     p.stick = key_stick(on(0), on(1), on(2), on(3));
-    // Key bit 15: Tab / gamepad Back opens the Chao World chart.
-    sa2_boot::kinder_chart::set_tab(on(15));
     if b[2] != 0 {
         let s = |i: usize| b[i] as i8;
         p.button |= u16::from_le_bytes([b[4], b[5]]);

@@ -73,7 +73,7 @@ fn trace(what: &str) {
 }
 
 /// Where the card's files live. Desktop: the SA2_MEMCARD folder. Browser:
-/// memory, whose only copy is the server card (the page's `/dev/card`).
+/// memory only, and the slot reads as empty (see `available`).
 #[cfg(not(target_os = "wasi"))]
 mod store {
     use super::dir;
@@ -163,9 +163,9 @@ mod store {
     /// name -> (status, data)
     static FILES: Global<BTreeMap<String, (Vec<u8>, Vec<u8>)>> = global!(BTreeMap::new());
 
-    /// The server card is in the slot only while signed in.
+    /// The browser build has nowhere to keep a card yet: the slot is empty.
     pub fn available() -> bool {
-        std::env::var("SA2_MMO_TOKEN").is_ok_and(|t| !t.is_empty())
+        false
     }
     pub fn init() {}
     pub fn names() -> Vec<String> {
@@ -210,101 +210,7 @@ fn used_blocks() -> u32 {
 }
 
 fn present(chan: u32) -> bool {
-    chan == 0 && store::available() && mmo_card_in() && !CARD_OUT.with_borrow(|out| *out)
-}
-
-/// The server card couldn't be checked out (offline, held by another game):
-/// the slot reads as empty, as a pulled card would, instead of failing reads.
-static CARD_OUT: Global<bool> = global!(false);
-
-/// The MMO server card is in the slot only while signed in.
-fn mmo_card_in() -> bool {
-    #[cfg(not(target_os = "wasi"))]
-    return !crate::mmo::configured() || crate::mmo::signed_in();
-    #[cfg(target_os = "wasi")]
-    return true;
-}
-
-/// Put a card from the server into the store. Server files overwrite local
-/// ones of the same name; local files the server lacks stay (and go up with
-/// the next change), so nothing is lost.
-fn store_card(files: Vec<crate::card_pack::CardFile>) -> Result<(), String> {
-    for (name, stat, data) in files {
-        if !store::put_data(&name, &data) || (!stat.is_empty() && !store::put_stat(&name, &stat)) {
-            return Err(format!("could not store {name:?}"));
-        }
-    }
-    Ok(())
-}
-
-fn whole_card() -> Vec<crate::card_pack::CardFile> {
-    files()
-        .into_iter()
-        .map(|n| (n.clone(), store::stat(&n), store::data(&n)))
-        .collect()
-}
-
-/// The browser's server card: the page answers reads of this device with the
-/// checked-out card and sends writes to the server (lease and revision kept
-/// there), so the game thread never waits on a socket of its own.
-#[cfg(target_os = "wasi")]
-const CARD_DEVICE: &str = "/dev/card";
-#[cfg(target_os = "wasi")]
-static CHECKED_OUT: Global<bool> = global!(false);
-
-/// Mounting the server card checks the whole card out.
-fn mmo_mount() -> i32 {
-    #[cfg(not(target_os = "wasi"))]
-    let stored = if crate::mmo::configured() {
-        crate::mmo::pull(store_card)
-    } else {
-        Ok(())
-    };
-    #[cfg(target_os = "wasi")]
-    let stored = if CHECKED_OUT.with_borrow(|c| *c) {
-        Ok(())
-    } else {
-        std::fs::read(CARD_DEVICE)
-            .map_err(|e| e.to_string())
-            .and_then(|bytes| {
-                if bytes.is_empty() {
-                    return Ok(()); // a new card: the game's first save fills it
-                }
-                store_card(crate::card_pack::unpack(&bytes).ok_or("the server card is damaged")?)
-            })
-            .map(|()| CHECKED_OUT.set(true))
-    };
-    if let Err(e) = stored {
-        eprintln!("card (mmo): could not load the card, slot A stays empty: {e}");
-        CARD_OUT.set(true);
-        return NOCARD;
-    }
-    READY
-}
-
-/// After the game changed a card file, the server must have the card too,
-/// or the game is told the change failed.
-fn mmo_changed() -> i32 {
-    #[cfg(not(target_os = "wasi"))]
-    let sent = if crate::mmo::configured() {
-        crate::mmo::push(&whole_card())
-    } else {
-        Ok(())
-    };
-    #[cfg(target_os = "wasi")]
-    // Synced: the page answers sync with the server's yes or no.
-    let sent = (|| {
-        use std::io::Write;
-        let mut device = std::fs::File::create(CARD_DEVICE)?;
-        device.write_all(&crate::card_pack::pack(&whole_card()))?;
-        device.sync_all()
-    })()
-    .map_err(|e| e.to_string());
-    if let Err(e) = sent {
-        eprintln!("card (mmo): could not save the card: {e}");
-        return IOERROR;
-    }
-    READY
+    chan == 0 && store::available()
 }
 
 fn set_result(c: &mut Cpu, chan: u32, r: i32) {
@@ -331,8 +237,6 @@ fn finish_async(c: &mut Cpu, chan: u32, r: i32, cb: u32) {
 
 /// Frame hook: the callbacks of asynchronous card calls.
 fn done(c: &mut Cpu, m: &mut Mem) {
-    #[cfg(not(target_os = "wasi"))]
-    crate::mmo::renew_if_due();
     for (cb, chan, r) in DONE.take() {
         guest_call(c, m, cb, &[chan, r as u32]);
     }
@@ -382,7 +286,7 @@ fn get_mem_size(c: &mut Cpu, m: &mut Mem) {
 // CARDMount(chan, workArea, detachCallback)
 fn mount(c: &mut Cpu, _m: &mut Mem) {
     let chan = c.r[3];
-    let r = if present(chan) { mmo_mount() } else { NOCARD };
+    let r = if present(chan) { READY } else { NOCARD };
     trace(&format!("mount {chan} -> {r}"));
     set_result(c, chan, r);
 }
@@ -390,7 +294,7 @@ fn mount(c: &mut Cpu, _m: &mut Mem) {
 // CARDMountAsync(chan, workArea, detachCallback, attachCallback)
 fn mount_async(c: &mut Cpu, _m: &mut Mem) {
     let chan = c.r[3];
-    let r = if present(chan) { mmo_mount() } else { NOCARD };
+    let r = if present(chan) { READY } else { NOCARD };
     trace(&format!("mount async {chan} -> {r}"));
     finish_async(c, chan, r, c.r[6]);
 }
@@ -525,7 +429,7 @@ fn create_file(m: &mut Mem, chan: u32, name_at: u32, size: u32, fi: u32) -> i32 
     let no = files().iter().position(|n| *n == name).unwrap_or(0);
     fill_info(m, fi, chan, no, &name);
     trace(&format!("create {name:?} {size} bytes"));
-    mmo_changed()
+    READY
 }
 
 // CARDCreate(chan, fileName, size, CARDFileInfo*)
@@ -576,7 +480,7 @@ fn write_to_file(m: &mut Mem, fi: u32, buf: u32, len: u32, off: u32) -> (u32, i3
     (
         chan,
         if store::put_data(&name, &data) {
-            mmo_changed()
+            READY
         } else {
             IOERROR
         },
@@ -627,7 +531,7 @@ fn delete_file(m: &Mem, chan: u32, name_at: u32) -> i32 {
     }
     store::remove(&name);
     trace(&format!("delete {name:?}"));
-    mmo_changed()
+    READY
 }
 
 // CARDDelete(chan, fileName)
@@ -745,7 +649,7 @@ fn set_status_of(m: &Mem, chan: u32, no: usize, st: u32) -> i32 {
     let ok = store::put_stat(&name, &bytes);
     trace(&format!("set status {name:?}"));
     if ok {
-        mmo_changed()
+        READY
     } else {
         IOERROR
     }

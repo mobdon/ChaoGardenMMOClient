@@ -1,8 +1,0 @@
-/target/
-/.local/
-*.gba
-*.sav
-*.bin
-*.rgba
-*.ppm
-*.u8
