@@ -146,6 +146,10 @@ static CHOSEN: Global<u32> = global!(0);
 static SEEN: Global<[u32; 9]> = global!([0; 9]);
 /// ChaoMain .bss: the word its 0xDB60 answers with; 0 forces the picker's cursor to Back.
 const INPUT_FLAG: u32 = 0x1D358;
+/// ChaoMain .text: sets that word to 1.
+const INPUT_ON: u32 = 0xDB50;
+/// That word as it was before the pick screen.
+static FLAG_WAS: Global<u32> = global!(0);
 /// The game's pad work pointer; +0x10 is the pressed buttons (confirm 0x4, cancel 0x402).
 const PAD: u32 = 0x801E_55D8;
 static HELD_AT: Global<u32> = global!(0);
@@ -387,6 +391,13 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
                 return;
             }
             m.w32(picker, MOVE_MODE);
+            // MMO glue: the picker forces its cursor to Back, where confirm is a
+            // cancel, while ChaoMain's input word is 0 (builds 14 and 16: every
+            // confirm left with state 2). ChaoMain's own 0xDB50 sets it; the
+            // word is put back on leaving. Build 17 logged the word at 0 throughout;
+            // unverified in a run: that confirm picks once it is set.
+            FLAG_WAS.set(m.r32(cm_bss + INPUT_FLAG));
+            crate::guest_call(c, m, cm_text + INPUT_ON, &[]);
             m.w32(picker + 0x28, 4); // the cursor starts on side 1's first Chao
             let mut card = card_chao(m);
             if card.is_empty() && crate::chao_player::own_record(m).is_some() {
@@ -469,6 +480,7 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
             }
             if state == CONFIRMED || state == CANCELLED {
                 eprintln!("tiny-transporter: pick screen left, state {state}, picker {picker:#x}, chosen slot {}", CHOSEN.get());
+                m.w32(cm_bss + INPUT_FLAG, FLAG_WAS.get());
                 crate::guest_call(c, m, text + SET_DONE, &[]);
                 crate::guest_call(c, m, text + SET_PHASE, &[PHASE_LEAVE]);
             }
