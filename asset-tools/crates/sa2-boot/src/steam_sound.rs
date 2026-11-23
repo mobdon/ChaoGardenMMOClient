@@ -121,12 +121,7 @@ pub fn missing_bank(files: &dyn GameFiles, request: &str) {
 /// Cue `<name><bank:03><seq:03>` decoded, if Steam has it.
 fn cue(bank: &Bank, n: u32, seq: u32) -> Option<Cue> {
     let want = format!("{}{n:03}{seq:03}", bank.name);
-    let cue = bank
-        .cues
-        .cues
-        .iter()
-        .find(|c| c.name.eq_ignore_ascii_case(&want))?;
-    let mut link = cue.synth.clone();
+    let mut link = first_link(&bank.cues, &want)?;
     let mut volume = 1.0;
     for _ in 0..8 {
         if let Some(e) = bank.cues.elements.iter().find(|e| e.name == link) {
@@ -152,6 +147,21 @@ fn cue(bank: &Bank, n: u32, seq: u32) -> Option<Cue> {
         link = s.link.clone();
     }
     None
+}
+
+/// Where cue `want` starts: its own cue's synth, or, for sequences Steam
+/// merged into one cue (`se_ch_wk002018+19+20`, a synth track per sequence),
+/// the synth track named for that sequence.
+fn first_link(bank: &csb::Bank, want: &str) -> Option<String> {
+    if let Some(c) = bank.cues.iter().find(|c| c.name.eq_ignore_ascii_case(want)) {
+        return Some(c.synth.clone());
+    }
+    let last = |n: &str| {
+        n.rsplit('/')
+            .next()
+            .is_some_and(|l| l.eq_ignore_ascii_case(want))
+    };
+    Some(bank.synths.iter().find(|s| last(&s.name))?.name.clone())
 }
 
 fn start(bank: u32, seq: u32) -> Option<Voice> {
@@ -356,5 +366,76 @@ mod tests {
         message(7, 0x90, 0x30, 0x7F);
         message(7, 0x80, 0x30, 0);
         assert!(CHANNELS.with_borrow(|c| c[&(7, 0)].voice.is_none()));
+    }
+
+    #[test]
+    fn a_merged_cue_plays_the_track_named_for_the_sequence() {
+        // Synthetic names in Steam's layout: one cue for sequences 18 and 19.
+        let synth = |name: &str, link: &str| csb::Synth {
+            name: name.into(),
+            link: link.into(),
+            volume: 1000,
+        };
+        let bank = csb::Bank {
+            tables: vec![],
+            cues: vec![
+                csb::Cue {
+                    name: "bk002018+19".into(),
+                    id: 0,
+                    synth: "Synth/bk002018+19/bk002018
+Synth/bk002018+19/bk002019
+"
+                    .into(),
+                },
+                csb::Cue {
+                    name: "bk002001".into(),
+                    id: 1,
+                    synth: "Synth/bk002001".into(),
+                },
+            ],
+            synths: vec![
+                synth("Synth/bk002018+19/bk002018", "a_wav"),
+                synth("Synth/bk002018+19/bk002019", "b_wav"),
+                synth("Synth/bk002001", "c_wav"),
+            ],
+            elements: vec![],
+        };
+        let link = |w| first_link(&bank, w);
+        assert_eq!(link("BK002001").as_deref(), Some("Synth/bk002001"));
+        assert_eq!(
+            link("bk002019").as_deref(),
+            Some("Synth/bk002018+19/bk002019")
+        );
+        assert_eq!(link("bk002020"), None);
+    }
+
+    #[test]
+    #[ignore = "requires the installed Steam game (SA2_GAME_PATH)"]
+    fn the_2p_walker_banks_layered_and_voice_sequences_decode() {
+        let gd =
+            std::path::PathBuf::from(std::env::var_os("SA2_GAME_PATH").expect("SA2_GAME_PATH"))
+                .join("resource/gd_PC");
+        // Sequences the Dark Chao Walker asked for on Iron Gate.
+        for (file, name, n, seqs) in [
+            (
+                "MLT/se_ch_wk_BATTLE/2.csb",
+                "se_ch_wk_battle",
+                2,
+                &[18, 19, 21, 22][..],
+            ),
+            ("MPB/b03_wk_btl_e/3.csb", "b03_wk_btl_e", 3, &[60, 73][..]),
+        ] {
+            let csb = std::fs::read(gd.join(file)).unwrap();
+            let bank = Bank {
+                name: name.into(),
+                cues: csb::read(&csb).unwrap(),
+                csb,
+                decoded: BTreeMap::new(),
+            };
+            for &seq in seqs {
+                let c = cue(&bank, n, seq).unwrap_or_else(|| panic!("{name} {seq}"));
+                assert!(c.rate > 0 && !c.pcm.is_empty(), "{name} {seq}");
+            }
+        }
     }
 }
