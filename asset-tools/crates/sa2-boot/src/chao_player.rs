@@ -1907,7 +1907,10 @@ fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
     // (skate.rs, the pause Extras limits). His limb directions copied on the
     // Chao (level_pose) laid it flat on the board, face down, with his crouch.
     // SA2_LEVEL_RETARGET=1 (debug): that pose, as before.
-    let old_level = !chao_world(m) && std::env::var("SA2_LEVEL_RETARGET").is_ok_and(|v| v == "1");
+    // Only for riders on Sonic's skeleton (his exec): the overlay's node map is
+    // his and Shadow's. Knuckles's and Rouge's stages keep their own path
+    // (knuckles_rules: the Chao's own motions, mirrored where set).
+    let old_level = !chao_world(m) && (LAST_EXEC.get() != SONIC_EXEC || std::env::var("SA2_LEVEL_RETARGET").is_ok_and(|v| v == "1"));
     if PILOT_SEAT.get().is_none() && live && RIDER.get() != 0 && (old_level || (self_retarget(m) && self_in_motion()) || std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")) {
         level_pose(m, c.r[3]);
         CHAO_DRAW.set(true);
@@ -2583,9 +2586,12 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
     record_hand(m, i, cur_ptr);
     if MIRROR.get() {
         mirror_node(m, i, cur_ptr);
+        record_foot(m, i, cur_ptr);
         return record_hand(m, i, cur_ptr);
     }
     let Some((r, t)) = POSED.with_borrow(|p| p.get(i).copied()) else {
+        // Its own motion (Knuckles's and Rouge's stages): the feet as drawn, for the shoes.
+        record_foot(m, i, cur_ptr);
         if i == 40 && !SAID_NODE.replace(true) {
             eprintln!("chao-player: node transform past 40 nodes, posed {} (pose not applied)", POSED.with_borrow(|p| p.len()));
         }
@@ -2980,6 +2986,16 @@ thread_local! {
 /// the foot meshes its footwear covers (src/scene.js attachOwnerGear): the
 /// foot node's matrix is collapsed to its origin after the shoe's mount
 /// was taken from it. Only the player's own Chao wears the shoes.
+/// A foot node's view-space matrix for the shoes (next shoe draw), then the
+/// Chao's own foot hidden under them.
+fn record_foot(m: &mut Mem, i: usize, cur_ptr: u32) {
+    if let Some(k) = SHOES.iter().position(|s| s.0 == i) {
+        let cur = mtx(m, cur_ptr);
+        FEET.with_borrow_mut(|f| f[k] = Some(cur));
+        hide_foot(m, cur_ptr);
+    }
+}
+
 fn hide_foot(m: &mut Mem, cur_ptr: u32) {
     if HUB_SHOE.get().is_some_and(|o| o != 0) && !debug_off("shoes") && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
         for r in 0..3 { for k in 0..3 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, 0); } }
@@ -3840,7 +3856,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // alm_aruki_ncz (walk), 119 alm_run (run); common-motions.ini.
         // shortcut: walk/run switch at 1.0 / 0.9 units a frame (hysteresis as
         // the hub's 1.05/0.95); not yet scaled to the hub's speed units.
-        let old_level = std::env::var("SA2_LEVEL_RETARGET").is_ok_and(|v| v == "1");
+        let old_level = addr != SONIC_EXEC || std::env::var("SA2_LEVEL_RETARGET").is_ok_and(|v| v == "1");
         if chao_world(m) || !old_level {
             let d = d2.sqrt();
             let last = LAST_MOTION.get();
@@ -3861,25 +3877,14 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // the rider's B is its own move, not Pet (action 31). Each frame, as
         // the Chao's behaviours may enable touch again (AL_EnableTouch 0x5AB0).
         call(c, m, rt::sec(m, 60, 1) + AL_DISABLE_NADE, &[chao]);
-        // The Hammer Gloves item in Knuckles's and Rouge's levels: Knuckles's
-        // models are there in his own; Rouge's need KNUCKMDL. KNUCKTEX is
-        // loaded once for the glove's own list.
-        if addr == KNUX_EXEC && KNUX_TEX.get().is_none() && !std::env::var("SA2_HAMMER_GLOVES").is_ok_and(|v| v == "0") {
-            let obj2 = m.r32(P1_OBJ2);
-            let tex = call(c, m, LOAD_TEX, &[0x8017_4F04]);
-            if model_obj(m, 329) == 0 {
-                load_models(c, m, 0x8017_4F10);
-                KNUX_MODELS.set(LAST_LOAD.with_borrow(|l| l.clone()));
-            }
-            eprintln!("chao-player: Hammer Gloves textures {tex:#x} (rider {})", m.r8(obj2 + 1));
-            KNUX_TEX.set(Some(tex).filter(|&t| t != 0));
-        }
-        // Shadow's textures and models for the Dark Chao's ball, once, in
-        // Sonic's levels (playerwk +1 = 0, the byte Sonic's display picks his models by).
-        if addr == SONIC_EXEC && SHADOW_TEX.get().is_none() && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
-            eprintln!("chao-player: rider char {} (shadow tex not loaded yet)", m.r8(m.r32(P1_OBJ2) + 1));
-        }
-        if addr == SONIC_EXEC && (m.r8(m.r32(P1_OBJ2) + 1) == 0 || chao_world(m)) && SHADOW_TEX.get().is_none() && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0")
+        // The Chao's gear (Shadow's and Knuckles's textures and models, for the
+        // Air Shoes, the ball and the Hammer Gloves), once per stage, in every
+        // stage the Chao plays, whoever the hidden character is: each file is
+        // loaded by this module into its own maps (SHADOW_MODELS, KNUX_MODELS),
+        // never read from a model table slot the stage's own character filled.
+        // Before 2026-11-23: Sonic's stages and Chao World only; Shadow's own
+        // stages got no gear at all, Knuckles's and Rouge's the gloves alone.
+        if (addr == SONIC_EXEC || addr == KNUX_EXEC) && SHADOW_TEX.get().is_none() && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0")
             && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= GEAR_LOAD_AT.get() {
             // The gear goes in game heap 1: in heap 0 it took ~1.5 MB of the
             // lobby's 3.93 MB, leaving 0.05 MB (menus thread, build 7 heap log).
