@@ -86,7 +86,10 @@ export function applyNativeChaoMaterial(key, mat) {
   // al_dchaos/al_hchaos/al_nchaos.sa2mdl); the GLB export marked them opaque.
   // Converted with scripts/convert-assets.py: the part's own Ninja material in glTF extras.
   const ninja = mat.metadata?.gltf?.extras?.ninja;
-  const nativeBlend = ninja ? ninja.useAlpha && !facePart : /al_(dcha01|hcha00|ncha0[012])/i.test(mat.albedoTexture?.name || '');
+  // A model built from the game files carries each strip's own flags: USE_ALPHA (bit 3) strips blend.
+  const chunk = mat.metadata?.gltf?.extras?.sa2Chunk;
+  const nativeBlend = chunk ? !!(chunk.stripFlags & 8) && !facePart
+    : ninja ? ninja.useAlpha && !facePart : /al_(dcha01|hcha00|ncha0[012])/i.test(mat.albedoTexture?.name || '');
   const texture = mat.albedoTexture;
   if (ninja && texture) {
     texture.wrapU = ninja.mirrorU ? Texture.MIRROR_ADDRESSMODE : ninja.clampU ? Texture.CLAMP_ADDRESSMODE : Texture.WRAP_ADDRESSMODE;
@@ -111,4 +114,73 @@ export function applyNativeChaoMaterial(key, mat) {
   }
   restoreNativeChaosSampling(key, mat);
   applyNinjaEnvironment(mat);
+}
+
+// The game's light on a Chao (GC main.dol SetLight fn_80024CB8 and ChaoMain's own strip drawer fn_60_50A8C):
+// one light, GX channel COLOR0 with the clamped diffuse rule and no attenuation, so each strip draws
+//   texture x material diffuse x clamp(ambient + colour x max(0, N.L), 0, 1)
+// with ambient = row.ambient x row.colour and colour = row.intensity x row.colour, both cut to bytes
+// (fn_8011FBBC, fn_8011FD30), and L = the reverse of row.direction (the light is put 100000 units back along it).
+// A strip flagged IGNORE_LIGHT (bit 0) draws texture x diffuse. The chunk's ambient and specular colours are not
+// drawn: the specular channel COLOR1 reaches no TEV stage, and the Chao drawer runs one channel (GXSetNumChans(1)).
+
+/** `row` (game-assets.js gameChaoLight) as the three shader values, in this scene's space (the game's X mirrored). */
+export function ninjaLight(row) {
+  const [x, y, z] = row.direction, length = Math.hypot(x, y, z);
+  const byte = value => Math.max(0, Math.min(255, Math.trunc(255 * value))) / 255;
+  return {
+    toLight: [x / length, -y / length, -z / length],
+    colour: row.colour.map(c => byte(row.intensity * c)),
+    ambient: row.colour.map(c => byte(row.ambient * c)),
+  };
+}
+
+class NinjaLightPlugin extends MaterialPluginBase {
+  constructor(material) {
+    // After the texture work (200) and before the shiny picture is added (ChaoLookEnvironment, 210).
+    super(material, 'NinjaLight', 205, { NINJA_LIGHT: false });
+    this.doNotSerialize = true;
+    this.light = null;
+    this._enable(true);
+  }
+  prepareDefines(defines) { defines.NINJA_LIGHT = !!this.light; }
+  getClassName() { return 'NinjaLightPlugin'; }
+  getUniforms() {
+    return {
+      ubo: [{ name: 'ninjaToLight', size: 3, type: 'vec3' }, { name: 'ninjaLightColour', size: 3, type: 'vec3' }, { name: 'ninjaAmbient', size: 3, type: 'vec3' }],
+      fragment: '#ifdef NINJA_LIGHT\nuniform vec3 ninjaToLight;\nuniform vec3 ninjaLightColour;\nuniform vec3 ninjaAmbient;\n#endif',
+    };
+  }
+  bindForSubMesh(uniformBuffer) {
+    if (!this.light) return;
+    uniformBuffer.updateFloat3('ninjaToLight', ...this.light.toLight);
+    uniformBuffer.updateFloat3('ninjaLightColour', ...this.light.colour);
+    uniformBuffer.updateFloat3('ninjaAmbient', ...this.light.ambient);
+  }
+  getCustomCode(type) {
+    if (type !== 'fragment') return null;
+    // finalColor is the finished screen colour here, so this is the game's own byte multiply.
+    return { CUSTOM_FRAGMENT_BEFORE_FRAGCOLOR: `
+#ifdef NINJA_LIGHT
+  finalColor.rgb *= clamp(ninjaAmbient + ninjaLightColour * max(dot(normalize(normalW), ninjaToLight), 0.0), 0.0, 1.0);
+#endif
+` };
+  }
+}
+
+/** Lights `material` with `light` (from ninjaLight) unless its strips are flagged IGNORE_LIGHT. Safe to call again. */
+export function applyNinjaLight(material, light) {
+  if (!material?.pluginManager || material.metadata?.gltf?.extras?.sa2Chunk?.stripFlags & 1) return false;
+  const plugin = material.pluginManager.getPlugin('NinjaLight') || new NinjaLightPlugin(material);
+  if (plugin.light !== light) { plugin.light = light; plugin.markAllDefinesAsDirty(); }
+  return true;
+}
+
+/** The strip's own material colour for a model built from the game files (fn_60_50DDC: the chunk's diffuse). */
+export function applyChunkDiffuse(material) {
+  const diffuse = material?.metadata?.gltf?.extras?.sa2Chunk?.material?.diffuseRgba;
+  if (!Array.isArray(diffuse)) return false;
+  // The engine multiplies this colour before its screen curve; the game multiplies bytes.
+  material.albedoColor = new Color3(diffuse[0] / 255, diffuse[1] / 255, diffuse[2] / 255).toLinearSpace();
+  return true;
 }

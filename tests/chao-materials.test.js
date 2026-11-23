@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Engine, NullEngine, PBRMaterial, RawTexture, Scene, Texture } from '@babylonjs/core';
-import { restoreNativeChaosSampling } from '../src/chao-materials.js';
+import { applyChunkDiffuse, applyNinjaLight, ninjaLight, restoreNativeChaosSampling } from '../src/chao-materials.js';
 
 test('native Chaos skin clamps its RGB gradient without changing pixels, tint or opacity', () => {
   const engine = new NullEngine(), scene = new Scene(engine);
@@ -50,5 +50,33 @@ test('native flame U repetition and alpha survive; eyes and separate effects rem
       assert.equal(material.albedoTexture.wrapV, Texture.WRAP_ADDRESSMODE);
       assert.equal(material.albedoTexture.samplingMode, Texture.NEAREST_SAMPLINGMODE);
     }
+  } finally { engine.dispose(); }
+});
+
+test('the game light row becomes a to-light direction with mirrored X and byte-cut colours', () => {
+  const light = ninjaLight({ direction: [3, -4, 0], intensity: 0.9, ambient: 0.45, colour: [1, 0.5, 0] }); // made-up row
+  assert.deepEqual(light.toLight, [0.6, 0.8, -0]);
+  assert.deepEqual(light.colour, [229 / 255, 114 / 255, 0]);
+  assert.deepEqual(light.ambient, [114 / 255, 57 / 255, 0]);
+});
+
+test('a strip flagged IGNORE_LIGHT stays unlit; others get one light plugin and their chunk colour', () => {
+  const engine = new NullEngine(), scene = new Scene(engine);
+  try {
+    const material = flags => {
+      const result = new PBRMaterial('strip', scene);
+      result.metadata = { gltf: { extras: { sa2Chunk: { stripFlags: flags, material: { diffuseRgba: [255, 0, 0, 255] } } } } };
+      return result;
+    };
+    const light = ninjaLight({ direction: [0, -1, 0], intensity: 1, ambient: 0.5, colour: [1, 1, 1] });
+    const lit = material(2), flat = material(3);
+    assert.equal(applyNinjaLight(lit, light), true);
+    assert.equal(applyNinjaLight(lit, light), true);
+    assert.equal(lit.pluginManager.getPlugin('NinjaLight').light, light);
+    assert.equal(applyNinjaLight(flat, light), false);
+    assert.equal(flat.pluginManager?.getPlugin('NinjaLight') ?? null, null);
+    assert.equal(applyChunkDiffuse(lit), true);
+    assert.deepEqual(lit.albedoColor.asArray(), [1, 0, 0]);
+    assert.equal(applyChunkDiffuse(new PBRMaterial('server', scene)), false);
   } finally { engine.dispose(); }
 });

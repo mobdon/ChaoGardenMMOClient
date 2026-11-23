@@ -160,6 +160,40 @@ export async function gameHeadBallTables() {
   return tables.every(Boolean) ? tables : null;
 }
 
+/**
+ * The light the game puts on a Chao in its Chao Select window, as the game's own row
+ * { direction [x, y, z] (the way the light travels, game world), intensity, ambient, colour [r, g, b] }, or null.
+ * It is row 0 of the transporter stage's light table (Steam .data VA 0x1314060, file offset 0xF11A60; the same eight
+ * floats as GC ChaoStgOdekake.rel .data 0x1760, and as the Karate, Stadium and Race Entrance tables). Those stages
+ * copy the row to light 0 (fn_8002506C) and draw every Chao with light 0 (ChaoMain .text 0x31984).
+ */
+export async function gameChaoLight() {
+  const bytes = await exeBytes(0xF11A60, 32);
+  if (!bytes) return null;
+  const f = new Float32Array(bytes.buffer, bytes.byteOffset, 8);
+  return { direction: [f[0], f[1], f[2]], intensity: f[3], ambient: f[4], colour: [f[5], f[6], f[7]] };
+}
+
+/**
+ * The game's head icon tables, or null: `halo` = 181 picture numbers, one per degree between the head's up direction
+ * and the line to the camera (Steam .data VA 0x1353400, file offset 0xF50E00; GC ChaoMain.rel .data 0x2D08), and
+ * `flame` = the 16 picture numbers of the Dark Chaos flame in play order (VA 0x135384C, file offset 0xF5124C;
+ * GC .data 0x3138, its count 16 at GC .data 0x3158). Picture numbers index the al_icon archive.
+ */
+export async function gameHeadIconTables() {
+  const [halo, flame] = await Promise.all([exeBytes(0xF50E00, 724), exeBytes(0xF5124C, 32)]);
+  if (!halo || !flame) return null;
+  return { halo: [...new Uint32Array(halo.buffer, halo.byteOffset, 181)], flame: [...new Uint16Array(flame.buffer, flame.byteOffset, 16)] };
+}
+
+/** blob: URLs of the al_icon archive's pictures by number (the archive's own order), or null. */
+export async function gameHeadIconUrls(numbers) {
+  const names = await gameArchiveNames('al_icon');
+  if (!names) return null;
+  const urls = await Promise.all(numbers.map(n => names[n] ? gameTextureUrl(`al_icon/${names[n]}`) : null));
+  return urls.every(Boolean) ? urls : null;
+}
+
 /** The texture names of game archive `name` (without `.prs`) in its own order, or null. */
 export async function gameArchiveNames(name) {
   const prs = await archive(name), x = prs && await converter();
