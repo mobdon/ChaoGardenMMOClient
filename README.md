@@ -26,7 +26,7 @@ The server binds to loopback. Multiplayer currently means multiple local browser
 
 ## Controls
 
-> The controls and the playable slice below describe the first web hub, which now lives in `archive/old-hub`. The live pages are the login page, Tiny Garden, the widget and phone previews, and the game page.
+> The controls and the playable slice below describe the first web hub, which was removed from `main`. Its files are in the git history under `archive/old-hub` (last present at commit 420f1eb: `git show 420f1eb:archive/old-hub/README.md`). The live pages are the login page, Tiny Garden, the widget and phone previews, and the game page.
 
 
 | Input | Action |
