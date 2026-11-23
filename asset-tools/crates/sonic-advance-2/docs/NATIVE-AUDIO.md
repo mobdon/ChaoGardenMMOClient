@@ -30,7 +30,7 @@ MIDI. `native_audio_evidence.py` independently parses those original MIDI bytes
 and compares note tick, key, velocity, duration and voice with actual-ROM Rust
 tracks. Native TIE/EOT commands normalize to note durations for this comparison.
 
-All **34,507 notes across 34 cues** agree: complete introductions and the first
+All **34,511 notes across 38 cues** agree: complete introductions and the first
 native score loop for act music, and complete scores for the one-shots. The
 actual ring sample header and all 7,078 signed PCM bytes also receive an
 independent offset/header/hash check: header `0xB3B740`, PCM `0xB3B750`,
@@ -88,7 +88,7 @@ count complete 141 needs 121; long brake 232 needs 182.
 
 Native sequence events and source PCM/PSG data drive this output. No generated
 replacement sounds are used. The independent comparison establishes score
-decoding and the ring sample bytes. The 45,663,552 mixed PCM bytes and their
+decoding and the ring sample bytes. The 45,924,032 mixed PCM bytes and their
 hashes are local reproducibility evidence, **not independent retail DAC parity**.
 
 The reused floating-point preview has linear PCM interpolation, driver-frame

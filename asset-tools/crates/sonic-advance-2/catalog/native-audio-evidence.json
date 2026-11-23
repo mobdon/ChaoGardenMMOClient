@@ -5,7 +5,7 @@
   "song_table_rows": 507,
   "sample_rate": 10512,
   "samples_per_driver_frame": 176,
-  "scope": "Original MIDI note tick/key/velocity/gate/voice fingerprints agree with actual-ROM Rust MP2K traces for all 34 cues; complete stage introduction/first loop, SFX/jingles through completion. Actual ring PCM bytes/header verified. PCM output hashes are deterministic preview evidence, not independent retail waveform parity.",
+  "scope": "Original MIDI note tick/key/velocity/gate/voice fingerprints agree with actual-ROM Rust MP2K traces for all supported cues; complete stage introduction/first loop, SFX/jingles through completion. Actual ring PCM bytes/header verified. PCM output hashes are deterministic preview evidence, not independent retail waveform parity.",
   "cues": [
     {
       "frames": 4118,
@@ -1391,6 +1391,72 @@
       }
     },
     {
+      "frames": 145,
+      "id": 109,
+      "notes": [
+        1,
+        0,
+        0,
+        0,
+        0
+      ],
+      "pcmBytes": 102080,
+      "pcmSha256": "5a576c3353e3b26ac16194d28d49913bfd6fd492db3ed4d25fe8c7e00a0201e9",
+      "pcmSource": null,
+      "peakPolyphony": 1,
+      "scoreNotes": 1,
+      "scoreSha256": "7debe9053b7602a9532abe530c278ac2455a855539c79ee9b362aaad3baac69c",
+      "scoreThrough": 4096,
+      "timing": {
+        "fine_frame": 144,
+        "loop_end_frame": null,
+        "loop_start_frame": null,
+        "track_loops": [
+          null
+        ]
+      },
+      "tracks": 1,
+      "midi": {
+        "file": "sound/sa2/songs/midi/se_spin_attack.mid",
+        "git_blob_sha1": "9342981d743cbec8c760dcb757477ece68f76958",
+        "sha256": "40454e56e8d6058fdab21e1ef69e54fabd801445736a5615e0d8d7ae03631896",
+        "bytes": 75
+      }
+    },
+    {
+      "frames": 63,
+      "id": 110,
+      "notes": [
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "pcmBytes": 44352,
+      "pcmSha256": "d659161d8f0d15dad70cc17266a0279b7c54343e0b07228d60da2caa99c8d444",
+      "pcmSource": null,
+      "peakPolyphony": 1,
+      "scoreNotes": 1,
+      "scoreSha256": "87ea158e5768cf6dce0e7d9794af4128e26aa5046c741fd25e3486d458993595",
+      "scoreThrough": 4096,
+      "timing": {
+        "fine_frame": 62,
+        "loop_end_frame": null,
+        "loop_start_frame": null,
+        "track_loops": [
+          null
+        ]
+      },
+      "tracks": 1,
+      "midi": {
+        "file": "sound/sa2/songs/midi/se_spin_dash_release.mid",
+        "git_blob_sha1": "c354c4fb82884fd21c340f0febf3730a65218497",
+        "sha256": "7a70362258daae423274b8221708f4433c05ed6cfe5cbfacf0c0ee617e0308a1",
+        "bytes": 351
+      }
+    },
+    {
       "frames": 39,
       "id": 112,
       "notes": [
@@ -1950,6 +2016,72 @@
         "git_blob_sha1": "e95e2f8987fa33a5a928aa8f4eb4dd3c8bf09980",
         "sha256": "93a6f7248f5168f10df3d025832e841263b3886c60ff65912d4cac570d5a8666",
         "bytes": 1506
+      }
+    },
+    {
+      "frames": 71,
+      "id": 279,
+      "notes": [
+        0,
+        0,
+        1,
+        0,
+        0
+      ],
+      "pcmBytes": 49984,
+      "pcmSha256": "ec782a70c8ba60883f3946581f06224ffaba8982c0153168e78990fec22aff88",
+      "pcmSource": null,
+      "peakPolyphony": 1,
+      "scoreNotes": 1,
+      "scoreSha256": "e5009b6972a9ade0ae9eb755d6c35ac278389189a857fc62edda74a8510e45b8",
+      "scoreThrough": 4096,
+      "timing": {
+        "fine_frame": 70,
+        "loop_end_frame": null,
+        "loop_start_frame": null,
+        "track_loops": [
+          null
+        ]
+      },
+      "tracks": 1,
+      "midi": {
+        "file": "sound/sa2/songs/midi/se_279.mid",
+        "git_blob_sha1": "073a754ad7eb7510ae0ba8706939f945c42c2cf2",
+        "sha256": "9f5bb82c7741147acceef36dbcadc983fe5b63bdd16e68d6064f12a884103615",
+        "bytes": 314
+      }
+    },
+    {
+      "frames": 91,
+      "id": 298,
+      "notes": [
+        0,
+        0,
+        1,
+        0,
+        0
+      ],
+      "pcmBytes": 64064,
+      "pcmSha256": "62b53e1b13c07e4bce5c91464ef93923dad28b6cdd1c9a94a6f301a70b5efb87",
+      "pcmSource": null,
+      "peakPolyphony": 1,
+      "scoreNotes": 1,
+      "scoreSha256": "045d4e7b973f65c1b3a857221a3c4e35c32e03e5c225101276b69897862d2ce0",
+      "scoreThrough": 4096,
+      "timing": {
+        "fine_frame": 78,
+        "loop_end_frame": null,
+        "loop_start_frame": null,
+        "track_loops": [
+          null
+        ]
+      },
+      "tracks": 1,
+      "midi": {
+        "file": "sound/sa2/songs/midi/se_special_ring.mid",
+        "git_blob_sha1": "0ad741f7dc96f32d656fcbb6dc343fdda9ce40a0",
+        "sha256": "50b28ca4657eea1598cb1208d66363de0420e28cf5d11391e3b94649f6beb3dd",
+        "bytes": 83
       }
     },
     {
