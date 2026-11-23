@@ -38,9 +38,9 @@
 //!   24 Chao records are at +0xA64 + i * 0x800; AL_SortChaoSaveInfo (0x2E9C,
 //!   run once when the pick task starts, 0x52D98) lists a record whose type
 //!   byte +0x80 is 1..0x19 under its garden number +0x81. The pick shows a red
-//!   X and keeps the cursor on GO BACK while gIsAnotherGardenLoaded (.bss
-//!   0x1D358) is 0 (0x55218, 0x53418). Karate's main task fn_72_78 only fills
-//!   that garden from a card while lbl_72_bss_0 is not 0.
+//!   X while gIsAnotherGardenLoaded (.bss 0x1D358) is 0 (0x55218). Karate's
+//!   main task fn_72_78 only fills that garden from a card while lbl_72_bss_0
+//!   is not 0.
 //! - State 6 stores the two picked records at *lbl_72_bss_8 +0x18/+0x1C
 //!   (0x4C88, 0x4C94); fn_72_5020 (state 9 step 0, 0x5174) makes fighter 0
 //!   from +0x18 and fighter 1 from +0x1C with fn_72_11038(record, .., 1).
