@@ -38,7 +38,7 @@ const sh = {
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
-  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32 + 8 + 128 + 8 + 8 + 8 + 1024 + 4 + 32 + 8 + 256 + 4 + 2048 + 8 + 64), // the MMO files (worker.js, MMO)
+  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32 + 8 + 128 + 8 + 8 + 8 + 1024 + 4 + 32 + 8 + 256 + 4 + 2048 + 8 + 64 + 72), // the MMO files (worker.js, MMO)
   // The RAM pages the decoder read for its last frame: [0] word count, then bits (decode.js, worker.js /dev/gxpages).
   pages: new SharedArrayBuffer(4 + 65536),
 };
@@ -299,7 +299,7 @@ function staffGoto(m) {
 // Garden resident with no pose as "id idle"); Chao
 // records go to and from the server by version. The server routes may not
 // exist yet: failures stay quiet.
-const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472, SKILLS: 156476, INFO: 156508, INFO_MAX: 256, OWN: 156772, GOTO: 158824, GOTO_MAX: 64 };
+const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472, SKILLS: 156476, INFO: 156508, INFO_MAX: 256, OWN: 156772, GOTO: 158824, GOTO_MAX: 64, PVP: 158896, PVP_MAX: 72 };
 const mmoBytes = new Uint8Array(sh.mmo);
 globalThis.sa2Mmo = sh.mmo; // for checks from the console
 const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
@@ -452,6 +452,7 @@ function mmoTick(token) {
   }
 }
 function othersIn(m, token) {
+  Object.assign(queue, { self: m.selfId, token });
   const lines = [];
   for (const p of m.players || []) {
     if (p.id === m.selfId) continue;
@@ -609,8 +610,12 @@ function karateButtons(on) {
       if (strong) b.dataset.strong = '1';
       b.addEventListener('click', () => {
         if (karateBusy()) return;
-        mmoBytes[MMO.KARATE + 1] = id;
-        mmoBytes[MMO.KARATE]++; // a new press, after its button is in place
+        // In a queued match the server's bout takes the press (queue.rs queue-attack).
+        if (queue.started) room?.ws.send(JSON.stringify({ type: 'action', action: 'queue-attack', move: id }));
+        else {
+          mmoBytes[MMO.KARATE + 1] = id;
+          mmoBytes[MMO.KARATE]++; // a new press, after its button is in place
+        }
         canvas.focus();
       });
       bar.append(b);
@@ -621,13 +626,33 @@ function karateButtons(on) {
 }
 // Keys 1 to 5 press the buttons while they show (1 and 3 are the game's L and R elsewhere).
 // ---- PvP Karate queue (sa2-boot karate.rs queue mark, server queue.rs) ----
-const queue = { sent: 0, ranked: false, names: {} };
+const queue = { sent: 0, ranked: false, names: {}, self: null, token: null, started: false, strong: false, pressed: 0 };
+// The match as the game reads it (karate.rs Pvp): [flags 1 matched 2 started 4 result 8 knock-out or forfeit, my slot,
+// winner slot (2 draw), snapshot count, 4 unused, opponent id u64] then per fighter [pos 3 x f32, hp f32, 4 unused, yaw u16, state, step, action, 3 unused].
+const pvpView = () => new DataView(sh.mmo, MMO.PVP, MMO.PVP_MAX);
+function pvpClear() {
+  mmoBytes.fill(0, MMO.PVP, MMO.PVP + MMO.PVP_MAX);
+  mmoBytes[MMO.PVP + 2] = 2;
+  Object.assign(queue, { started: false, strong: false, pressed: 0 });
+}
+function pvpBout(m) {
+  const v = pvpView(), slot = Math.max(0, m.members.indexOf(queue.self));
+  m.fighters.forEach((f, i) => {
+    const at = 16 + 28 * i;
+    [...f.pos, f.hp].forEach((x, k) => v.setFloat32(at + 4 * k, x, true));
+    v.setUint16(at + 20, f.yaw & 0xffff, true);
+    v.setUint8(at + 22, f.state); v.setUint8(at + 23, f.step); v.setUint8(at + 24, f.action);
+  });
+  mmoBytes[MMO.PVP + 1] = slot;
+  mmoBytes[MMO.PVP + 3] = mmoBytes[MMO.PVP + 3] % 255 + 1; // never 0 again: 0 is "no snapshot yet"
+  Object.assign(queue, { strong: !!m.strong?.[slot], pressed: m.pressed?.[slot] || 0 });
+}
 const queueSay = (text) => chatLine({ channel: 'room', fromName: 'Queue', text });
 function queueTick() {
   const now = mmoBytes[MMO.KARATE + 7];
   if (now === queue.sent || room?.ws.readyState !== 1) return;
   const send = (m) => room.ws.send(JSON.stringify({ type: 'action', ...m }));
-  if (!now) send({ action: 'queue-leave' });
+  if (!now) { send({ action: 'queue-leave' }); pvpClear(); }
   else {
     if (!queue.sent) send({ action: 'queue-join', event: 'chao-karate', ranked: queue.ranked });
     if (now === 2 || queue.sent === 2) send({ action: 'queue-ready', ready: now === 2 });
@@ -639,14 +664,31 @@ function queueEvent(m) {
   if (m.kind === 'queue') {
     if (m.group == null) return queueSay('You are out of the queue.');
     for (const p of m.members) queue.names[p.id] = p.name;
+    // The opponent's Chao goes to the game as the other Memory Card's garden (karate.rs invite).
+    const other = m.event === 'chao-karate' && m.members.find((p) => p.id !== queue.self);
+    mmoBytes[MMO.PVP + 1] = Math.max(0, m.members.findIndex((p) => p.id === queue.self));
+    if (!other) mmoBytes[MMO.PVP] &= ~1;
+    else fetch(`/api/chao-record/${encodeURIComponent(other.id)}`, { headers: { Authorization: `Bearer ${queue.token}` } })
+      .then((r) => (r.ok ? r.arrayBuffer() : null)).then((b) => {
+        if (!b) return queueSay('The other player’s Chao could not be loaded.');
+        recordIn(numId(other.id), new Uint8Array(b));
+        pvpView().setBigUint64(8, BigInt(numId(other.id)), true);
+        mmoBytes[MMO.PVP] |= 1;
+      }).catch(() => {});
+    if (m.started) { mmoBytes[MMO.PVP] |= 2; queue.started = true; }
     const who = m.members.map((p) => `${name(p.id)}${p.ready ? ' (ready)' : ''}`).join(', ');
     queueSay(`${m.ranked ? 'Ranked' : 'Unranked'} ${m.event === 'chao-race' ? 'race' : 'Karate'}: ${who}.${m.started ? ' All ready: the match starts.' : ''}`);
-  } else if (m.kind === 'queue-result') {
+  } else if (m.kind === 'queue-bout') pvpBout(m);
+  else if (m.kind === 'queue-result') {
     // The server ran the bout itself (run false: it could not).
+    queue.pressed = 0;
     if (!m.run) return queueSay('The server could not run this bout.');
-    const r = m.result || {}, how = r.reason === 'knockout' ? 'knockout' : 'time limit';
+    const r = m.result || {}, how = { knockout: 'knockout', forfeit: 'forfeit' }[r.reason] || 'time limit';
+    // The game's round ends as the server's did (karate.rs: knock-out of the loser, or time up).
+    mmoBytes[MMO.PVP + 2] = r.winner;
+    mmoBytes[MMO.PVP] |= r.reason === 'time-limit' ? 4 : 12;
     const records = Object.entries(m.records || {}).map(([id, v]) => ` ${name(id)}: ${v.wins}-${v.losses}-${v.draws}.`).join('');
-    queueSay(`${m.winner ? `${name(m.winner)} wins` : 'Draw'} by ${how} after ${Math.round((r.frames || 0) / 60)} s, HP ${(r.hp || []).join(' to ')}.${m.ranked ? records : ''}`);
+    queueSay(`${m.winner ? `${name(m.winner)} wins` : 'Draw'} by ${how} after ${Math.round((r.frames || 0) / 60)} s, HP ${(r.hp || []).map(Math.round).join(' to ')}.${m.ranked ? records : ''}`);
   }
 }
 // Ranked or not has no place in the game's menu: an MMO page control, read when the entry is picked.
@@ -670,14 +712,15 @@ function karateKey(e) {
   return true;
 }
 // A chosen move is seen through: no new move until the game says that press is done.
-const karateBusy = () => mmoBytes[MMO.KARATE] !== mmoBytes[MMO.KARATE + 5];
+const karateBusy = () => (queue.started ? !!queue.pressed : mmoBytes[MMO.KARATE] !== mmoBytes[MMO.KARATE + 5]);
 function karateLocks() {
   const bar = document.getElementById('karate'), busy = karateBusy();
   // Only while a bout is on (the game says so), never on the Karate menus.
   if (bar) bar.style.display = bar.dataset.area && mmoBytes[MMO.KARATE + 6] ? 'flex' : 'none';
   for (const b of document.querySelectorAll('#karate button')) {
-    const locked = b.dataset.strong && !mmoBytes[MMO.KARATE + 4];
-    b.disabled = busy || locked;
+    const locked = b.dataset.strong && !(queue.started ? queue.strong : mmoBytes[MMO.KARATE + 4]);
+    // The server's bout takes the four moves the game itself picks, not Beating Up.
+    b.disabled = busy || locked || (queue.started && b.textContent.endsWith('Beating Up'));
     b.title = locked ? 'Needs Power above 400' : '';
     b.style.background = b.disabled ? '#666' : '#f5a800';
   }
@@ -889,7 +932,7 @@ async function start() {
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
   if (token) { e.SA2_OWN_RECORD_IN = '/mmo/own-record'; if (await ownRecord(token).catch(() => {}) === 'hatch') e.SA2_HATCH_EGG = '1'; }
-  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_RINGS_IN: '/mmo/rings-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_STORY_IN: '/mmo/story-in', SA2_STORY_OUT: '/mmo/story-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick', SA2_SKILLS_IN: '/mmo/skills-in', SA2_GOTO_IN: '/mmo/goto-in' });
+  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_PVP_IN: '/mmo/pvp-in', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_RINGS_IN: '/mmo/rings-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_STORY_IN: '/mmo/story-in', SA2_STORY_OUT: '/mmo/story-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick', SA2_SKILLS_IN: '/mmo/skills-in', SA2_GOTO_IN: '/mmo/goto-in' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
   if (token) cardChao(token), storyLoad(token);
