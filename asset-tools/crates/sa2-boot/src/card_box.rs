@@ -137,11 +137,11 @@ static FEED: Global<(String, Option<u32>)> = global!((String::new(), None));
 static EGGS: Global<(u8, u64)> = global!((0, 0));
 /// The notice's time on screen (an MMO choice): 5 s at 60 frames a second.
 const NOTICE_FRAMES: u64 = 300;
-/// The game's sound call and its menu confirm chime (pause_extras.rs).
-/// shortcut: a stand-in, the game's own item pickup sound id is not known
-/// yet; take it from an SA2_SE_LOG run of a garden pickup.
+/// The game's sound call and the sound of picking an object up: every
+/// character's pick-up action plays it (main.dol 0x80076368, 0x800952C0,
+/// 0x800A3AD8), tone 4 of the character bank.
 const SE_CALL: u32 = 0x8006_B978;
-const SE_NOTICE: u32 = 0x8002;
+const SE_NOTICE: u32 = 0x2004;
 
 
 /// One window piece: record (0..=8 = the window's 10..=18), x anchor,
