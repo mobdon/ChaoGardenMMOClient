@@ -170,12 +170,8 @@ fn chao_exec(c: &mut Cpu, m: &mut Mem) {
                 let f = |a: u32| f32::from_bits(m.r32(a));
                 eprintln!("yaw: frame {} char {:#06x} chao {:#06x} pos ({:.2},{:.2})", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), ang[1] & 0xFFFF, m.r32(cw + 0x0C) & 0xFFFF, f(cw + 0x14), f(cw + 0x1C));
             }
-            // Only the heading: his pitch and roll (he leans into slopes and
-            // his run) laid the Chao over, face down (live play, build 16).
-            // SA2_CHAO_TILT=1 (debug): his whole angle.
-            let tilt = std::env::var("SA2_CHAO_TILT").is_ok_and(|v| v == "1");
+            // His whole angle; the draw drops his pitch and roll (SA2_CHAO_TILT there).
             for (i, v) in ang.into_iter().enumerate() {
-                let _ = tilt;
                 m.w32(cw + 0x08 + 4 * i as u32, v);
             }
         }

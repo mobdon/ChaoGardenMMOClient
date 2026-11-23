@@ -119,7 +119,7 @@ export function applyNativeChaoMaterial(key, mat) {
 
 // How ChaoMain's own drawer puts every Chao strip on screen (fn_60_51008 .text 0x51114, fn_60_51E20 0x51E58 with main.dol
 // fn_80122A44, fn_60_51CDC 0x51CF8): blended by alpha (SRC_ALPHA, INV_SRC_ALPHA), alpha of 64 or less not drawn
-// (GXSetAlphaCompare GREATER 0x40), depth tested and written, culled unless the strip is DOUBLE_SIDE (bit 4).
+// (GXSetAlphaCompare GREATER 0x40), depth tested (LESS) and written, culled unless the strip is DOUBLE_SIDE (bit 4).
 // Alpha is texture alpha x the chunk's diffuse alpha. The USE_ALPHA flag is not asked.
 function applyChaoStripState(mat, chunk) {
   if (mat.albedoTexture) mat.albedoTexture.hasAlpha = true;
@@ -130,6 +130,7 @@ function applyChaoStripState(mat, chunk) {
   mat.alphaCutOff = 65 / 255;
   mat.alphaMode = Engine.ALPHA_COMBINE;
   mat.forceDepthWrite = true; mat.disableDepthWrite = false;
+  mat.depthFunction = Engine.LESS; // GXSetZMode(1, GX_LESS, 1) in fn_80122A44: a face lying exactly on one already drawn is not drawn again
   mat.backFaceCulling = !(chunk.stripFlags & 16);
   mat.twoSidedLighting = false;
 }

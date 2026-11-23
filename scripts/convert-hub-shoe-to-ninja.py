@@ -54,6 +54,9 @@ def convert(path):
             nor = accessor(j, blob, p['attributes']['NORMAL'])
             uv = accessor(j, blob, p['attributes']['TEXCOORD_0'])
             idx = [t[0] for t in accessor(j, blob, p['indices'])]
+            # Only whole triangle lists: anything else would come out as a corrupt polygon list.
+            if p.get('mode', 4) != 4 or len(idx) % 3:
+                sys.exit(f'{path}: a primitive is not a triangle list')
             tex = j['materials'][p['material']]['extras']['sa2Source']['textureIndex']
             base = len(verts)
             # The hub's glTF root mirrors the source X (src/chao-attachments.js):
@@ -116,3 +119,5 @@ if __name__ == '__main__':
         data = convert(sys.argv[1])
         open(sys.argv[2], 'wb').write(data)
         print(f'{sys.argv[2]}: {len(data)} bytes')
+    else:
+        sys.exit(f'usage: {sys.argv[0]} in.glb out.njsh')

@@ -66,6 +66,8 @@ pub mod table_presentation;
 pub mod table_presentation_frame;
 pub mod table_triggers;
 pub mod table_triggers_next;
+#[cfg(test)]
+mod test_mem;
 pub mod title;
 
 pub use startup::INITIAL_CALLBACK;
