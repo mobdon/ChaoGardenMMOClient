@@ -149,6 +149,8 @@ static SHOWN: Global<Option<u32>> = global!(None);
 /// SA2_TP_ARRIVE=1: enter Chao World in the Neutral Garden, then go to the lobby
 /// the game's own way, so it arrives as from a garden teleporter.
 static TP_ARRIVE: Global<bool> = global!(false);
+/// The Chao World area the player was last in (0: none, or already back in the lobby).
+static CAME_FROM: Global<u32> = global!(0);
 /// SA2_HATCH_EGG=1: lay a new player's egg where they arrive in the lobby.
 static HATCH: Global<bool> = global!(false);
 /// The pending start has happened; the title after it means the game came back.
@@ -165,6 +167,8 @@ static TO_STAGE_SELECT: Global<bool> = global!(false);
 const ADVERTISE: u32 = 91;
 const MENU_SCREEN: u32 = 0x6_2054;
 const SCREEN_STAGE_SELECT: u32 = 3;
+/// advertiseD .text fn_91_2BB38: the Stage Select's setup, called before screen 3.
+const STAGE_SELECT_SETUP: u32 = 0x2BB38;
 /// Game state byte advertiseD reads to open its menu instead of the title.
 const GO_TO_MENU: u32 = 0x5B;
 static MENU_SEEN: Global<(u32, u32, u32)> = global!((u32::MAX, u32::MAX, u32::MAX));
@@ -182,7 +186,7 @@ pub(crate) fn to_stage_select_pending() -> bool {
 /// screen dispatcher for the Stage Select, and log its top state and screen.
 /// Unverified: that the request field is honoured from the title state; the
 /// log shows which top state the menu is in when the request lands.
-fn stage_select_frame(m: &mut Mem) {
+fn stage_select_frame(c: &mut Cpu, m: &mut Mem) {
     let Some(bss) = module_section(m, ADVERTISE, 6) else { return };
     let now = (m.r32(bss), m.r32(bss + MENU_SCREEN), m.r32(bss + MENU_SCREEN + 4));
     if MENU_SEEN.replace(now) != now {
@@ -193,10 +197,16 @@ fn stage_select_frame(m: &mut Mem) {
     // fn_91_30A0C leads to). Set the current screen instead, once, while the
     // screen struct is fresh from that init, so the Stage Select's exec
     // (fn_91_2BC44) starts from its own first step.
-    // Unverified: that the Stage Select needs nothing from screen 7 first.
+    // Both of the menu's own ways to screen 3 (advertiseD .text 0x27448 and
+    // 0x2C2EC) first call fn_91_2BB38, the Stage Select's setup: skipped, its
+    // pictures drew as grey noise (headless, with and without the gear).
     if now.1 == SCREEN_STAGE_SELECT {
         TO_STAGE_SELECT.set(false);
-    } else {
+    } else if let Some(text) = module_section(m, ADVERTISE, 1) {
+        // SA2_SS_SETUP=0 (debug): without the setup call, as before.
+        if !std::env::var("SA2_SS_SETUP").is_ok_and(|v| v == "0") {
+            guest_call(c, m, text + STAGE_SELECT_SETUP, &[]);
+        }
         m.w32(bss + MENU_SCREEN, SCREEN_STAGE_SELECT);
         m.w32(bss + MENU_SCREEN + 4, 0);
     }
@@ -323,7 +333,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         crate::tiny_transporter::frame(c, m);
     }
     if TO_STAGE_SELECT.get() {
-        stage_select_frame(m);
+        stage_select_frame(c, m);
     }
     if mode == MD_LEFT_STAGE && STARTED.get() && TO_STAGE_SELECT.get() {
         // The game's own way on from here is its title and menus. advertiseD's
@@ -383,6 +393,24 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         if !TP_ARRIVE.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
             for gene in picked_eggs() {
                 lay_egg_with(c, m, text, gene.as_ref(), false);
+            }
+        }
+        // Back to the lobby from an area: the lobby places the player by its
+        // previous stage (ChaoMain .text 0x27988). A return that passes
+        // through area 13 (0x27DA0, from a garden) leaves 13 there, and the
+        // lobby then uses its default spot (the centre) instead of that
+        // area's door: the area left is put back until the player stands in
+        // the lobby. SA2_DOOR_RETURN=0 (debug): off.
+        if now != LOBBY && now != 13 && (1..=LAST_AREA).contains(&now) {
+            CAME_FROM.set(now);
+        } else if CAME_FROM.get() != 0 && !TP_ARRIVE.get() && !std::env::var("SA2_DOOR_RETURN").is_ok_and(|v| v == "0") {
+            if now == LOBBY && shown == LOBBY && m.r32(PLAYERTWP) != 0 {
+                CAME_FROM.set(0);
+            } else if let Some(bss) = chaomain_section(m, 5) {
+                if m.r32(bss + PRE_STAGE) != CAME_FROM.get() {
+                    eprintln!("start-stage: lobby return from area {} (previous stage read {})", CAME_FROM.get(), m.r32(bss + PRE_STAGE));
+                    m.w32(bss + PRE_STAGE, CAME_FROM.get());
+                }
             }
         }
         if now != shown {
