@@ -1,6 +1,6 @@
 import './style.css';
 import './sonic.css';
-import './title.css';
+import './login.css';
 import { allowSavedFiles, canPickFolders, pickGameFiles, savedHandles } from './game-files.js';
 import { applyGameTextureStyles } from './game-assets.js';
 import { createSaveSlots, SESSION_KEY } from './save-slots.js';

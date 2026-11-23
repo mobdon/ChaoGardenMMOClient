@@ -21,7 +21,7 @@ test('standalone client serves public modules while private directories stay ina
   try {
     await frontend.listen();
     const port = frontend.httpServer.address().port;
-    const main = await request(port, '/src/main.js');
+    const main = await request(port, '/src/login.js');
     assert.equal(main.status, 200);
     assert.match(main.body, /save-slots\.js/);
     assert.doesNotMatch(main.body, /from\s+['"][^'"]*server\//);
