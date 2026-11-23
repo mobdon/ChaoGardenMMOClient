@@ -85,8 +85,9 @@ static MECH_ROW: AtomicU32 = AtomicU32::new(0);
 /// Ninja's current matrix (3x4, camera included) at the seat node in this display.
 static SEAT: std::sync::Mutex<Option<[[f32; 4]; 3]>> = std::sync::Mutex::new(None);
 static NO_SEAT_SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// The seat scale for a (stock pilot root, Chao model root) pair.
-static SCALE: std::sync::Mutex<Option<((u32, u32), f32)>> = std::sync::Mutex::new(None);
+/// The Chao's fit for a (stock pilot root, Chao rest height) pair.
+type Fit = ((u32, u32), (f32, [f32; 3]));
+static FIT: std::sync::Mutex<Option<Fit>> = std::sync::Mutex::new(None);
 
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
     if !std::env::var("SA2_CHAO_WALKER").is_ok_and(|v| v.trim() == "1") {
@@ -142,50 +143,75 @@ fn node_callback(c: &mut Cpu, m: &mut Mem) {
     }
 }
 
-/// A rest model's height: the y range of its vertices, as the Chao player
-/// measures the Chao (chao_retarget::ChaoRest::height). The walker models
-/// keep their vertex lists in the layout that reader takes.
-fn rest_height(m: &Mem, root: u32) -> Option<f32> {
+/// The stock pilot's rest vertices in the seat's frame, read with the Chao
+/// player's reader (the walker models keep their vertex lists in its layout).
+fn stock_points(m: &Mem, root: u32) -> Vec<[f32; 3]> {
     if root == 0 {
-        return None;
+        return vec![];
     }
-    let h = crate::chao_retarget::read_chao(&|a| m.r32(a), root, [vec![], vec![]]).height();
-    (h.is_finite() && h > 0.0).then_some(h)
+    let rest = crate::chao_retarget::read_chao(&|a| m.r32(a), root, [vec![], vec![]]);
+    let worlds = rest.worlds(&[]);
+    let mut out = vec![];
+    for (verts, (r, t)) in rest.verts.iter().zip(&worlds) {
+        for v in verts {
+            out.push(std::array::from_fn(|i| {
+                t[i] + r[i][0] * v[0] + r[i][1] * v[1] + r[i][2] * v[2]
+            }));
+        }
+    }
+    out
 }
 
-/// The stock pilot's rest height over the player's Chao's (its model root is
-/// at chaowk +0x510, where chao_player reads it), kept per pair of models.
-/// Measured headless: stock pilots 3.989 (Chao Walker) and 3.534 (Dark), a
-/// Dark Chaos Chao 5.451, so 0.73 and 0.65 for that Chao.
-/// unverified: that the seat's frame is upright for the Chao (the stock
-/// pilot's head lies towards -y in it) and where its feet belong; the Chao's
-/// origin is put at the seat node's.
-fn pilot_scale(m: &Mem, seat: u32) -> Option<f32> {
-    let chaowk = crate::chao_player::own_twp(m);
-    if chaowk == 0 {
-        return None;
-    }
-    let key = (m.r32(seat + 0x2C), m.r32(chaowk + 0x510));
-    let mut kept = SCALE.lock().unwrap();
-    if let Some((k, s)) = *kept {
+/// The Chao's size and the place of its feet in the seat's frame, taken from
+/// the stock pilot: its rest height over the Chao's, and its lowest point
+/// under the centre of its vertices.
+fn seat_fit(stock: &[[f32; 3]], chao_height: f32) -> Option<(f32, [f32; 3])> {
+    let n = stock.len() as f32;
+    let lo = stock.iter().map(|p| p[1]).fold(f32::MAX, f32::min);
+    let hi = stock.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
+    let centre = |k: usize| stock.iter().map(|p| p[k]).sum::<f32>() / n;
+    let s = (hi - lo) / chao_height;
+    (!stock.is_empty() && s.is_finite() && s > 0.0).then(|| (s, [centre(0), lo, centre(2)]))
+}
+
+/// The seat matrix for the Chao's own model: the Chao turned into the stock
+/// pilot's frame, scaled, its feet put at `feet`. Measured headless on the
+/// loaded models: the stock pilots stand along +y and face -x in the seat's
+/// frame (the head mesh lies above the vertices' centre, its eye-textured
+/// strips towards -x; stages 9 and 11), and the Chao's model stands along +y
+/// and faces +z (its eye nodes 18 and 21). That turn is the inverse of
+/// chao_retarget::to_chao.
+/// unverified: not seen in the game.
+fn placed(seat: [[f32; 4]; 3], s: f32, feet: [f32; 3]) -> [[f32; 4]; 3] {
+    // Chao x -> seat +z, y -> +y, z -> -x.
+    const TURN: [[f32; 3]; 3] = [[0.0, 0.0, -1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]];
+    std::array::from_fn(|r| {
+        let row = seat[r];
+        let axis = |k: usize| (0..3).map(|j| row[j] * TURN[j][k]).sum::<f32>() * s;
+        let at = row[3] + row[0] * feet[0] + row[1] * feet[1] + row[2] * feet[2];
+        [axis(0), axis(1), axis(2), at]
+    })
+}
+
+/// [`seat_fit`] for player 1's walker and Chao, kept per pair of models.
+/// Measured headless: stock pilots 3.989 (Chao Walker) and 3.534 (Dark) tall,
+/// a Dark Chaos Chao 5.451, so 0.73 and 0.65 for that Chao.
+fn pilot_fit(m: &Mem, seat: u32) -> Option<(f32, [f32; 3])> {
+    let height = crate::chao_player::chao_rest_height(m)?;
+    let key = (m.r32(seat + 0x2C), height.to_bits());
+    let mut kept = FIT.lock().unwrap();
+    if let Some((k, fit)) = *kept {
         if k == key {
-            return Some(s);
+            return Some(fit);
         }
     }
-    let s = rest_height(m, key.0)? / rest_height(m, key.1)?;
-    eprintln!("chao-walker pilot: seat scale {s} (stock pilot over the Chao's rest height)");
-    *kept = Some((key, s));
-    Some(s)
-}
-
-/// The seat matrix with its axes scaled (its place unchanged).
-fn scaled(mut seat: [[f32; 4]; 3], s: f32) -> [[f32; 4]; 3] {
-    for row in &mut seat {
-        for v in &mut row[..3] {
-            *v *= s;
-        }
-    }
-    seat
+    let fit = seat_fit(&stock_points(m, key.0), height)?;
+    eprintln!(
+        "chao-walker pilot: seat scale {}, feet at {:?} in the seat's frame",
+        fit.0, fit.1
+    );
+    *kept = Some((key, fit));
+    Some(fit)
 }
 
 fn display(c: &mut Cpu, m: &mut Mem) {
@@ -202,9 +228,9 @@ fn display(c: &mut Cpu, m: &mut Mem) {
         return;
     };
     // Every frame, also before the Chao exists: the first call lets the Chao
-    // player load and make it. Its size is the matrix's scale: the stock
-    // pilot's rest height over the Chao's own (1.0 until the Chao exists).
-    let seat = scaled(seat, pilot_scale(m, node).unwrap_or(1.0));
+    // player load and make it. Once it exists it takes the stock pilot's
+    // place, size and facing.
+    let seat = pilot_fit(m, node).map_or(seat, |(s, feet)| placed(seat, s, feet));
     let drew = crate::chao_player::own_pilot(c, m, &seat);
     // The stock pilot is away only while the player's Chao is drawn in its place.
     set_pilot_hidden(m, node, drew);
@@ -435,11 +461,12 @@ mod tests {
     }
 
     #[test]
-    fn a_rest_models_height_and_the_seat_scale() {
-        // Stand-in node with one vertex list in the readers' layout: three
-        // 12-byte vertices at y = -1, 0.5 and 3.
+    fn the_chao_takes_the_stock_pilots_place_size_and_facing() {
+        // Stand-in stock pilot: one node at (10, 0, 0) with three vertices,
+        // in the readers' vertex layout.
         const NODE: u32 = 0x8000_8000;
         let mut m = Mem::default();
+        m.w32(NODE + 8, 10.0f32.to_bits());
         for k in 0..3 {
             m.w32(NODE + 32 + 4 * k, 1.0f32.to_bits()); // scale 1
         }
@@ -447,29 +474,42 @@ mod tests {
         m.w32(0x8000_8100, 0x8000_8200);
         m.w32(0x8000_8200, 10 << 16 | 0x22);
         m.w32(0x8000_8204, 3 << 16);
-        for (i, y) in [-1.0f32, 0.5, 3.0].into_iter().enumerate() {
-            m.w32(0x8000_8208 + 12 * i as u32 + 4, y.to_bits());
+        let points = [[-1.0f32, -1.0, 2.0], [1.0, 0.5, 4.0], [0.0, 3.0, 3.0]];
+        for (i, p) in points.into_iter().enumerate() {
+            for (k, v) in p.into_iter().enumerate() {
+                m.w32(0x8000_8208 + 12 * i as u32 + 4 * k as u32, v.to_bits());
+            }
         }
         m.w32(0x8000_8200 + 4 + 40, 0xFF);
-        assert_eq!(rest_height(&m, NODE), Some(4.0));
-        assert_eq!(rest_height(&m, 0), None);
-        assert_eq!(pilot_scale(&m, NODE), None, "no Chao yet");
-        let seat = scaled(
-            [
-                [1.0, 0.0, 0.0, 5.0],
-                [0.0, 2.0, 0.0, 6.0],
-                [0.0, 0.0, 1.0, 7.0],
-            ],
-            0.5,
-        );
+        let stock = stock_points(&m, NODE);
         assert_eq!(
-            seat,
-            [
-                [0.5, 0.0, 0.0, 5.0],
-                [0.0, 1.0, 0.0, 6.0],
-                [0.0, 0.0, 0.5, 7.0]
-            ]
+            stock,
+            [[9.0, -1.0, 2.0], [11.0, 0.5, 4.0], [10.0, 3.0, 3.0]]
         );
+        assert!(stock_points(&m, 0).is_empty());
+        assert_eq!(pilot_fit(&m, NODE), None, "no Chao yet");
+        // 4 tall against a Chao 8 tall: half size, feet at the lowest point
+        // under the centre.
+        let (s, feet) = seat_fit(&stock, 8.0).unwrap();
+        assert_eq!((s, feet), (0.5, [10.0, -1.0, 3.0]));
+        assert_eq!(seat_fit(&[], 8.0), None);
+        // A seat turned a quarter about y and moved: the Chao's front (+z)
+        // goes to the seat's -x, its up stays up, its feet go to `feet`.
+        let seat = [
+            [0.0, 0.0, 1.0, 100.0],
+            [0.0, 1.0, 0.0, 200.0],
+            [-1.0, 0.0, 0.0, 300.0],
+        ];
+        let p = placed(seat, s, feet);
+        let col = |k: usize| [p[0][k], p[1][k], p[2][k]];
+        assert_eq!(
+            col(2),
+            [0.0, 0.0, 0.5],
+            "front: the seat's -x, here world +z"
+        );
+        assert_eq!(col(1), [0.0, 0.5, 0.0], "up");
+        assert_eq!(col(0), [0.5, 0.0, 0.0], "its right");
+        assert_eq!(col(3), [103.0, 199.0, 290.0], "feet");
     }
 
     #[test]
