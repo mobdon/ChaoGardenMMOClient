@@ -398,6 +398,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         } else if RESIDENTS_OUT.get() {
             roam_live(c, m, text, now);
         }
+        hold_residents(m);
         restore_cocoon(m);
         watch_slot(m);
         if now == LOBBY && TUTORIAL_SLOT.get() != 0 {
@@ -679,6 +680,32 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32, which: &[usize]) {
         STANDING_TASK.set(standing_task);
         let link = text + AL_SET_MOTION_LINK;
         guest_call(c, m, link, &[standing_task, STAND_MOTION]);
+    }
+}
+
+/// The residents never age or die (mob 2026-11-22), every frame. Their types
+/// (0x17..0x19) are already outside the game's own life loss (AL_CalcParameter
+/// 0x2149C: the LifeMax decay only for types under 0x14, as for Chaos Chao;
+/// `old` still counts up) and evolution (0x1531C: a child, type 2, only). But the death
+/// check (0x15060: a non-child with `life` 0 on the ground starts ALBHV_Dead)
+/// has no type test, and a resident's record is made zeroed and never
+/// analysed, so its life starts at 0. Held here: life and LifeMax (+0x8A,
+/// +0x8C) at ChaoGlobal's InitBaseLife (+0x16; what AL_GeneAnalyzeCommon gives
+/// a Chao whose LifeTime genes are 0, as theirs are), age and old (+0x86,
+/// +0x88) at 0. Offsets: al_chao_info.h, al_global.h. Unverified live.
+fn hold_residents(m: &mut Mem) {
+    let Some(data) = chaomain_section(m, 5) else { return };
+    let life = m.r16(data + FULL_GROWTH.0 + 0x16);
+    for (n, twp) in RESIDENT_TWP.get().into_iter().enumerate() {
+        // chaowk +0x5C is the record; only while it is still this resident's.
+        let param = if twp == 0 { 0 } else { m.r32(twp + 0x5C) };
+        if !(0x8000_0000..0x8C00_0000).contains(&param) || m.r8(param + 0x80) != RESIDENTS[n].0 {
+            continue;
+        }
+        m.w16(param + 0x86, 0);
+        m.w16(param + 0x88, 0);
+        m.w16(param + 0x8A, life);
+        m.w16(param + 0x8C, life);
     }
 }
 
