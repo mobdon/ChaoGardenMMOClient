@@ -14,9 +14,12 @@
 //!
 //! Sounds: the walker code plays the Chao Walkers' own sound (0x201B Chao
 //! Walker, 0x201E Dark, via 0x8006B978 at 0x800B4A64/0x800B4A84), which is in
-//! the 2P walker bank se_ch_wk_BATTLE.mlt; 1P loads se_ch_wk.mlt (table
-//! 0x801CD520 vs 0x801CD580 in 0x800D960C). So the 1P walker bank load
-//! (0x8006CFEC) gets the 2P bank's name, the game's own string.
+//! the 2P walker bank se_ch_wk_BATTLE.mlt, and its voice sounds (bank 3,
+//! sequences 60 and 73 seen on Iron Gate) are in the 2P walker voice bank
+//! b03_wk_btl_e/j.mpb; 1P loads se_ch_wk.mlt and b03_ewe/twe.mpb. The game's
+//! bank chooser 0x800D960C picks both by the 2P flag (sound tables 0x801CD520
+//! / 0x801CD580, voice tables 0x801CD5E0 / 0x801CD680), so it runs with that
+//! flag set for the two walker characters.
 //!
 //! Voices (no Eggman voice lines, Chao sounds instead): while
 //! player 1 is a Chao Walker, the voice task (exec 0x800125D8) does not start
@@ -42,10 +45,8 @@ const ADX_START_AFS: u32 = 0x8013_476C;
 const FROM_VOICE_TASK: u32 = 0x8001_2768;
 /// Player 1's character work (obj2), set up by 0x8004F838 (table 0x801E5C48 + 0x1AE0).
 const PLAYER1_OBJ2: u32 = 0x801E_7728;
-/// Sound bank load by name (r3); the walker bank names in main.dol.
-const LOAD_BANK: u32 = 0x8006_CFEC;
-const WALKER_BANK: u32 = 0x8017_5E78; // "se_ch_wk.mlt"
-const WALKER_BANK_2P: u32 = 0x8017_5E9C; // "se_ch_wk_BATTLE.mlt"
+/// Character sound and voice bank chooser (r3 = character, r4/r5 = table outs).
+const BANK_CHOOSER: u32 = 0x800D_960C;
 /// Play a sound effect (r3 = id, r4-r6 = 0), as the walker code calls it.
 const PLAY_SE: u32 = 0x8006_B978;
 
@@ -60,14 +61,17 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(EGGMAN_WALKER, eggman);
     c.rt.set_override(PHYSICS_SETUP, physics);
     c.rt.set_override(ADX_START_AFS, adx_start);
-    c.rt.set_override(LOAD_BANK, load_bank);
+    c.rt.set_override(BANK_CHOOSER, banks);
 }
 
-fn load_bank(c: &mut Cpu, m: &mut Mem) {
-    if c.r[3] == WALKER_BANK {
-        c.r[3] = WALKER_BANK_2P;
+fn banks(c: &mut Cpu, m: &mut Mem) {
+    if !matches!(c.r[3], 6 | 7) {
+        return original(c, m, BANK_CHOOSER);
     }
-    original(c, m, LOAD_BANK);
+    let saved = m.r8(TWO_PLAYER);
+    m.w8(TWO_PLAYER, 1);
+    original(c, m, BANK_CHOOSER);
+    m.w8(TWO_PLAYER, saved);
 }
 
 fn tails(c: &mut Cpu, m: &mut Mem) {
@@ -176,18 +180,20 @@ mod tests {
     }
 
     #[test]
-    fn the_walker_bank_is_the_2p_one() {
-        fn bank(c: &mut Cpu, m: &mut Mem) {
-            m.w32(0x8000_6000, c.r[3]);
+    fn the_walkers_banks_are_chosen_as_in_2p() {
+        // Stand-in chooser: records the 2P flag it saw.
+        fn chooser(_c: &mut Cpu, m: &mut Mem) {
+            let seen = m.r8(TWO_PLAYER);
+            m.w8(0x8000_6000, seen);
         }
         let (mut c, mut m) = (Cpu::default(), Mem::default());
-        c.rt.generated = |a| (a == LOAD_BANK).then_some(bank as sa2_recomp::rt::Func);
-        c.r[3] = WALKER_BANK;
-        load_bank(&mut c, &mut m);
-        assert_eq!(m.r32(0x8000_6000), WALKER_BANK_2P);
-        c.r[3] = 0x8017_5E68;
-        load_bank(&mut c, &mut m);
-        assert_eq!(m.r32(0x8000_6000), 0x8017_5E68, "other banks unchanged");
+        c.rt.generated = |a| (a == BANK_CHOOSER).then_some(chooser as sa2_recomp::rt::Func);
+        for (character, flag) in [(7, 1), (6, 1), (0, 0), (4, 0)] {
+            c.r[3] = character;
+            banks(&mut c, &mut m);
+            assert_eq!(m.r8(0x8000_6000), flag, "character {character}");
+            assert_eq!(m.r8(TWO_PLAYER), 0, "restored");
+        }
     }
 
     #[test]
