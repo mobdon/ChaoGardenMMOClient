@@ -9,41 +9,18 @@
 
 pub mod audio;
 pub mod card;
-pub mod card_box;
-pub mod card_pack;
-pub mod chao_cache;
-pub mod chao_drive;
-pub mod chao_player;
-pub mod chao_retarget;
-pub mod skate;
-pub mod chao_speed;
 pub mod clock;
-pub mod combat;
 pub mod dvd;
-pub mod gear_pickup;
 #[cfg(not(target_os = "wasi"))]
 pub mod gamepad;
 pub mod gx;
 pub mod io;
-pub mod kinder_chart;
-#[cfg(not(target_os = "wasi"))]
-pub mod mmo;
-pub mod name_tags;
 pub mod pad;
-pub mod pause_extras;
 pub mod prof;
-pub mod serve;
 #[cfg(not(target_os = "wasi"))]
 pub mod snap;
-pub mod start_stage;
-pub mod karate;
-pub mod story;
-pub mod race_control;
-pub mod race_probe;
 pub mod steam_sound;
-pub mod tiny_transporter;
 pub mod vi;
-pub mod walker;
 pub mod wide;
 #[cfg(not(target_os = "wasi"))]
 pub mod window;
@@ -62,17 +39,6 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     clock::install(c, m);
     card::install(c, m);
     wide::install(c, m);
-    walker::install(c, m);
-    chao_player::install(c, m);
-    name_tags::install(c, m);
-    kinder_chart::install(c, m);
-    card_box::install(c, m);
-    start_stage::install(c, m);
-    combat::install(c, m);
-    race_control::install(c, m);
-    race_probe::install(c, m);
-    pause_extras::install(c, m);
-    gear_pickup::install(c, m);
 }
 
 /// Read a NUL-terminated guest string (at most 255 bytes).
