@@ -71,6 +71,20 @@ pub fn limits(node: usize, weight: f32, cap_deg: f32, mode: &str) -> (f32, f32) 
     }
 }
 
+/// A Chao node's weight and cap for the player's own Chao, from the pause
+/// Extras switches: the feet (6, 13) always take the rider's full turn; the
+/// body (1) and head (14) keep the table's limit only while their switch is
+/// on; the arms keep the table's.
+pub fn rig_limits(node: usize, weight: f32, cap_deg: f32, limit_body: bool, limit_head: bool) -> (f32, f32) {
+    let full = match node {
+        6 | 13 => true,
+        1 => !limit_body,
+        14 => !limit_head,
+        _ => false,
+    };
+    if full { (1.0, 180.0) } else { (weight, cap_deg) }
+}
+
 /// The Chao node's desired world rotation (Chao model space).
 pub fn desired(now: &M3, rest: &M3, chao_rest: &M3, weight: f32, cap_deg: f32) -> M3 {
     // SA2_SKATE_A=-1 (debug): the opposite quarter turn, to check the facing.
@@ -126,6 +140,21 @@ mod tests {
         assert_eq!(limits(14, 0.35, 18.0, "0"), (1.0, 180.0));
         assert_eq!(limits(14, 0.35, 18.0, "feet"), (0.35, 18.0));
         assert_eq!(limits(6, 1.0, 50.0, "feet"), (1.0, 180.0));
+    }
+    #[test]
+    fn extras_switches_pick_each_parts_limit() {
+        for (body, head) in [(true, true), (true, false), (false, true), (false, false)] {
+            for &(node, _, w, cap) in MAP.iter() {
+                let got = rig_limits(node, w, cap, body, head);
+                let full = (1.0, 180.0);
+                match node {
+                    6 | 13 => assert_eq!(got, full, "feet always copy the rider"),
+                    1 => assert_eq!(got, if body { (1.0, 24.0) } else { full }),
+                    14 => assert_eq!(got, if head { (0.35, 18.0) } else { full }),
+                    _ => assert_eq!(got, (1.0, 75.0), "arms as they are"),
+                }
+            }
+        }
     }
     #[test]
     fn cap_limits_the_turn() {

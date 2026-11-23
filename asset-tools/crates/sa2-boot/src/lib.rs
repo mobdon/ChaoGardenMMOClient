@@ -20,6 +20,7 @@ pub mod chao_speed;
 pub mod clock;
 pub mod combat;
 pub mod dvd;
+pub mod font_widths;
 pub mod gear_pickup;
 #[cfg(not(target_os = "wasi"))]
 pub mod gamepad;
@@ -72,6 +73,7 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     race_control::install(c, m);
     race_probe::install(c, m);
     pause_extras::install(c, m);
+    font_widths::install(c, m);
     gear_pickup::install(c, m);
 }
 

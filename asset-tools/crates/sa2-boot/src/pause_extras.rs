@@ -6,7 +6,7 @@
 //! middle row reads EXTRAS. Picking it turns the same window into the Extras
 //! pages: three rows a page, drawn and moved through by the game's own pause
 //! code (window, cursor, highlight, sounds). Left/right change the row's value,
-//! L/R change the page, B or Start goes back. Values come from the page
+//! L/R change the page, B or Start (Esc) goes back; Start on the pause rows continues. Values come from the page
 //! (`/dev/pad` bytes 12-15, [`set_page_settings`]); a change goes back to it on
 //! `/dev/extras`, and the page saves it on the MMO server.
 //! In a level (three rows already: CONTINUE, RESTART, EXIT) the same window
@@ -90,7 +90,7 @@ const PAD_START: u16 = 0x1000;
 
 /// The Extras settings, in page order (three rows a page). Labels and values
 /// are MMO text in the game's font; index order matches the page's byte codes.
-const SETTINGS: [(&str, &[&str]); 9] = [
+const SETTINGS: [(&str, &[&str]); N] = [
     ("VOICE", &["ENGLISH", "JAPANESE"]),
     ("AUDIO", &["STEREO", "MONO"]),
     ("VIBRATION", &["ON", "OFF"]),
@@ -120,15 +120,23 @@ const SETTINGS: [(&str, &[&str]); 9] = [
     ),
     ("MUSIC", &["ON", "OFF"]),
     ("FRAME CAP", &["60", "120", "165"]),
+    // Limit body lean / limit head turn (short names: the window is narrow).
+    // The player's own Chao on Shadow's skate (skate.rs): ON keeps the hub's
+    // limit on that part, OFF copies Shadow's turn in full. Kept by the page
+    // in this browser only, not on the server.
+    ("BODY LIMIT", &["ON", "OFF"]),
+    ("HEAD LIMIT", &["ON", "OFF"]),
 ];
-const PAGES: usize = SETTINGS.len() / 3;
+const N: usize = 11;
+/// The last page's spare rows are blank.
+const PAGES: usize = N.div_ceil(3);
 const EXTRAS: &str = "EXTRAS";
 
 /// Current value index of each setting, as the page last sent them.
-static VALUES: Global<[u8; 9]> = global!([0, 0, 0, 0, 0, 0, 10, 0, 0]);
+static VALUES: Global<[u8; N]> = global!([0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0]);
 /// Whether the page has sent the player's settings yet.
 static HAVE: Global<bool> = global!(false);
-static APPLIED: Global<Option<[u8; 9]>> = global!(None);
+static APPLIED: Global<Option<[u8; N]>> = global!(None);
 /// Extras page open (Some(page)) in the pause window.
 static PAGE: Global<Option<usize>> = global!(None);
 /// A level's pause: the first of its four rows the window shows (0 or 1).
@@ -136,12 +144,17 @@ static TOP: Global<u8> = global!(0);
 /// Controller 1 buttons and stick x last frame, for presses.
 static INPUT: Global<(u16, i8)> = global!((0, 0));
 static LAST_INPUT: Global<(u16, i8)> = global!((0, 0));
+/// The press that closed the Extras page is still held: the game reads the
+/// pad a frame after the page's bytes arrive, so without this the same Start
+/// press confirmed the EXTRAS row and opened the page again.
+static BACK_HELD: Global<bool> = global!(false);
 /// Font messages made so far: (text, language, message).
 static MESSAGES: std::sync::Mutex<Vec<(Vec<u8>, u8, u32)>> = std::sync::Mutex::new(Vec::new());
 
 /// `/dev/pad` bytes 12-15 from the page: 12 flags (bit 0 settings loaded,
 /// 1 mono, 2 Japanese voices, 3 vibration off, 4 music off, 5 chat off,
-/// 6 open mic), 13 volume 0-10, 14 frame cap 0/1/2 (60/120/165), 15 theme 0-10.
+/// 6 open mic), 13 volume 0-10, 14 frame cap 0/1/2 (60/120/165) in bits 0-1,
+/// bit 6 body lean not limited, bit 7 head turn not limited, 15 theme 0-10.
 pub fn set_page_settings(b: [u8; 4]) {
     if b[0] & 1 == 0 {
         return;
@@ -156,9 +169,18 @@ pub fn set_page_settings(b: [u8; 4]) {
         bit(5),
         b[1].min(10),
         bit(4),
-        b[2].min(2),
+        (b[2] & 3).min(2),
+        (b[2] >> 6) & 1,
+        b[2] >> 7,
     ]);
     HAVE.set(true);
+}
+
+/// The Extras rows for the player's own Chao rig: (limit body lean, limit
+/// head turn). Both on until the player turns one off.
+pub fn rig_limits() -> (bool, bool) {
+    let v = VALUES.get();
+    (v[9] == 0, v[10] == 0)
 }
 
 /// Controller 1 as the page sends it this frame.
@@ -196,12 +218,14 @@ fn rows(c: &mut Cpu, m: &mut Mem) {
 
 /// The text a pause row shows: the Extras page's rows, or EXTRAS in
 /// RESTART's place in Chao World; None keeps the game's own row.
-fn row_text(page: Option<usize>, text_id: u32, values: &[u8; 9]) -> Option<String> {
+fn row_text(page: Option<usize>, text_id: u32, values: &[u8; N]) -> Option<String> {
     let slot = ROW_TEXT.iter().position(|&t| t == text_id)?;
     match page {
         Some(page) => {
             let i = page * 3 + slot;
-            let (label, choices) = SETTINGS[i];
+            let Some(&(label, choices)) = SETTINGS.get(i) else {
+                return Some(" ".to_owned());
+            };
             Some(format!(
                 "{label}  {}",
                 choices[usize::from(values[i]).min(choices.len() - 1)]
@@ -319,6 +343,7 @@ fn pause_exec(c: &mut Cpu, m: &mut Mem) {
     if let Some(page) = PAGE.get() {
         if pressed & (PAD_B | PAD_START) != 0 {
             PAGE.set(None);
+            BACK_HELD.set(true);
             // Back on EXTRAS: the middle row (a level's window scrolled down).
             TOP.set(1);
             m.w8(sda(c, CURSOR), 1);
@@ -333,7 +358,10 @@ fn pause_exec(c: &mut Cpu, m: &mut Mem) {
             guest_call(c, m, MENU_SE, &[SE_MOVE, 0, 0, 0]);
         } else if left || right || pressed & PAD_A != 0 {
             let i = page * 3 + usize::from(m.r8(sda(c, CURSOR)).min(2));
-            let n = SETTINGS[i].1.len() as u8;
+            let Some(n) = SETTINGS.get(i).map(|s| s.1.len() as u8) else {
+                original(c, m, ROWS); // a blank row
+                return;
+            };
             let mut values = VALUES.get();
             values[i] = if left {
                 (values[i] + n - 1) % n
@@ -351,7 +379,19 @@ fn pause_exec(c: &mut Cpu, m: &mut Mem) {
     let player = u32::from(m.r8(PAUSE_PLAYER).clamp(1, 2)) - 1;
     let pad = m.r32(PADS + 4 * player);
     let mask = m.r32(sda(c, CONFIRM_MASK));
-    let cursor = m.r8(sda(c, CURSOR));
+    let mut cursor = m.r8(sda(c, CURSOR));
+    if pad != 0 && m.r32(pad + 0x10) & mask != 0 {
+        if BACK_HELD.get() {
+            m.w32(pad + 0x10, m.r32(pad + 0x10) & !mask);
+        } else if start_continues(now) {
+            // MMO: Start (Esc) on the pause rows is CONTINUE, whatever row the cursor is on.
+            cursor = 0;
+            m.w8(sda(c, CURSOR), 0);
+        }
+    }
+    if now & (PAD_B | PAD_START) == 0 {
+        BACK_HELD.set(false);
+    }
     if level {
         // The cursor moves as fn_8001E12C will move it (0x8001E1B4..0x8001E1FC).
         let pressed = PRESSED + 4 * player;
@@ -396,6 +436,11 @@ fn pause_exec(c: &mut Cpu, m: &mut Mem) {
         }
     }
     original(c, m, PAUSE_EXEC);
+}
+
+/// A confirm press that is Start alone (Enter, Esc, the pad's Start), not A.
+fn start_continues(buttons: u16) -> bool {
+    buttons & PAD_START != 0 && buttons & PAD_A == 0
 }
 
 /// EXIT in Chao World (MMO): from an area it goes back to the lobby, in the
@@ -460,10 +505,12 @@ mod tests {
     #[test]
     fn page_bytes_become_setting_values() {
         set_page_settings([0b111_1111, 7, 2, 4]);
-        assert_eq!(VALUES.get(), [1, 1, 1, 4, 1, 1, 7, 1, 2]);
+        assert_eq!(VALUES.get(), [1, 1, 1, 4, 1, 1, 7, 1, 2, 0, 0]);
         assert!(music_off());
-        set_page_settings([0b000_0001, 99, 9, 99]);
-        assert_eq!(VALUES.get(), [0, 0, 0, 10, 0, 0, 10, 0, 2]);
+        assert_eq!(rig_limits(), (true, true), "both limits on by default");
+        set_page_settings([0b000_0001, 99, 0x80 | 1, 99]);
+        assert_eq!(VALUES.get(), [0, 0, 0, 10, 0, 0, 10, 0, 1, 0, 1]);
+        assert_eq!(rig_limits(), (true, false), "head turn not limited");
         assert!(!music_off());
     }
 
@@ -506,7 +553,7 @@ mod tests {
 
     #[test]
     fn pause_rows_in_chao_world_and_on_extras_pages() {
-        let values = [0, 1, 0, 0, 1, 0, 10, 0, 2];
+        let values = [0, 1, 0, 0, 1, 0, 10, 0, 2, 0, 1];
         assert_eq!(row_text(None, 3, &values).as_deref(), Some("EXTRAS"));
         assert_eq!(
             row_text(None, 2, &values),
@@ -523,5 +570,15 @@ mod tests {
         );
         assert_eq!(row_text(Some(1), 3, &values).as_deref(), Some("MIC  OPEN"));
         assert_eq!(row_text(Some(0), 9, &values), None, "not a pause row");
+        assert_eq!(row_text(Some(3), 2, &values).as_deref(), Some("BODY LIMIT  ON"));
+        assert_eq!(row_text(Some(3), 3, &values).as_deref(), Some("HEAD LIMIT  OFF"));
+        assert_eq!(row_text(Some(3), 4, &values).as_deref(), Some(" "), "spare row");
+    }
+
+    #[test]
+    fn start_alone_continues() {
+        assert!(start_continues(PAD_START));
+        assert!(!start_continues(PAD_A), "A confirms the row");
+        assert!(!start_continues(PAD_A | PAD_START));
     }
 }

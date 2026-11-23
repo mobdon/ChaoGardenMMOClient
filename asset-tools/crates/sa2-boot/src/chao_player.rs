@@ -2188,7 +2188,14 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
             // (skate.rs) on its 8 mapped nodes, from the rider's live pose.
             if skate_blend(i == 0) > 0.0 && SHADOW_TEX.get().is_some() && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
                 if let Some(&(_, src, w, cap)) = crate::skate::MAP.iter().find(|e| e.0 == i) {
-                    let (w, cap) = crate::skate::limits(i, w, cap, &std::env::var("SA2_SKATE_CAPS").unwrap_or_default());
+                    // The pause Extras switches choose; SA2_SKATE_CAPS (debug) overrides them.
+                    let (w, cap) = match std::env::var("SA2_SKATE_CAPS") {
+                        Ok(mode) => crate::skate::limits(i, w, cap, &mode),
+                        Err(_) => {
+                            let (body, head) = crate::pause_extras::rig_limits();
+                            crate::skate::rig_limits(i, w, cap, body, head)
+                        }
+                    };
                     skate_node(m, i, src, w, cap);
                 }
             }

@@ -876,7 +876,17 @@ const EXTRAS_ROWS = [
   ['menuTheme', THEMES], ['voiceMode', ['hold', 'open']], ['chat', [true, false]],
   ['volume', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]], ['music', [true, false]], ['fps', [60, 120, 165]],
 ];
+// Rows 9 and 10 (the player's own Chao rig: limit body lean, limit head turn; 0 on, 1 off)
+// are kept in this browser only, not on the server.
+const RIG_ROWS = { 9: 'sa2-limit-body-lean', 10: 'sa2-limit-head-turn' };
+const rigOff = {};
+for (const [row, key] of Object.entries(RIG_ROWS)) { try { rigOff[row] = localStorage.getItem(key) === '1'; } catch {} }
 function extrasChanged(row, choice) {
+  if (RIG_ROWS[row]) {
+    rigOff[row] = choice === 1;
+    try { localStorage.setItem(RIG_ROWS[row], String(choice)); } catch {}
+    return;
+  }
   const [key, choices] = EXTRAS_ROWS[row] || [];
   if (key && choice < choices.length) mmoSaveSettings({ [key]: choices[choice] });
 }
@@ -886,7 +896,7 @@ function writeExtras() {
   pad[12] = bit(settingsLoaded, 0) | bit(s.sound === 'mono', 1) | bit(s.voiceLanguage === 'japanese', 2)
     | bit(s.vibration === false, 3) | bit(s.music === false, 4) | bit(s.chat === false, 5) | bit(s.voiceMode === 'open', 6);
   pad[13] = Number.isInteger(s.volume) ? s.volume : 10;
-  pad[14] = Math.max(0, [60, 120, 165].indexOf(s.fps));
+  pad[14] = Math.max(0, [60, 120, 165].indexOf(s.fps)) | bit(rigOff[9], 6) | bit(rigOff[10], 7);
   pad[15] = Math.max(0, THEMES.indexOf(s.menuTheme));
 }
 
