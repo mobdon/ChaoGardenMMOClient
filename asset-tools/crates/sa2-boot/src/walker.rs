@@ -33,8 +33,9 @@
 //! shortcut: covers every voice line in the stage, not only Eggman's; the
 //! speaker of each voice id is not mapped yet.
 //!
-//! Pilot (prepared, off until the Chao player can draw the player's Chao at a
-//! matrix): each walker's model list (obj2 +0x44C, pairs of index and
+//! Pilot: the player's own Chao sits in the walker (chao_player::own_pilot
+//! draws it at the seat every frame; needs SA2_CHAO_PLAYER=1), and the stock
+//! pilot is hidden while it does. Each walker's model list (obj2 +0x44C, pairs of index and
 //! NJS_OBJECT, filled by 0x80050210 in the loaders) has the stock pilot's root
 //! as its second entry (index 443 in CWALKMDL, 466 in DWALKMDL; node 14 of
 //! the 33-node tree). The small Chao under the dome is the meshes below it
@@ -83,6 +84,7 @@ const HIDE: u32 = 8;
 static MECH_ROW: AtomicU32 = AtomicU32::new(0);
 /// Ninja's current matrix (3x4, camera included) at the seat node in this display.
 static SEAT: std::sync::Mutex<Option<[[f32; 4]; 3]>> = std::sync::Mutex::new(None);
+static NO_SEAT_SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
     if !std::env::var("SA2_CHAO_WALKER").is_ok_and(|v| v.trim() == "1") {
@@ -107,16 +109,17 @@ fn seat_node(m: &Mem) -> Option<u32> {
     (list != 0 && PILOT_INDEX.contains(&m.r32(list + 8))).then(|| m.r32(list + 12))
 }
 
-/// Ninja's hide bit on every mesh node below the seat: the stock pilot.
-fn hide_pilot(m: &mut Mem, seat: u32) {
+/// Ninja's hide bit set or cleared on every mesh node below the seat: the
+/// stock pilot (none of its mesh nodes is hidden in the files).
+fn set_pilot_hidden(m: &mut Mem, seat: u32, hidden: bool) {
     let mut todo = vec![m.r32(seat + 0x2C)];
     while let Some(node) = todo.pop() {
         if node == 0 {
             continue;
         }
         if m.r32(node + 4) != 0 {
-            let flags = m.r32(node);
-            m.w32(node, flags | HIDE);
+            let flags = m.r32(node) & !HIDE;
+            m.w32(node, if hidden { flags | HIDE } else { flags });
         }
         todo.extend([m.r32(node + 0x2C), m.r32(node + 0x30)]);
     }
@@ -125,30 +128,37 @@ fn hide_pilot(m: &mut Mem, seat: u32) {
 fn node_callback(c: &mut Cpu, m: &mut Mem) {
     let node = c.r[3];
     original(c, m, NODE_CALLBACK);
-    if seat_node(m) == Some(node) {
+    let Some(seat) = seat_node(m) else { return };
+    // The seat itself, or (unverified whether the callback reaches a node
+    // with no mesh) the stock pilot's body right below it, when the seat's
+    // own call has not come this display.
+    let body = node == m.r32(seat + 0x2C) && SEAT.lock().unwrap().is_none();
+    if node == seat || body {
         let at = m.r32(NJ_CURRENT_MATRIX);
         let word = |r: usize, k: usize| f32::from_bits(m.r32(at + 4 * (4 * r + k) as u32));
         *SEAT.lock().unwrap() = Some(std::array::from_fn(|r| std::array::from_fn(|k| word(r, k))));
     }
 }
 
-/// Draw the player's own Chao at the seat (Ninja's current matrix there).
-/// shortcut: draws nothing until chao_player has its draw-at-a-matrix function (being added by that file's owner); call it here and return what it returns.
-/// shortcut: the seat matrix is passed at scale 1.0; the Chao takes its size from it, so scale it here to the stock pilot's size once that ratio is read from the two models.
-fn own_pilot(_c: &mut Cpu, _m: &mut Mem, _seat: &[[f32; 4]; 3]) -> bool {
-    false
-}
-
 fn display(c: &mut Cpu, m: &mut Mem) {
     *SEAT.lock().unwrap() = None;
     original(c, m, WALKER_DISPLAY);
+    let Some(node) = seat_node(m) else { return };
     let seat = SEAT.lock().unwrap().take();
-    if let (Some(mtx), Some(node)) = (seat, seat_node(m)) {
-        // The stock pilot leaves only once the player's Chao is drawn in its place.
-        if own_pilot(c, m, &mtx) {
-            hide_pilot(m, node);
+    let Some(seat) = seat else {
+        if !NO_SEAT_SAID.swap(true, Relaxed) {
+            eprintln!(
+                "chao-walker pilot: the seat node was not seen in the walker's node callback"
+            );
         }
-    }
+        return;
+    };
+    // Every frame, also before the Chao exists: the first call lets the Chao
+    // player load and make it. Its size is the matrix's scale.
+    // shortcut: scale 1.0 (the Chao at its own model size); scale the seat by the stock pilot's height over the Chao's rest height once both are read (the Chao's is private to chao_player and logged at its first draw).
+    let drew = crate::chao_player::own_pilot(c, m, &seat);
+    // The stock pilot is away only while the player's Chao is drawn in its place.
+    set_pilot_hidden(m, node, drew);
 }
 
 fn banks(c: &mut Cpu, m: &mut Mem) {
@@ -327,13 +337,15 @@ mod tests {
             m.w32(node + 0x30, sibling);
         }
         assert_eq!(seat_node(&m), Some(SEAT_NODE));
-        hide_pilot(&mut m, SEAT_NODE);
+        set_pilot_hidden(&mut m, SEAT_NODE, true);
         assert_eq!((m.r32(BODY), m.r32(HEAD)), (0xE, 0x1F), "pilot hidden");
         assert_eq!(
             (m.r32(SEAT_NODE), m.r32(MECH)),
             (0xA, 0x12),
             "seat and mech untouched"
         );
+        set_pilot_hidden(&mut m, SEAT_NODE, false);
+        assert_eq!((m.r32(BODY), m.r32(HEAD)), (6, 0x17), "pilot back");
 
         // The callback keeps the current matrix at the seat node only.
         m.w32(NJ_CURRENT_MATRIX, 0x8000_7900);
@@ -344,6 +356,31 @@ mod tests {
         c.r[3] = SEAT_NODE;
         node_callback(&mut c, &mut m);
         assert_eq!(SEAT.lock().unwrap().take().map(|s| s[0][3]), Some(10.0));
+        // With no call for the seat, the pilot's body node below it stands in;
+        // after the seat's own call it does not replace it.
+        m.w32(0x8000_7900 + 12, 0x41A0_0000);
+        c.r[3] = BODY;
+        node_callback(&mut c, &mut m);
+        assert_eq!(SEAT.lock().unwrap().map(|s| s[0][3]), Some(20.0));
+        m.w32(0x8000_7900 + 12, 0x4120_0000);
+        c.r[3] = SEAT_NODE;
+        node_callback(&mut c, &mut m);
+        m.w32(0x8000_7900 + 12, 0x41A0_0000);
+        c.r[3] = BODY;
+        node_callback(&mut c, &mut m);
+        assert_eq!(SEAT.lock().unwrap().take().map(|s| s[0][3]), Some(10.0));
+        // No Chao yet: nothing drawn, so the stock pilot stays.
+        fn shown(c: &mut Cpu, m: &mut Mem) {
+            c.r[3] = SEAT_NODE;
+            node_callback(c, m);
+        }
+        c.rt.generated = |a| match a {
+            NODE_CALLBACK => Some(nothing as sa2_recomp::rt::Func),
+            WALKER_DISPLAY => Some(shown),
+            _ => None,
+        };
+        display(&mut c, &mut m);
+        assert_eq!((m.r32(BODY), m.r32(HEAD)), (6, 0x17), "stock pilot stays");
         m.w8(OBJ2 + 3, 7);
         assert_eq!(seat_node(&m), None, "Eggman's own walker has no seat");
     }
