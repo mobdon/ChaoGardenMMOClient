@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>Staff panel</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0a0d13; --surface: #121722; --raised: #1a2130; --line: #2a3345;
+    --fg: #eef1f6; --dim: #a3adc0; --accent: #5aa2ff; --accent-ink: #06182f;
+    --live: #4ade80; --bad: #f87171; --warn: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  html { scrollbar-color: var(--line) var(--bg); }
+  ::selection { background: var(--accent); color: var(--accent-ink); }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, sans-serif; caret-color: var(--accent); }
+  [hidden] { display: none !important; }
+  h1 { font-size: 1.15rem; margin: 0; letter-spacing: -.01em; }
+  h2 { font-size: 1rem; margin: 0; }
+  h3 { font-size: .85rem; font-weight: 500; color: var(--dim); margin: 1rem 0 .5rem; }
+  td.wrap { white-space: normal; overflow-wrap: anywhere; max-width: 28rem; }
+  .dim { color: var(--dim); }
+  .num { font-variant-numeric: tabular-nums; }
+  input, select, button { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: .4rem; padding: .5rem .65rem; }
+  button { cursor: pointer; background: var(--raised); transition: background .15s, border-color .15s; }
+  button:hover { border-color: var(--dim); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  button.small { padding: .25rem .6rem; font-size: .85rem; }
+  button.bad { border-color: color-mix(in srgb, var(--bad) 60%, var(--line)); color: var(--bad); }
+  button.bad:hover { border-color: var(--bad); }
+  button[aria-pressed="true"] { background: var(--live); border-color: var(--live); color: #052e14; font-weight: 600; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  [role="alert"] { color: var(--bad); margin: 0; }
+  [role="alert"]:empty { display: none; }
+
+  /* sign in */
+  #login { max-width: 23rem; margin: 12vh auto 0; padding: 1.5rem; display: grid; gap: .9rem; background: var(--surface); border: 1px solid var(--line); border-radius: .75rem; }
+  #login label { display: grid; gap: .3rem; color: var(--dim); font-size: .85rem; }
+  #login .keep { display: block; margin: 0; color: var(--dim); font-size: .8rem; }
+
+  /* frame */
+  #panel { max-width: 82rem; margin: 0 auto; padding: 0 1rem 3rem; }
+  #panel > header { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; align-items: center; padding: .8rem 0; background: var(--bg); border-bottom: 1px solid var(--line); }
+  #status { display: flex; gap: 1.1rem; flex: 1; flex-wrap: wrap; color: var(--dim); }
+  #status b { color: var(--fg); font-weight: 600; }
+  @media (max-width: 34rem) { #status { order: 3; flex-basis: 100%; } #me { flex: 1; } }
+  .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+  .work { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 1.25rem; margin-top: 1.25rem; align-items: start; }
+  @media (max-width: 62rem) { .work { grid-template-columns: minmax(0, 1fr); } }
+  .pane { background: var(--surface); border: 1px solid var(--line); border-radius: .75rem; padding: 1rem; min-width: 0; }
+  .pane > header { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; margin-bottom: .8rem; }
+  .below { margin-top: 1.25rem; }
+
+  /* room map */
+  #map { display: grid; gap: .6rem; grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-areas: "garden garden hero hero dark dark" "kinder kinder hub hub entrance entrance" "race race race karate karate karate"; }
+  @media (max-width: 34rem) { #map { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: none; } #map .room { grid-area: auto !important; } }
+  .room { display: grid; grid-template-rows: auto 1fr auto; gap: .35rem; min-height: 6.5rem; padding: .7rem .8rem; text-align: left; background: var(--raised); border-radius: .6rem; }
+  .room[data-room="hub"] { min-height: 8.5rem; }
+  .room .name { font-size: .85rem; color: var(--dim); }
+  .room .count { font-size: 1.9rem; font-weight: 650; line-height: 1; font-variant-numeric: tabular-nums; }
+  .room.empty .count { color: color-mix(in srgb, var(--dim) 55%, var(--raised)); }
+  .room .dots { display: flex; flex-wrap: wrap; gap: 4px; min-height: 10px; }
+  .room .dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  .room .dots i.staff { background: var(--warn); }
+  .room .dots i.limited { background: var(--bad); }
+  .room[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 18%, var(--raised)); border-color: var(--accent); color: var(--fg); font-weight: inherit; }
+  .room[aria-pressed="true"] .name { color: var(--fg); }
+  .room.heard { border-color: var(--live); }
+  .room.heard .name::after { content: " · listening"; color: var(--live); }
+  .key { display: flex; flex-wrap: wrap; gap: .9rem; margin-top: .8rem; font-size: .85rem; color: var(--dim); }
+  .key span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: .35rem; background: var(--c); }
+
+  /* room detail */
+  .player { display: grid; gap: .45rem; padding: .7rem 0; border-top: 1px solid var(--line); }
+  .player:first-child { border-top: 0; padding-top: 0; }
+  .player .who { display: flex; flex-wrap: wrap; gap: .25rem .6rem; align-items: baseline; }
+  .player .who b { font-weight: 600; }
+  .tag { font-size: .8rem; padding: .05rem .45rem; border-radius: 1rem; border: 1px solid var(--line); color: var(--dim); }
+  .tag.staff { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); }
+  .tag.limit { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 50%, var(--line)); }
+  #heard { min-height: 1.4em; color: var(--live); font-size: .9rem; }
+
+  /* chat and board */
+  #chat { max-height: 20rem; overflow-y: auto; display: grid; gap: .15rem; }
+  .line { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: .6rem; align-items: baseline; padding: .2rem 0; }
+  .line .text { overflow-wrap: anywhere; }
+  .line button { visibility: hidden; }
+  .line:hover button, .line:focus-within button { visibility: visible; }
+  @media (hover: none) { .line button { visibility: visible; } }
+  #reports .line { grid-template-columns: auto auto minmax(0, 1fr) auto auto; }
+  #reports .line button { visibility: visible; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: .45rem .6rem; border-top: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--dim); font-weight: 500; font-size: .85rem; border-top: 0; }
+  td.n, th.n { text-align: right; }
+  tr.you-are-here td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .on::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--live); margin-right: .4rem; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<form id="login">
+  <h1>Staff panel</h1>
+  <label>Username or email <input id="who" autocomplete="username" required></label>
+  <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+  <label>Your key file <input id="key" type="file" required></label>
+  <label class="keep"><input id="keep" type="checkbox"> Remember this key on this browser</label>
+  <p id="kept" class="keep">Only on a PC you trust: anyone who uses this browser could take the key.
+    <button id="forget" type="button" class="small" hidden>Forget key</button></p>
+  <button class="primary">Sign in</button>
+  <p id="error" role="alert"></p>
+</form>
+<div id="panel" hidden>
+  <header>
+    <h1>Staff panel</h1>
+    <div id="status"></div>
+    <button id="invisible" class="small" aria-pressed="false" title="Hide your own Chao from other players">Invisible</button>
+    <span id="me" class="dim"></span>
+    <button id="out" class="small">Sign out</button>
+  </header>
+  <p id="note" role="alert" style="margin-top:.8rem"></p>
+  <div class="work">
+    <section class="pane" aria-labelledby="map-title">
+      <header><h2 id="map-title">Rooms</h2><span class="dim">Pick a room to see who is in it</span></header>
+      <div id="map"></div>
+      <div class="key"><span style="--c:var(--accent)">Player</span><span style="--c:var(--warn)">Staff</span><span style="--c:var(--bad)">Muted or banned</span></div>
+    </section>
+    <section class="pane" aria-labelledby="room-title">
+      <header>
+        <h2 id="room-title">Everyone online</h2>
+        <div class="row">
+          <button id="listen" class="small" aria-pressed="false">Listen to voice</button>
+          <button id="speak" class="small" hidden>Hold to speak</button>
+          <label class="row dim" style="font-size:.85rem">For
+            <select id="length">
+              <option value="10">10 minutes</option><option value="60">1 hour</option>
+              <option value="1440">1 day</option><option value="10080">7 days</option>
+              <option value="forever" data-admin>Until lifted</option>
+              <option value="0">Lift it</option>
+            </select>
+          </label>
+        </div>
+      </header>
+      <div id="heard" aria-live="polite"></div>
+      <div id="players"></div>
+    </section>
+  </div>
+  <section class="pane below" aria-labelledby="own-title" data-admin>
+    <header><h2 id="own-title">Your Chao</h2><span class="dim">Sets your own Chao only. Each use is in the audit log.</span></header>
+    <form id="override" class="row">
+      <label class="row dim">Story <select id="story"><option value="">Leave as is</option><option value="none">Nothing cleared</option><option value="hero">Hero cleared</option><option value="dark">Dark cleared</option><option value="all">Everything cleared</option></select></label>
+      <label class="row dim">Main stats level <input id="level" type="number" min="0" max="99" placeholder="as is" style="width:6rem"></label>
+      <label class="row dim">Grade, 0 to 5 <input id="grade" type="number" min="0" max="5" placeholder="as is" style="width:6rem"></label>
+      <button class="small">Apply</button>
+      <span id="applied" class="dim" aria-live="polite"></span>
+    </form>
+    <h3>Test buttons</h3>
+    <div id="grants" class="row"></div>
+  </section>
+  <section class="pane below" aria-labelledby="staff-title" data-admin>
+    <header><h2 id="staff-title">Staff</h2><span class="dim">A new key replaces that person's old one and signs them out.</span></header>
+    <div id="staff"></div>
+    <form id="give" class="row" style="margin-top:.8rem">
+      <label class="row dim">Username or email <input id="give-who" required></label>
+      <label class="row dim">Role <select id="give-role"><option value="moderator">Moderator</option><option value="admin">Admin</option><option value="none">None (remove)</option></select></label>
+      <button class="small">Set role</button>
+    </form>
+    <p id="newkey" hidden class="row"><span></span><a id="keyfile" class="tag staff" download>Save key file</a><span class="dim">Shown once. Hand it to them yourself.</span></p>
+  </section>
+  <section class="pane below" aria-labelledby="audit-title" data-admin>
+    <header><h2 id="audit-title">Audit log</h2><span class="dim">Newest first</span></header>
+    <div class="scroll" style="max-height:20rem;overflow-y:auto"><table><thead><tr><th>When</th><th>Who</th><th>What</th><th>On</th></tr></thead><tbody id="audit"></tbody></table></div>
+  </section>
+  <section class="pane below" aria-labelledby="reports-title">
+    <header><h2 id="reports-title">Reports</h2><span id="reports-count" class="dim"></span></header>
+    <div id="reports"></div>
+  </section>
+  <section class="pane below" aria-labelledby="chat-title">
+    <header><h2 id="chat-title">Chat</h2><span id="chat-scope" class="dim"></span></header>
+    <div id="chat"></div>
+  </section>
+  <section class="pane below" aria-labelledby="board-title">
+    <header><h2 id="board-title">Leaderboard</h2><span class="dim">Richest first. Pick a row to jump to that player's room.</span></header>
+    <div class="scroll"><table><thead><tr><th class="n">#</th><th>Chao</th><th>Account</th><th class="n">Rings</th><th class="n">Stat levels</th><th class="n">Best race</th><th class="n">Races</th><th class="n">Missions</th></tr></thead><tbody id="board"></tbody></table></div>
+  </section>
+</div>
+<script type="module">
+const $ = (id) => document.getElementById(id);
+// The session token lives only in this variable: closing or reloading the page signs out.
+let token = null, role = null, timer = 0;
+// The server's Chao World rooms (server CHAO_WORLD_ZONES) with where each sits on the map.
+// Other rooms a player is in (levels, races, bouts) get a tile of their own below.
+const ROOMS = { garden: ['Chao Garden', 'garden'], hero: ['Hero Garden', 'hero'], dark: ['Dark Garden', 'dark'],
+  kindergarten: ['Kindergarten', 'kinder'], hub: ['Chao Lobby', 'hub'], stadium: ['Stadium', 'stadium'],
+  'race-entrance': ['Race Entrance', 'entrance'], 'chao-race': ['Chao Race', 'race'], 'chao-karate': ['Chao Karate', 'karate'] };
+// The Stadium is a menu screen, not a room: no tile on the map. Players there still show under Everyone online.
+const MENUS = ['stadium'];
+// The server's main stats (server MAIN_STATS).
+const MAIN_STATS = ['swim', 'fly', 'run', 'power', 'stamina'];
+const roomName = (r) => ROOMS[r]?.[0] ?? r;
+let picked = null, last = { players: [], lines: [], board: [], reports: [] };
+const el = (tag, text, cls) => { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; };
+async function call(path, body) {
+  const r = await fetch(path, {
+    method: body ? 'POST' : 'GET', cache: 'no-store',
+    headers: { 'x-panel-token': token, ...(body && { 'content-type': 'application/json' }) },
+    body: body && JSON.stringify(body),
+  });
+  if (r.status === 404 && !body) { signOut('Signed out. Sign in again.'); throw new Error('signed out'); }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || `Failed (${r.status})`);
+  return data;
+}
+function signOut(why = '') {
+  token = null; clearInterval(timer); listening = false; following = null; talk = null; speaking = false; $('speak').hidden = true;
+  $('newkey').hidden = true; URL.revokeObjectURL($('keyfile').href); $('keyfile').removeAttribute('href');
+  $('panel').hidden = true; $('login').hidden = false; $('error').textContent = why; $('password').value = '';
+}
+$('out').onclick = () => signOut();
+// An opt-in copy of the key stays in this browser only; it goes nowhere but the sign-in request.
+const KEPT = 'panel-key';
+const keptKey = () => { try { return localStorage.getItem(KEPT); } catch { return null; } };
+function showKept() {
+  const kept = !!keptKey();
+  $('key').required = !kept; $('forget').hidden = !kept; $('keep').checked = kept;
+}
+$('forget').onclick = () => { try { localStorage.removeItem(KEPT); } catch {} showKept(); };
+$('keep').onchange = () => { if (!$('keep').checked) $('forget').onclick(); };
+showKept();
+$('login').onsubmit = async (e) => {
+  e.preventDefault();
+  $('error').textContent = '';
+  // The key is 64 hex characters. A file saved from a Windows console can be UTF-16 or carry other text around it.
+  const key = $('key').files[0] ? (await $('key').files[0].text()).replace(/\0/g, '').match(/(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])/)?.[0] : keptKey();
+  if (!key) { $('error').textContent = 'That file is not a panel key.'; return; }
+  const r = await fetch('/api/panel/login', {
+    method: 'POST', cache: 'no-store',
+    headers: { 'content-type': 'application/json', 'x-admin-key': key },
+    body: JSON.stringify({ login: $('who').value, password: $('password').value }),
+  }).catch(() => null);
+  const data = r ? await r.json().catch(() => ({})) : {};
+  if (!r?.ok) { $('error').textContent = data.error || 'Could not reach the server.'; return; }
+  ({ token, role } = data);
+  try { if ($('keep').checked) localStorage.setItem(KEPT, key); } catch {}
+  showKept();
+  $('me').textContent = `${data.username} · ${role}`;
+  for (const o of document.querySelectorAll('[data-admin]')) o.hidden = role !== 'admin';
+  $('login').hidden = true; $('panel').hidden = false; $('password').value = ''; $('key').value = '';
+  refresh(); timer = setInterval(refresh, 3000);
+  adminStart().catch((err) => ($('note').textContent = err.message));
+};
+const until = (t) => t > 4e12 ? 'until lifted' : `until ${new Date(t * 1000).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}`;
+const span = (s) => { const m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24); return d ? `${d} d ${h % 24} h` : h ? `${h} h ${m % 60} min` : `${m} min`; };
+const limitsOf = (p) => [['Chat muted', p.limits.chatUntil], ['Voice muted', p.limits.voiceUntil], ['Banned', p.limits.banUntil]].filter(([, t]) => t);
+async function act(player, kind) {
+  const raw = $('length').value, minutes = raw === 'forever' ? raw : Number(raw);
+  if (kind === 'ban' && minutes !== 0 && !confirm(`Ban ${player.name}?`)) return;
+  $('note').textContent = '';
+  try { await call('/api/panel/sanction', { playerId: player.id, kind, minutes }); await refresh(); }
+  catch (e) { $('note').textContent = e.message; }
+}
+// Teleport and follow move the staff member's own Chao in their own game; a follow repeats the call.
+let following = null;
+async function goTo(playerId, again) {
+  if (!again) $('note').textContent = '';
+  try { await call('/api/panel/goto', { playerId, following: again }); }
+  catch (e) { following = null; $('note').textContent = e.message; draw(); }
+}
+setInterval(() => { if (token && following) goTo(following, true); }, 2000);
+$('invisible').onclick = async () => {
+  const on = $('invisible').getAttribute('aria-pressed') !== 'true';
+  $('note').textContent = '';
+  try { await call('/api/panel/invisible', { on }); $('invisible').setAttribute('aria-pressed', on); refresh(); }
+  catch (e) { $('note').textContent = e.message; }
+};
+$('override').onsubmit = async (e) => {
+  e.preventDefault();
+  $('note').textContent = ''; $('applied').textContent = '';
+  const body = {}, stat = {};
+  if ($('story').value) body.story = $('story').value;
+  if ($('level').value !== '') stat.level = Number($('level').value);
+  if ($('grade').value !== '') stat.grade = Number($('grade').value);
+  if (Object.keys(stat).length) body.stats = Object.fromEntries(MAIN_STATS.map((s) => [s, stat]));
+  if (!Object.keys(body).length) { $('applied').textContent = 'Nothing chosen.'; return; }
+  try { await call('/api/panel/override', body); $('applied').textContent = 'Applied.'; refresh(); }
+  catch (err) { $('note').textContent = err.message; }
+};
+// Admin tools: test buttons come from the server's list, so a new one needs no page change.
+async function adminRefresh() {
+  if (role !== 'admin') return;
+  const [{ staff }, { entries }] = await Promise.all([call('/api/panel/staff'), call('/api/panel/audit')]);
+  $('staff').replaceChildren(...staff.map(([name, r]) => { const row = el('div', null, 'row'); row.append(el('b', name), el('span', r, 'tag staff')); return row; }));
+  $('audit').replaceChildren(...entries.map((e) => {
+    const tr = el('tr');
+    tr.append(el('td', new Date(e.at * 1000).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' }), 'dim'), el('td', e.actor), el('td', e.action), el('td', e.target, 'wrap dim'));
+    return tr;
+  }));
+}
+async function adminStart() {
+  if (role !== 'admin') return;
+  const { grants } = await call('/api/panel/grants');
+  $('grants').replaceChildren(...grants.map((g) => {
+    const b = el('button', g.label, 'small'); b.type = 'button';
+    b.onclick = async () => {
+      $('note').textContent = '';
+      try { const r = await call('/api/panel/grant', { id: g.id }); $('applied').textContent = `${g.label}: done. Rings ${r.rings.toLocaleString()}, gear ${(r.foundGear ?? []).join(', ') || 'none'}.`; refresh(); }
+      catch (e) { $('note').textContent = e.message; }
+    };
+    return b;
+  }));
+}
+$('give').onsubmit = async (e) => {
+  e.preventDefault();
+  $('note').textContent = ''; $('newkey').hidden = true;
+  try {
+    const r = await call('/api/panel/staff', { login: $('give-who').value, role: $('give-role').value });
+    if (r.key) {
+      $('newkey').firstElementChild.textContent = `New key for ${r.username}:`;
+      URL.revokeObjectURL($('keyfile').href);
+      $('keyfile').href = URL.createObjectURL(new Blob([r.key], { type: 'text/plain' }));
+      $('keyfile').download = `${r.username}-panel.key`;
+      $('newkey').hidden = false;
+    }
+    $('give-who').value = '';
+    adminRefresh();
+  } catch (err) { $('note').textContent = err.message; }
+};
+function pick(room) {
+  picked = picked === room ? null : room;
+  if (listening) $('listen').click(); // a listen is for one room: stop when the room changes
+  draw();
+}
+function draw() {
+  const { players, lines, board, reports } = last;
+  // Map: one tile per room, made once and updated in place so focus and hover survive a refresh.
+  const rooms = [...new Set([...Object.keys(ROOMS), ...players.map((p) => p.room)])].filter((r) => !MENUS.includes(r));
+  for (const room of rooms) {
+    let tile = $('map').querySelector(`[data-room="${CSS.escape(room)}"]`);
+    if (!tile) {
+      tile = el('button', null, 'room'); tile.type = 'button'; tile.dataset.room = room;
+      if (ROOMS[room]) tile.style.gridArea = ROOMS[room][1]; else tile.style.gridColumn = 'span 2';
+      tile.append(el('span', roomName(room), 'name'), el('span', '0', 'count'), el('span', null, 'dots'));
+      tile.onclick = () => pick(room);
+      $('map').append(tile);
+    }
+    const here = players.filter((p) => p.room === room);
+    tile.querySelector('.count').textContent = here.length;
+    tile.classList.toggle('empty', !here.length);
+    tile.classList.toggle('heard', listening && picked === room);
+    tile.setAttribute('aria-pressed', picked === room);
+    tile.setAttribute('aria-label', `${roomName(room)}, ${here.length} ${here.length === 1 ? 'player' : 'players'}`);
+    tile.querySelector('.dots').replaceChildren(...here.slice(0, 40).map((p) => Object.assign(el('i', null, limitsOf(p).length ? 'limited' : p.role ? 'staff' : ''), { title: p.name })));
+  }
+  for (const tile of $('map').querySelectorAll('.room')) tile.hidden = !rooms.includes(tile.dataset.room);
+  // Room detail
+  const shown = picked ? players.filter((p) => p.room === picked) : players;
+  $('room-title').textContent = picked ? `${roomName(picked)} · ${shown.length}` : `Everyone online · ${shown.length}`;
+  $('listen').disabled = !picked;
+  $('listen').title = picked ? '' : 'Pick a room first';
+  $('players').replaceChildren(...shown.map((p) => {
+    const row = el('div', null, 'player'), who = el('div', null, 'who');
+    who.append(el('b', p.name), el('span', p.account ?? 'no account', 'dim'));
+    if (!picked) who.append(el('span', roomName(p.room), 'tag'));
+    if (p.role) who.append(el('span', p.role, 'tag staff'));
+    for (const [name, t] of limitsOf(p)) who.append(el('span', `${name} ${until(t)}`, 'tag limit'));
+    const actions = el('div', null, 'row');
+    for (const [label, kind, cls] of [['Mute chat', 'chat', ''], ['Mute voice', 'voice', ''], ['Kick', 'kick', 'bad'], ['Ban', 'ban', 'bad']]) {
+      const b = el('button', label, `small ${cls}`); b.onclick = () => act(p, kind); actions.append(b);
+    }
+    const go = el('button', 'Go to', 'small'); go.onclick = () => goTo(p.id, false);
+    const tail = el('button', following === p.id ? 'Stop following' : 'Follow', 'small');
+    tail.setAttribute('aria-pressed', following === p.id);
+    tail.onclick = () => { following = following === p.id ? null : p.id; if (following) goTo(p.id, false); draw(); };
+    const chat = el('button', talk === p.id ? 'Stop talking' : 'Talk', 'small');
+    chat.setAttribute('aria-pressed', talk === p.id);
+    chat.onclick = () => talkTo(talk === p.id ? null : p);
+    actions.prepend(go, tail, chat);
+    if (p.invisible) who.append(el('span', 'invisible', 'tag staff'));
+    row.append(who, actions);
+    return row;
+  }));
+  if (!shown.length) $('players').append(el('p', picked ? 'Nobody is in this room right now.' : 'Nobody is online right now.', 'dim'));
+  // Chat: world lines always, room lines for the picked room
+  const chat = picked ? lines.filter((l) => l.channel === 'world' || l.room === picked) : lines;
+  $('chat-scope').textContent = picked ? `World chat and ${roomName(picked)}` : 'World chat and every room';
+  const stuck = $('chat').scrollTop + $('chat').clientHeight >= $('chat').scrollHeight - 4;
+  $('chat').replaceChildren(...chat.map((l) => {
+    const row = el('div', null, 'line');
+    const del = el('button', 'Delete', 'small bad');
+    del.onclick = async () => { try { await call('/api/panel/chat/delete', { line: l.line }); refresh(); } catch (e) { $('note').textContent = e.message; } };
+    row.append(el('span', new Date(l.at * 1000).toLocaleTimeString([], { timeStyle: 'short' }), 'dim num'),
+      el('span', l.channel === 'world' ? 'World' : roomName(l.room), 'tag'), el('span', `${l.fromName}: ${l.text}`, 'text'), del);
+    return row;
+  }));
+  if (!chat.length) $('chat').append(el('p', 'No chat here yet.', 'dim'));
+  if (stuck) $('chat').scrollTop = $('chat').scrollHeight;
+  // Reports: open ones, oldest first; Done closes one for every staff member
+  $('reports-count').textContent = reports.length ? `${reports.length} open` : '';
+  $('reports').replaceChildren(...reports.map((r) => {
+    const row = el('div', null, 'line'), where = players.find((o) => o.id === r.targetId)?.room;
+    const done = el('button', 'Done', 'small');
+    done.onclick = async () => { try { await call('/api/panel/reports/done', { id: r.id }); refresh(); } catch (e) { $('note').textContent = e.message; } };
+    const what = `${r.byName} reported ${r.targetName}` + (r.text ? `: "${r.text}"` : r.reason ? `: ${r.reason}` : '');
+    row.append(el('span', new Date(r.at * 1000).toLocaleTimeString([], { timeStyle: 'short' }), 'dim num'), el('span', where ? roomName(where) : 'offline', 'tag'), el('span', what, 'text'));
+    if (where) { const show = el('button', 'Show room', 'small'); show.onclick = () => { if (picked !== where) pick(where); scrollTo({ top: 0, behavior: 'smooth' }); }; row.append(show); }
+    row.append(done);
+    return row;
+  }));
+  if (!reports.length) $('reports').append(el('p', 'No open reports.', 'dim'));
+  // Leaderboard: an online row jumps to that player's room
+  $('board').replaceChildren(...board.map((p, i) => {
+    const tr = el('tr'), where = players.find((o) => o.id === p.id)?.room;
+    const name = el('td', p.name + (p.admin ? ' (owner)' : ''), p.online ? 'on' : '');
+    tr.append(el('td', i + 1, 'n dim'), name, el('td', p.account ?? 'no account', 'dim'), el('td', p.rings.toLocaleString(), 'n'), el('td', p.levels, 'n'),
+      el('td', p.bestRaceMs ? `${(p.bestRaceMs / 1000).toFixed(2)} s` : '', 'n'), el('td', p.racesCompleted, 'n'), el('td', p.missionsCompleted, 'n'));
+    if (where) { tr.style.cursor = 'pointer'; tr.title = `In ${roomName(where)}`; tr.onclick = () => { if (picked !== where) pick(where); scrollTo({ top: 0, behavior: 'smooth' }); }; }
+    if (where && where === picked) tr.className = 'you-are-here';
+    return tr;
+  }));
+}
+async function refresh() {
+  if (!token) return;
+  try {
+    const [status, list, chat, board, filed] = await Promise.all([call('/api/panel/status'), call('/api/panel/players'), call('/api/panel/chat'), call('/api/panel/leaderboard'), call('/api/panel/reports')]);
+    last = { players: list.players, lines: chat.lines, board: board.players, reports: filed.reports };
+    const parts = [[status.online, 'online'], [span(status.uptimeSeconds), 'up']];
+    $('status').replaceChildren(...parts.map(([n, word]) => { const s = el('span'); s.append(el('b', n), ` ${word}`); return s; }));
+    if (status.listening?.length) $('status').append(el('span', `Listening: ${status.listening.map((l) => `${l.staff} in ${roomName(l.room)}`).join(', ')}`));
+    draw();
+    await adminRefresh();
+  } catch (e) { if (token) $('note').textContent = e.message; }
+}
+// Voice: 16-bit 8 kHz mono frames, the same form the game page plays.
+let listening = false, audio = null;
+const playAt = new Map();
+// Plays a room's voice (only one player's when `only` is given) while `alive()` holds.
+async function hear(room, only, alive, heard) {
+  audio ??= new AudioContext();
+  await audio.resume();
+  let after = 0, first = true;
+  while (token && alive()) {
+    const { frames } = await call(`/api/panel/voice?room=${encodeURIComponent(room())}&after=${after}`);
+    for (const f of frames) {
+      after = Math.max(after, f.frame);
+      if (first || (only && f.fromId !== only)) continue; // frames from before this sitting are skipped
+      const bytes = Uint8Array.from(atob(f.data), (c) => c.charCodeAt(0));
+      const pcm = new Int16Array(bytes.buffer, 0, bytes.length >> 1);
+      const buf = audio.createBuffer(1, pcm.length, 8000);
+      buf.getChannelData(0).set(Float32Array.from(pcm, (v) => v / 32768));
+      const node = audio.createBufferSource();
+      node.buffer = buf; node.connect(audio.destination);
+      const at = Math.max(audio.currentTime + 0.05, playAt.get(f.fromId) ?? 0);
+      node.start(at); playAt.set(f.fromId, at + buf.duration);
+      heard(f);
+    }
+    first = false;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+}
+$('listen').onclick = async () => {
+  listening = !listening && !!picked;
+  $('listen').setAttribute('aria-pressed', listening);
+  $('listen').textContent = listening ? 'Stop listening' : 'Listen to voice';
+  $('heard').textContent = listening ? `Listening to ${roomName(picked)}. This is in the audit log; nothing is recorded.` : '';
+  draw();
+  if (!listening) return;
+  const room = picked;
+  try { await hear(() => room, null, () => listening && picked === room, (f) => { $('heard').textContent = `${f.fromName} is talking in ${roomName(room)}`; }); }
+  catch (e) { $('heard').textContent = e.message; }
+  if (picked === room && listening) { listening = false; $('listen').setAttribute('aria-pressed', false); $('listen').textContent = 'Listen to voice'; draw(); }
+};
+// Talk to one player: their voice plays here, and holding the button sends this mic to them alone.
+let talk = null, speaking = false, mic = null;
+async function talkTo(p) {
+  talk = p?.id ?? null; speaking = false;
+  $('speak').hidden = !talk;
+  $('heard').textContent = talk ? `Talking with ${p.name}. Hold the button to speak. This is in the audit log; nothing is recorded.` : '';
+  draw();
+  if (!talk) return;
+  if (listening) $('listen').click(); // one voice feed at a time
+  const id = talk, room = () => last.players.find((q) => q.id === id)?.room;
+  try {
+    await micStart();
+    await hear(room, id, () => talk === id && room(), () => { $('heard').textContent = `${p.name} is talking`; });
+  } catch (e) { $('heard').textContent = e.message; }
+  if (talk === id) { talk = null; $('speak').hidden = true; draw(); }
+}
+async function micStart() {
+  audio ??= new AudioContext();
+  await audio.resume();
+  if (mic) return;
+  mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  const proc = audio.createScriptProcessor(2048, 1, 1), step = audio.sampleRate / 8000;
+  let pending = [], phase = 0;
+  proc.onaudioprocess = ({ inputBuffer }) => {
+    const input = inputBuffer.getChannelData(0);
+    if (!speaking || !talk || !token) { pending = []; return; }
+    for (; phase < input.length; phase += step) pending.push(Math.max(-1, Math.min(1, input[phase | 0])) * 32767);
+    phase -= input.length;
+    while (pending.length >= 480) { // 60 ms frames, as the game page sends
+      const pcm = new Int16Array(pending.splice(0, 480));
+      call('/api/panel/talk', { playerId: talk, data: btoa(String.fromCharCode(...new Uint8Array(pcm.buffer))) })
+        .catch((e) => { speaking = false; $('heard').textContent = e.message; });
+    }
+  };
+  audio.createMediaStreamSource(mic).connect(proc);
+  proc.connect(audio.createGain()).connect(audio.destination); // keeps the processor running
+}
+const hold = (on) => () => { speaking = on && !!talk; $('speak').setAttribute('aria-pressed', speaking); };
+$('speak').onpointerdown = hold(true);
+for (const end of ['pointerup', 'pointerleave', 'pointercancel', 'blur']) $('speak').addEventListener(end, hold(false));
+$('speak').onkeydown = (e) => { if (e.key === ' ' && !e.repeat) hold(true)(); };
+$('speak').onkeyup = (e) => { if (e.key === ' ') hold(false)(); };
+</script>
+</body>
+</html>

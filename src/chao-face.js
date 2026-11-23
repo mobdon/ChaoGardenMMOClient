@@ -52,8 +52,11 @@ export function loadChaoFaceManifest(fetcher = fetch) {
   if (manifestTask) return manifestTask;
   manifestTask = (async () => {
     try {
-      const response = await fetcher('/api/assets/chao-face.json', { cache: 'no-store' });
-      manifest = response.ok ? await response.json() : null;
+      manifest = await gameFaceManifest();
+      if (!manifest) {
+        const response = await fetcher('/api/assets/chao-face.json', { cache: 'no-store' });
+        manifest = response.ok ? await response.json() : null;
+      }
     } catch {
       manifest = null;
     }
@@ -131,6 +134,26 @@ function faceParts(root) {
   return parts;
 }
 
+// The same tables from the player's own game files: the eye and mouth archives in their own order
+// (the native tables index them), each picture converted in the browser. Null without the files.
+async function gameFaceManifest() {
+  if (typeof indexedDB === 'undefined') return null;
+  const { gameArchiveNames, gameTextureUrl } = await import('./game-assets.js');
+  const urls = {};
+  const files = async (archive, kind) => {
+    const names = await gameArchiveNames(archive);
+    return names && Promise.all(names.map(async name => {
+      const file = `chao-${kind}-${name.toLowerCase()}.png`;
+      urls[file] = await gameTextureUrl(`${archive}/${name}`);
+      return file;
+    }));
+  };
+  const [eyeFiles, mouthFiles] = [await files('al_eye', 'eye'), await files('al_mouth', 'mouth')];
+  if (!eyeFiles || !mouthFiles || Object.values(urls).includes(null)) return null;
+  // The lid turn mapping is the converter's own (scripts/convert-chao-evolution.py): node-local x closes, z slopes.
+  return { eyeFiles, mouthFiles, urls, eyelid: { closeAxis: 'x', closeSign: 1, slopeAxis: 'z', slopeSign: 1 } };
+}
+
 function eyeTexture(scene, index) {
   const file = manifest?.eyeFiles?.[index];
   return file ? localTexture(scene, file) : null;
@@ -139,6 +162,8 @@ function eyeTexture(scene, index) {
 function ownFaceMaterial(root, mesh) {
   if (!mesh.metadata?.chaoFaceOwnMaterial) {
     mesh.material = mesh.material.clone(`${mesh.material.name}-face`);
+    // The eye and mouth images are cut-outs: mask by their alpha, or the clear texels draw solid.
+    mesh.material.transparencyMode = 1; mesh.material.useAlphaFromAlbedoTexture = true;
     mesh.metadata = { ...(mesh.metadata || {}), chaoFaceOwnMaterial: true };
     (root.metadata.ownedMaterials ||= []).push(mesh.material);
   }
@@ -146,12 +171,14 @@ function ownFaceMaterial(root, mesh) {
 }
 
 function localTexture(scene, file) {
-  if (!textureCache.has(file)) {
-    const texture = new Texture(`/api/assets/${file}`, scene, true, false, Texture.NEAREST_SAMPLINGMODE);
+  // Per scene: the login portraits draw in scenes (and engines) of their own.
+  const key = `${scene.uid}:${file}`;
+  if (!textureCache.has(key)) {
+    const texture = new Texture(manifest?.urls?.[file] ?? `/api/assets/${file}`, scene, true, false, Texture.NEAREST_SAMPLINGMODE);
     texture.hasAlpha = true;
-    textureCache.set(file, texture);
+    textureCache.set(key, texture);
   }
-  return textureCache.get(file);
+  return textureCache.get(key);
 }
 
 // al_draw_B (0x8CD4-0x8EA8): after the node's animated transform the lids get

@@ -28,6 +28,8 @@ export function loadChaoLookManifest(fetcher = fetch) {
   if (manifestTask) return manifestTask;
   manifestTask = (async () => {
     try {
+      manifest = await gameLookManifest();
+      if (manifest) return manifest;
       const response = await fetcher('/api/assets/chao-look.json', { cache: 'no-store' });
       manifest = response.ok ? await response.json() : null;
     } catch {
@@ -38,7 +40,8 @@ export function loadChaoLookManifest(fetcher = fetch) {
   return manifestTask;
 }
 
-// TEXMTX9: view-space normal x scale(0.5, -0.5) + 0.5.
+// TEXMTX9 (fn_60_51240, ChaoMain .text 0x51354): Trans(0.5, 0.5) x Scale(-0.5, -0.5) x view-space normal, so a
+// normal facing screen right reads the picture's left edge and one facing up its top row.
 export class ChaoLookEnvironment extends MaterialPluginBase {
   constructor(material) {
     super(material, 'ChaoLookEnvironment', 210, { CHAO_LOOK_ENV: false, CHAO_LOOK_ADD: false }, true, false);
@@ -69,7 +72,7 @@ export class ChaoLookEnvironment extends MaterialPluginBase {
 
   getCustomCode(shaderType) {
     if (shaderType !== 'fragment') return null;
-    const uv = 'normalize(vec3(view * vec4(normalW, 0.0))).xy * vec2(0.5, -0.5) + 0.5';
+    const uv = 'normalize(vec3(view * vec4(normalW, 0.0))).xy * vec2(-0.5, -0.5) + 0.5';
     return {
       CUSTOM_FRAGMENT_DEFINITIONS: '#ifdef CHAO_LOOK_ENV\nuniform sampler2D chaoLookSampler;\n#endif',
       CUSTOM_FRAGMENT_BEFORE_LIGHTS: `#if defined(CHAO_LOOK_ENV) && !defined(CHAO_LOOK_ADD)
@@ -77,7 +80,7 @@ export class ChaoLookEnvironment extends MaterialPluginBase {
       #endif`,
       CUSTOM_FRAGMENT_BEFORE_FRAGCOLOR: `#ifdef CHAO_LOOK_ADD
         vec4 chaoShine = texture2D(chaoLookSampler, ${uv});
-        finalColor.rgb += toLinearSpace(chaoShine.rgb) * chaoShine.a;
+        finalColor.rgb += chaoShine.rgb * chaoShine.a; // onto the finished screen colour, as the game's second stage adds bytes
       #endif`,
     };
   }
@@ -92,6 +95,21 @@ export function nodeIndexOf(node) {
 }
 
 // Pure decision of what fn_60_52480 draws for one body node.
+// The same tables from the player's own game files: the colour table from the game program and the
+// jewel (al_body 18..33) and shiny (34) pictures, converted in the browser. Null without the files.
+async function gameLookManifest() {
+  if (typeof indexedDB === 'undefined') return null;
+  const { gameArchiveNames, gameBodyColours, gameTextureUrl } = await import('./game-assets.js');
+  const [names, gxColorTable] = [await gameArchiveNames('al_body'), await gameBodyColours()];
+  if (!names || !gxColorTable) return null;
+  const urls = {}, bodyTextureFiles = {};
+  for (let index = 18; index < 35; index += 1) {
+    const file = bodyTextureFiles[index] = `chao-look-${names[index].toLowerCase()}.png`;
+    if (!(urls[file] = await gameTextureUrl(`al_body/${names[index]}`))) return null;
+  }
+  return { gxColorTable, bodyTextureFiles, urls };
+}
+
 export function lookPlan(look = {}, table = manifest) {
   const jewel = Number.isInteger(look.jewel) ? look.jewel : 0;
   const color = Number.isInteger(look.color) ? look.color : 0;
@@ -137,8 +155,9 @@ function ownMaterial(root, mesh) {
 function bodyTexture(scene, index) {
   const file = manifest?.bodyTextureFiles?.[index];
   if (!file) return null;
-  if (!textures.has(file)) textures.set(file, new Texture(`/api/assets/${file}`, scene, true, false, Texture.BILINEAR_SAMPLINGMODE));
-  return textures.get(file);
+  const key = `${scene.uid}:${file}`; // per scene: the login portraits have scenes of their own
+  if (!textures.has(key)) textures.set(key, new Texture(manifest?.urls?.[file] ?? `/api/assets/${file}`, scene, true, false, Texture.BILINEAR_SAMPLINGMODE));
+  return textures.get(key);
 }
 
 function morphRecord(root) {
@@ -188,7 +207,8 @@ export function applyChaoLook(root, body) {
       material.metadata = { ...(material.metadata || {}) };
       material.metadata.nativeAlbedoColor ??= material.albedoColor.clone();
       material.metadata.nativeAlbedo ??= material.albedoTexture;
-      material.albedoColor = colour ? new Color3(colour[0], colour[1], colour[2]) : material.metadata.nativeAlbedoColor.clone();
+      // The engine multiplies this colour before its screen curve; the game multiplies bytes.
+      material.albedoColor = colour ? new Color3(colour[0], colour[1], colour[2]).toLinearSpace() : material.metadata.nativeAlbedoColor.clone();
       if (!bodyNode) return;
       // Monotone and jewel draw without the body texture.
       material.albedoTexture = plan.monotone || (environment && !plan.additive) ? null : material.metadata.nativeAlbedo;

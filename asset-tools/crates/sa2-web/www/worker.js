@@ -265,7 +265,7 @@ function cardSend() {
 // /mmo/tags-out, the Tiny Garden tree icon to /mmo/tree-icon) and reads the others' from /mmo/pose-in
 // and /mmo/rec/<id>. They live in a buffer the page shares (main.js, MMO):
 // the page sends and fetches them over the MMO server.
-const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472, SKILLS: 156476, INFO: 156508, INFO_MAX: 256, OWN: 156772 };
+const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472, SKILLS: 156476, INFO: 156508, INFO_MAX: 256, OWN: 156772, GOTO: 158824, GOTO_MAX: 64 };
 function mmoI32(at) { return new Int32Array(sh.mmo.buffer, at, 2); }
 // Bytes of a file the game reads, or null when it doesn't exist.
 function mmoRead(path) {
@@ -299,6 +299,12 @@ function mmoRead(path) {
     if (!Atomics.load(h, 0)) return null;
     return { bytes: b.slice(MMO.GEAR + 8, MMO.GEAR + 8 + Math.min(Atomics.load(h, 1), MMO.GEAR_MAX)), ver: 0 };
   }
+  // Staff go-to (sa2-boot chao_player.rs staff_goto); no file before the first one.
+  if (path === 'mmo/goto-in') {
+    const h = mmoI32(MMO.GOTO);
+    if (!Atomics.load(h, 0)) return null;
+    return { bytes: b.slice(MMO.GOTO + 8, MMO.GOTO + 8 + Math.min(Atomics.load(h, 1), MMO.GOTO_MAX)), ver: 0 };
+  }
   // The chart's breeding page (sa2-boot kinder_chart.rs).
   if (path === 'mmo/breed-in') {
     const len = Math.min(Atomics.load(mmoI32(MMO.BREED), 1), MMO.BREED_MAX);
@@ -323,7 +329,7 @@ function mmoSlot(id) {
 }
 // A file the game wrote, on close.
 function mmoWrite(path, bytes) {
-  if (path === 'mmo/karate-out') return void sh.mmo.set(bytes.subarray(0, 3), MMO.KARATE + 4); // [strong moves unlocked, press that is done, bout on]
+  if (path === 'mmo/karate-out') return void sh.mmo.set(bytes.subarray(0, 4), MMO.KARATE + 4); // [strong moves unlocked, press that is done, bout on, queue mark]
   const out = { 'mmo/pose-out': [MMO.POSE_OUT, MMO.POSE_OUT_MAX], 'mmo/record-out': [MMO.REC_OUT, MMO.REC],
     'mmo/tags-out': [MMO.TAGS, MMO.TAGS_MAX], 'mmo/tree-icon': [MMO.TREE, MMO.TREE_MAX], 'mmo/tiny-pick': [MMO.PICK, MMO.PICK_MAX], 'mmo/breed-out': [MMO.BREED_OUT, MMO.BREED_OUT_MAX], 'mmo/story-out': [MMO.STORY_OUT, MMO.STORY_OUT_MAX], 'mmo/info-out': [MMO.INFO, MMO.INFO_MAX] }[path] || null;
   if (!out) return;

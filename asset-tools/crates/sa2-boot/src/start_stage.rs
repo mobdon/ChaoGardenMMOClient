@@ -109,7 +109,8 @@ const CHILD: u8 = 2;
 const FULL_GROWTH: (u32, u32) = (0x2A50, 0x48);
 const GROWTH: u32 = 0xC0;
 /// How close (world units, squared) the player must come to the guide (an MMO choice).
-const REACH_SQ: f32 = 5.0 * 5.0;
+/// Above 5.2: the two Chao's collision keeps the player that far from the standing guide (build 18 run).
+const REACH_SQ: f32 = 8.0 * 8.0;
 /// What the guide says, one line at a time, while the player stays near it.
 /// The first and last are the game's own lobby hint lines (Steam
 /// gd_PC/Message/mhChaoLobbye.prs, s2392 and s2393); the middle two are MMO text.
@@ -380,7 +381,10 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
                 m.w32(bss + PRE_STAGE, 1);
             }
         }
-        if HATCH.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
+        // Not before the lobby has put the player at its arrival point: laid on the
+        // player task's first frame the egg sat at the start spot inside the centre
+        // exit's dish, 113 away from the player and the camera (build 18 run).
+        if HATCH.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 && player_placed(m) {
             HATCH.set(false);
             // Only a new player's egg: an egg an existing player picked is not their own Chao.
             EGG_SLOT.set(lay_egg_with(c, m, text, None, true));
@@ -416,7 +420,8 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             LEAVING.set([0; 3]);
             STANDING_TASK.set(0);
         }
-        if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
+        // As the egg: ENTRY is the arrival point only once the area has placed the player (mob 2026-11-23).
+        if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 && player_placed(m) {
             RESIDENTS_OUT.set(true);
             let at = m.r32(PLAYERTWP) + 0x14;
             ENTRY.set([0, 4, 8].map(|o| f32::from_bits(m.r32(at + o))));
@@ -424,6 +429,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         } else if RESIDENTS_OUT.get() {
             roam_live(c, m, text, now);
         }
+        hold_residents(m);
         restore_cocoon(m);
         watch_slot(m);
         if now == LOBBY && TUTORIAL_SLOT.get() != 0 {
@@ -440,6 +446,18 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
     crate::karate::frame(c, m);
     crate::story::frame(c, m);
     original(c, m, TOP_LEVEL);
+}
+
+/// ChaoMain .bss 0x41F6C (section 6): the task made by fn_60_27908 whose exec
+/// fn_60_27988 (.text 0x27988) writes the player's arrival point for the area
+/// and previous stage (lobby from the Neutral Garden: 80, 0, 80) while its
+/// taskwk mode is 0, 1, 2, then stays at 3. Read from the disassembly; unverified live.
+const PLACER_TASK: u32 = 0x4_1F6C;
+
+/// The area's own placing of the player is over (or there is no such task).
+fn player_placed(m: &Mem) -> bool {
+    let task = chaomain_section(m, 6).map_or(0, |bss| m.r32(bss + PLACER_TASK));
+    task == 0 || !(0..3).contains(&(m.r8(m.r32(task + 0x34)) as i8))
 }
 
 /// Named eggs the page queued since the last read (/dev/egg: a u32 count,
@@ -703,6 +721,32 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32, which: &[usize]) {
         STANDING_TASK.set(standing_task);
         let link = text + AL_SET_MOTION_LINK;
         guest_call(c, m, link, &[standing_task, STAND_MOTION]);
+    }
+}
+
+/// The residents never age or die (mob 2026-11-22), every frame. Their types
+/// (0x17..0x19) are already outside the game's own life loss (AL_CalcParameter
+/// 0x2149C: the LifeMax decay only for types under 0x14, as for Chaos Chao;
+/// `old` still counts up) and evolution (0x1531C: a child, type 2, only). But the death
+/// check (0x15060: a non-child with `life` 0 on the ground starts ALBHV_Dead)
+/// has no type test, and a resident's record is made zeroed and never
+/// analysed, so its life starts at 0. Held here: life and LifeMax (+0x8A,
+/// +0x8C) at ChaoGlobal's InitBaseLife (+0x16; what AL_GeneAnalyzeCommon gives
+/// a Chao whose LifeTime genes are 0, as theirs are), age and old (+0x86,
+/// +0x88) at 0. Offsets: al_chao_info.h, al_global.h. Unverified live.
+fn hold_residents(m: &mut Mem) {
+    let Some(data) = chaomain_section(m, 5) else { return };
+    let life = m.r16(data + FULL_GROWTH.0 + 0x16);
+    for (n, twp) in RESIDENT_TWP.get().into_iter().enumerate() {
+        // chaowk +0x5C is the record; only while it is still this resident's.
+        let param = if twp == 0 { 0 } else { m.r32(twp + 0x5C) };
+        if !(0x8000_0000..0x8C00_0000).contains(&param) || m.r8(param + 0x80) != RESIDENTS[n].0 {
+            continue;
+        }
+        m.w16(param + 0x86, 0);
+        m.w16(param + 0x88, 0);
+        m.w16(param + 0x8A, life);
+        m.w16(param + 0x8C, life);
     }
 }
 

@@ -9,6 +9,8 @@
 const SLOT = 96 << 20; // a frame's pipe bytes and the game RAM (SA2_MEM1_MB 80 fits; more needs a bigger slot)
 const AUDIO_RING = 1 << 15; // samples (a power of two), half a second
 const PAGES_START = 1024, PAGES_MAX = 16384; // 64 MiB to 1 GiB, as the game build links (browsers commit the maximum)
+import { gotoLine } from './staff-goto.js';
+
 const q = new URLSearchParams(location.search);
 // The MMO has no title or card screen: without a signed-in Chao, go to the login.
 if (!mmoToken()) location.replace('/');
@@ -36,7 +38,7 @@ const sh = {
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
-  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32 + 8 + 128 + 8 + 8 + 8 + 1024 + 4 + 32 + 8 + 256 + 4 + 2048), // the MMO files (worker.js, MMO)
+  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32 + 8 + 128 + 8 + 8 + 8 + 1024 + 4 + 32 + 8 + 256 + 4 + 2048 + 8 + 64), // the MMO files (worker.js, MMO)
   // The RAM pages the decoder read for its last frame: [0] word count, then bits (decode.js, worker.js /dev/gxpages).
   pages: new SharedArrayBuffer(4 + 65536),
 };
@@ -269,11 +271,22 @@ function joinRoom(token, zone) {
       if (self?.admin && !tunerShown) { tunerShown = true; gearTuner(); }
       showCard(self); overlay?.snapshot(m); othersIn(m, token); tagNames(m); breedSnapshot(m);
     }
-    if (m.type === 'event') { overlay?.event(m); breedEvent(m); }
+    if (m.type === 'event') { overlay?.event(m); breedEvent(m); queueEvent(m); if (m.kind === 'staff-goto') staffGoto(m); }
     if (m.kind === 'chat') chatLine(m); else if (m.kind === 'voice') voicePlay(m);
+    else if (m.kind === 'chat-delete') chatLog.querySelector(`[data-line="${Number(m.line)}"]`)?.remove(); // removed by staff
   };
   // 4001: this card's Chao went out somewhere else; don't fight over it.
-  ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, room.zone), 3000); };
+  ws.onclose = ({ code }) => { queue.sent = 0; if (code !== 4001) setTimeout(() => joinRoom(token, room.zone), 3000); };
+}
+// Staff go-to and follow (the admin panel, server panel_goto): the game puts
+// its own Chao in that player's room and place (/mmo/goto-in).
+function staffGoto(m) {
+  const head = mmoHead(MMO.GOTO), line = gotoLine(m, Atomics.load(head, 0) + 1);
+  if (!line) return log(`go to ${m.targetName || 'player'}: not in a Chao World room (${m.room})`, true);
+  const text = new TextEncoder().encode(line).subarray(0, MMO.GOTO_MAX);
+  mmoBytes.set(text, MMO.GOTO + 8);
+  Atomics.store(head, 1, text.length);
+  Atomics.add(head, 0, 1);
 }
 // ---- the other players' Chao (sa2-boot chao_player.rs, worker.js MMO files) --
 // The game's own pose goes to the room each 100 ms; the room's other players
@@ -281,7 +294,7 @@ function joinRoom(token, zone) {
 // Garden resident with no pose as "id idle"); Chao
 // records go to and from the server by version. The server routes may not
 // exist yet: failures stay quiet.
-const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472, SKILLS: 156476, INFO: 156508, INFO_MAX: 256, OWN: 156772 };
+const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472, SKILLS: 156476, INFO: 156508, INFO_MAX: 256, OWN: 156772, GOTO: 158824, GOTO_MAX: 64 };
 const mmoBytes = new Uint8Array(sh.mmo);
 globalThis.sa2Mmo = sh.mmo; // for checks from the console
 const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
@@ -388,6 +401,7 @@ function mmoTick(token) {
   // The canvas aspect for the game's card box (pad bytes 20..22, also set per click).
   new DataView(sh.pad).setUint16(20, Atomics.load(ctl, 8), true);
   karateLocks();
+  queueTick();
   breedPick();
   storyCleared(token);
   const pose = mmoHead(MMO.POSE_OUT), seq = Atomics.load(pose, 0);
@@ -563,6 +577,7 @@ function cover(on) {
 // The game changed Chao World area (its own teleporters): follow it into that room.
 function roomArea(area) {
   karateButtons(area === 10 || area === 11);
+  queueRanked(area === 10 || area === 11);
   const zone = roomZones[area === 0 ? '' : area];
   // Arrived in Chao World from a level (the pause menu's EXIT): no room yet.
   if (!room && zone && mmoToken()) return joinRoom(mmoToken(), zone);
@@ -598,6 +613,48 @@ function karateButtons(on) {
   if (bar) bar.dataset.area = on ? '1' : ''; // karateLocks shows it once a bout is on
 }
 // Keys 1 to 5 press the buttons while they show (1 and 3 are the game's L and R elsewhere).
+// ---- PvP Karate queue (sa2-boot karate.rs queue mark, server queue.rs) ----
+const queue = { sent: 0, ranked: false, names: {} };
+const queueSay = (text) => chatLine({ channel: 'room', fromName: 'Queue', text });
+function queueTick() {
+  const now = mmoBytes[MMO.KARATE + 7];
+  if (now === queue.sent || room?.ws.readyState !== 1) return;
+  const send = (m) => room.ws.send(JSON.stringify({ type: 'action', ...m }));
+  if (!now) send({ action: 'queue-leave' });
+  else {
+    if (!queue.sent) send({ action: 'queue-join', event: 'chao-karate', ranked: queue.ranked });
+    if (now === 2 || queue.sent === 2) send({ action: 'queue-ready', ready: now === 2 });
+  }
+  queue.sent = now;
+}
+function queueEvent(m) {
+  const name = (id) => queue.names[id] || 'A player';
+  if (m.kind === 'queue') {
+    if (m.group == null) return queueSay('You are out of the queue.');
+    for (const p of m.members) queue.names[p.id] = p.name;
+    const who = m.members.map((p) => `${name(p.id)}${p.ready ? ' (ready)' : ''}`).join(', ');
+    queueSay(`${m.ranked ? 'Ranked' : 'Unranked'} ${m.event === 'chao-race' ? 'race' : 'Karate'}: ${who}.${m.started ? ' All ready: the match starts.' : ''}`);
+  } else if (m.kind === 'queue-result') {
+    // The server ran the bout itself (run false: it could not).
+    if (!m.run) return queueSay('The server could not run this bout.');
+    const r = m.result || {}, how = r.reason === 'knockout' ? 'knockout' : 'time limit';
+    const records = Object.entries(m.records || {}).map(([id, v]) => ` ${name(id)}: ${v.wins}-${v.losses}-${v.draws}.`).join('');
+    queueSay(`${m.winner ? `${name(m.winner)} wins` : 'Draw'} by ${how} after ${Math.round((r.frames || 0) / 60)} s, HP ${(r.hp || []).join(' to ')}.${m.ranked ? records : ''}`);
+  }
+}
+// Ranked or not has no place in the game's menu: an MMO page control, read when the entry is picked.
+function queueRanked(on) {
+  let box = document.getElementById('queue-ranked');
+  if (!box && on) {
+    box = Object.assign(document.createElement('label'), { id: 'queue-ranked' });
+    box.style.cssText = 'position:fixed;right:1rem;top:1rem;z-index:4;padding:.3rem .7rem;border-radius:1rem;background:#0008;color:#fff;font-weight:700';
+    const cb = Object.assign(document.createElement('input'), { type: 'checkbox' });
+    cb.onchange = () => { queue.ranked = cb.checked; canvas.focus(); };
+    box.append(cb, ' MMO: ranked 2-player match');
+    document.body.append(box);
+  }
+  if (box) box.style.display = on ? '' : 'none';
+}
 function karateKey(e) {
   const bar = document.getElementById('karate'), n = '12345'.indexOf(e.key);
   if (!bar || bar.style.display === 'none' || n < 0 || e.ctrlKey || e.altKey || e.metaKey) return false;
@@ -825,7 +882,7 @@ async function start() {
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
   if (token) { e.SA2_OWN_RECORD_IN = '/mmo/own-record'; await ownRecord(token).catch(() => {}); }
-  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_RINGS_IN: '/mmo/rings-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_STORY_IN: '/mmo/story-in', SA2_STORY_OUT: '/mmo/story-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick', SA2_SKILLS_IN: '/mmo/skills-in' });
+  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_RINGS_IN: '/mmo/rings-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_STORY_IN: '/mmo/story-in', SA2_STORY_OUT: '/mmo/story-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick', SA2_SKILLS_IN: '/mmo/skills-in', SA2_GOTO_IN: '/mmo/goto-in' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
   if (token) cardChao(token), storyLoad(token);
@@ -907,16 +964,24 @@ chat.innerHTML = '<div id="chat-log" aria-live="polite"></div><input id="chat-in
 document.body.append(chat);
 const chatLog = chat.firstChild, chatInput = chat.lastChild;
 // Muting adds a "Muted" line; clicking that line unmutes (the server keeps the list).
-function muteClick(fromId, fromName, muted) {
+function muteClick(fromId, fromName, muted, number) {
   room?.ws.send(JSON.stringify({ type: 'action', action: 'mute', playerId: fromId, muted }));
   chatLine({ channel: 'system', fromName: muted ? 'Muted' : 'Unmuted', text: muted ? `${fromName} (click to unmute)` : fromName,
     onclick: muted && (() => muteClick(fromId, fromName, false)) });
+  if (muted) chatLine({ channel: 'system', fromName: 'Report', text: `${fromName} to the moderators (click)`, onclick: () => reportClick(fromId, fromName, number) });
 }
-function chatLine({ channel, fromId, fromName, text, onclick }) {
+// Sends the muted player, and the chat line that was clicked, to the staff.
+async function reportClick(targetId, fromName, line) {
+  const r = await fetch('/api/report', { method: 'POST', body: JSON.stringify({ targetId, line, reason: 'Reported from chat' }),
+    headers: { Authorization: `Bearer ${mmoToken()}`, 'Content-Type': 'application/json' } }).catch(() => null);
+  chatLine({ channel: 'system', fromName: 'Report', text: r?.ok ? `${fromName} was reported to the moderators.` : (await r?.json().catch(() => null))?.error ?? 'Could not send the report.' });
+}
+function chatLine({ channel, fromId, fromName, text, onclick, line: number }) {
   const line = document.createElement('div');
   line.className = channel;
+  if (number) line.dataset.line = number;
   if (fromId) line.title = `Click to mute ${fromName}`;
-  if (fromId) line.onclick = () => muteClick(fromId, fromName, true);
+  if (fromId) line.onclick = () => muteClick(fromId, fromName, true, number);
   if (onclick) line.onclick = onclick;
   line.textContent = `${channel === 'world' ? '[World] ' : ''}${fromName}: ${text}`; // textContent: never HTML
   chatLog.append(line);
@@ -976,10 +1041,12 @@ async function voiceStart() {
   proc.connect(voiceCtx.createGain()).connect(voiceCtx.destination); // gain 1 on silence: keeps the processor running
   voiceMic = { stream, proc };
 }
-function voicePlay({ fromId, fromName, volume, data }) {
+function voicePlay({ fromId, fromName, volume, data, staff }) {
   if (!voiceCtx) return; // the server never sends voice from players you muted
-  // A new voice nearby gets one clickable line, so it can be muted like chat.
-  if (!voiceAt.has(fromId)) chatLine({ channel: 'system', fromId, fromName, text: 'is talking nearby (click to mute)' }); // browsers allow audio only after the first key or click
+  // A new voice nearby gets one clickable line, so it can be muted like chat. Staff cannot be muted.
+  if (staff) fromId = 'staff';
+  if (staff && !voiceAt.has(fromId)) chatLine({ channel: 'system', fromName, text: 'is speaking to you' });
+  else if (!voiceAt.has(fromId)) chatLine({ channel: 'system', fromId, fromName, text: 'is talking nearby (click to mute)' }); // browsers allow audio only after the first key or click
   const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
   const pcm = new Int16Array(bytes.buffer, 0, bytes.length >> 1);
   const buf = voiceCtx.createBuffer(1, pcm.length, VOICE_RATE);

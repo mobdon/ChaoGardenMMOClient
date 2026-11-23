@@ -18,10 +18,11 @@ export async function renderTinySheet(player) {
   const cell = Object.assign(document.createElement('canvas'), { width: CELL, height: CELL });
   const opened = await openChaoScene(cell, player, { preserveDrawingBuffer: true });
   if (!opened) return null;
-  const { B, scene, visual, imported, dispose } = opened;
+  const { B, scene, visual, imported, own, dispose } = opened;
   try {
     const clip = name => imported.entries.animationGroups.find(group => group.name.toLowerCase().includes(name));
-    const idle = clip('idle'), walk = clip('walk') || idle; // no walk clip: the standing frames again
+    // A model converted from the game files carries only its stand motion (number 0).
+    const idle = clip('idle') || own && imported.entries.animationGroups[0], walk = clip('walk') || idle; // no walk clip: the standing frames again
     if (!idle) return null;
     const sheet = Object.assign(document.createElement('canvas'), { width: CELL * GRID, height: CELL * GRID });
     const context = sheet.getContext('2d');

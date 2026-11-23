@@ -44,7 +44,13 @@ export async function playHatchScene(host) {
     const engine = new B.Engine(canvas, true), scene = new B.Scene(engine);
     scene.clearColor = new B.Color4(0, 0, 0, 0);
     new B.HemisphericLight('light', new B.Vector3(0, 1, 0.3), scene);
-    const [egg, chao, whole] = await Promise.all(['chao-egg-hatching', 'chao-behaviour', 'chao-egg'].map(n => load(B, scene, `/api/assets/${n}.glb`)));
+    // The player's own game files first (egg models from the game program, the child with its two birth motions).
+    const game = await import('./game-assets.js').catch(() => null);
+    const own = [game?.gameEggGlb(true), game?.gameChaoMotionsGlb(0, Object.values(EGG).map(e => e.chao)), game?.gameEggGlb(false)];
+    const [egg, chao, whole] = await Promise.all(['chao-egg-hatching', 'chao-behaviour', 'chao-egg'].map(async (n, i) => {
+      const bytes = await own[i];
+      return bytes ? LoadGlb(B, scene, bytes).catch(() => null) : load(B, scene, `/api/assets/${n}.glb`);
+    }));
     const finish = () => { scene.dispose(); engine.dispose(); canvas.remove(); };
     if (!egg) { finish(); return false; }
     const hatch = createHatch();
