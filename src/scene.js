@@ -10,7 +10,7 @@ import { attachNativeGardenExit, nativeGardenExitAction } from './garden-exits.j
 import { createShadowSkate, observeSkateMotion } from './shadow-skate.js';
 import { attachNativeLocomotion, captureChaoPose, createNativeMotionState, createGaitControls, updateNativeLocomotion, smoothObservedSpeed, stepInputPace } from './chao-locomotion.js';
 import { CHAO_GEAR_JOINTS, CHAO_HAT_NODE, animalPartAssets, hatAssets, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, attachRigidGearAtRest, chestSurfacePoint, collectNativeShoeParts, mirroredShadowShoeRest, shadowShoeMountRotation, updateNativeShoeEffects } from './chao-attachments.js';
-import { applyNinjaEnvironment, restoreNativeChaosSampling } from './chao-materials.js';
+import { applyNativeChaoMaterial } from './chao-materials.js';
 import { createSteadyHead } from './chao-head.js';
 import { attachChaoBody, bodyAssetFor } from './chao-body.js';
 import { applyChaoLook, loadChaoLookManifest } from './chao-look.js';
@@ -283,23 +283,12 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         if (disposed) { container.dispose(); return null; }
         container.gltfAssetExtras = readGlbAssetExtras(bytes);
         for (const group of container.animationGroups) group.stop();
-        const faceMaterials = {
-          chao: ['al_ncz.sa2mdl_3', 'al_ncz.sa2mdl_4', 'al_ncz.sa2mdl_5'],
-          'neutral-chaos': ['al_nchaos.sa2mdl_10', 'al_nchaos.sa2mdl_11', 'al_nchaos.sa2mdl_12'],
-          'hero-chaos': ['al_hchaos.sa2mdl_4', 'al_hchaos.sa2mdl_6', 'al_hchaos.sa2mdl_7', 'al_hchaos.sa2mdl_8'],
-          'dark-chaos': ['al_dchaos.sa2mdl_4', 'al_dchaos.sa2mdl_7', 'al_dchaos.sa2mdl_8', 'al_dchaos.sa2mdl_9'],
-          tails: ['al_tails.sa2mdl_2', 'al_tails.sa2mdl_4', 'al_tails.sa2mdl_5', 'al_tails.sa2mdl_6'],
-          knuckles: ['al_knuckles.sa2mdl_3', 'al_knuckles.sa2mdl_5', 'al_knuckles.sa2mdl_6', 'al_knuckles.sa2mdl_7'],
-          amy: ['al_amy.sa2mdl_2', 'al_amy.sa2mdl_4', 'al_amy.sa2mdl_5', 'al_amy.sa2mdl_6'],
-        };
         // al_knuckles.sa2mdl texture chunk 0x45F8 (attach 0x4684, chest mark): Ninja flags 0x94 = flip U + clamp V.
         // The glTF export dropped it; restore it on that one mesh.
         if (key === 'knuckles') for (const mesh of container.meshes) {
           const texture = /0022D7AC/i.test(mesh.name) ? mesh.material?.albedoTexture : null;
           if (texture) { texture.wrapU = Texture.MIRROR_ADDRESSMODE; texture.wrapV = Texture.CLAMP_ADDRESSMODE; }
         }
-        const isFamilyBody = key.startsWith('chao-body-');
-        const isCharacter = isFamilyBody || Object.hasOwn(faceMaterials, key);
         const isCinematicEmerald = /^emerald-(red|blue|green|cyan|purple|yellow|white)$/.test(key);
         const isNativeWalker = key === 'dark-chao-walker';
         const isNativeGear = /^(shadow-air-shoes|sonic-light-shoes|knuckles-hammer-gloves)-(left|right)$/.test(key);
@@ -350,42 +339,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
               if (nativeMap) new NativeEmeraldEnvironment(mat);
               continue;
             }
-            mat.albedoColor = Color3.White();
-            mat.metallic = 0;
-            mat.roughness = 1;
-            // Body and wing PNG alpha belongs to the native Chao shader, not
-            // browser cutout geometry. Only actual facial overlays may mask.
-            mat.unlit = true;
-            mat.alpha = 1;
-            // Family bodies keep the original eye and mouth overlays; only those mask.
-            const facePart = isFamilyBody ? /al_eye|al_mouth/i.test(mat.albedoTexture?.name || '') : faceMaterials[key]?.includes(mat.name);
-            // The game blends these Chaos textures (SRC_ALPHA/INV_SRC_ALPHA, strips flagged USE_ALPHA in
-            // al_dchaos/al_hchaos/al_nchaos.sa2mdl); the GLB export marked them opaque.
-            // Converted with scripts/convert-assets.py: the part's own Ninja material in glTF extras.
-            const ninja = mat.metadata?.gltf?.extras?.ninja;
-            const nativeBlend = ninja ? ninja.useAlpha && !facePart : /al_(dcha01|hcha00|ncha0[012])/i.test(mat.albedoTexture?.name || '');
-            const texture = mat.albedoTexture;
-            if (ninja && texture) {
-              texture.wrapU = ninja.mirrorU ? Texture.MIRROR_ADDRESSMODE : ninja.clampU ? Texture.CLAMP_ADDRESSMODE : Texture.WRAP_ADDRESSMODE;
-              texture.wrapV = ninja.mirrorV ? Texture.MIRROR_ADDRESSMODE : ninja.clampV ? Texture.CLAMP_ADDRESSMODE : Texture.WRAP_ADDRESSMODE;
-            }
-            const solidCharacterPart = isCharacter && !facePart && !nativeBlend;
-            mat.transparencyMode = solidCharacterPart ? 0 : mat.transparencyMode === 2 || mat.transparencyMode === 3 ? 1 : mat.transparencyMode ?? 0;
-            mat.alphaCutOff = 0.45;
-            mat.useAlphaFromAlbedoTexture = mat.transparencyMode === 1;
-            if (nativeBlend) {
-              mat.transparencyMode = 2; mat.useAlphaFromAlbedoTexture = true;
-              mat.alphaMode = Engine.ALPHA_COMBINE; mat.backFaceCulling = false;
-            }
-            if (solidCharacterPart) {
-              mat.opacityTexture = null;
-              mat.alphaMode = Engine.ALPHA_DISABLE;
-              mat.disableDepthWrite = false;
-              mat.backFaceCulling = false;
-              mat.twoSidedLighting = true;
-            }
-            restoreNativeChaosSampling(key, mat);
-            applyNinjaEnvironment(mat);
+            applyNativeChaoMaterial(key, mat);
           }
         }
         return container;

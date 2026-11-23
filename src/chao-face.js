@@ -139,6 +139,8 @@ function eyeTexture(scene, index) {
 function ownFaceMaterial(root, mesh) {
   if (!mesh.metadata?.chaoFaceOwnMaterial) {
     mesh.material = mesh.material.clone(`${mesh.material.name}-face`);
+    // The eye and mouth images are cut-outs: mask by their alpha, or the clear texels draw solid.
+    mesh.material.transparencyMode = 1; mesh.material.useAlphaFromAlbedoTexture = true;
     mesh.metadata = { ...(mesh.metadata || {}), chaoFaceOwnMaterial: true };
     (root.metadata.ownedMaterials ||= []).push(mesh.material);
   }
@@ -146,12 +148,14 @@ function ownFaceMaterial(root, mesh) {
 }
 
 function localTexture(scene, file) {
-  if (!textureCache.has(file)) {
+  // Per scene: the login portraits draw in scenes (and engines) of their own.
+  const key = `${scene.uid}:${file}`;
+  if (!textureCache.has(key)) {
     const texture = new Texture(`/api/assets/${file}`, scene, true, false, Texture.NEAREST_SAMPLINGMODE);
     texture.hasAlpha = true;
-    textureCache.set(file, texture);
+    textureCache.set(key, texture);
   }
-  return textureCache.get(file);
+  return textureCache.get(key);
 }
 
 // al_draw_B (0x8CD4-0x8EA8): after the node's animated transform the lids get
