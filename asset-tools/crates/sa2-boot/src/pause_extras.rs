@@ -371,8 +371,8 @@ fn pause_exec(c: &mut Cpu, m: &mut Mem) {
         }
         if cursor == 2 && exit_stays_in_chao_world(area) {
             // The game's own CONTINUE closes the pause; the lobby follows.
-            if area != Some(crate::start_stage::LOBBY) {
-                crate::start_stage::go_lobby();
+            if let Some(to) = area.and_then(exit_to) {
+                crate::start_stage::go_area(to);
             }
             m.w8(sda(c, CURSOR), 0);
         }
@@ -387,6 +387,18 @@ fn pause_exec(c: &mut Cpu, m: &mut Mem) {
 fn exit_stays_in_chao_world(area: Option<u32>) -> bool {
     // 0: Chao World is still loading.
     area.is_some_and(|a| a != 4 && a != 0)
+}
+
+/// Where EXIT leads from `area`: the lobby, or the Stadium from the areas
+/// behind it (race entrance 5, Karate 10 and 11), which have no lobby door.
+/// None in the lobby itself.
+fn exit_to(area: u32) -> Option<u32> {
+    use crate::start_stage::{LOBBY, STADIUM};
+    match area {
+        LOBBY => None,
+        5 | 10 | 11 => Some(STADIUM),
+        _ => Some(LOBBY),
+    }
 }
 
 /// The page's `/dev/extras` (sa2-web worker.js): setting `i` changed to `v`.
@@ -438,6 +450,13 @@ pub fn apply(c: &mut Cpu, m: &mut Mem) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exit_leads_to_the_stadium_from_the_areas_behind_it() {
+        assert_eq!([1, 2, 3, 6, 9].map(exit_to), [Some(7); 5]);
+        assert_eq!([5, 10, 11].map(exit_to), [Some(9); 3]);
+        assert_eq!(exit_to(7), None);
+    }
 
     #[test]
     fn page_bytes_become_setting_values() {

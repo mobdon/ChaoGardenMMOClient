@@ -9,7 +9,7 @@
 const SLOT = 96 << 20; // a frame's pipe bytes and the game RAM (SA2_MEM1_MB 80 fits; more needs a bigger slot)
 const AUDIO_RING = 1 << 15; // samples (a power of two), half a second
 const PAGES_START = 1024, PAGES_MAX = 16384; // 64 MiB to 1 GiB, as the game build links (browsers commit the maximum)
-import { gotoLine } from './staff-goto.js';
+import { gotoLine, gardenRefused } from './staff-goto.js';
 
 const q = new URLSearchParams(location.search);
 // The MMO has no title or card screen: without a signed-in Chao, go to the login.
@@ -231,12 +231,17 @@ function startThread(tid, arg) {
 // The signed-in Chao's record as the server card holds it, before the game
 // starts: a card with no game save takes its own Chao from it (sa2-boot
 // chao_player.rs create). The card lists each Chao with its token.
+// The gardens the server lets this Chao into (server game.rs chao-world): the
+// game keeps the others shut (sa2-boot start_stage.rs SA2_GARDENS).
+let gardens = '';
 async function ownRecord(token) {
   const card = JSON.parse(localStorage.getItem('chao-garden-slots-v1') || '[]').find((r) => r.token === token)?.card;
   const r = card && await fetch('/api/card', { headers: { Authorization: `Bearer ${card}` } });
   const own = r?.ok && (await r.json()).chao?.find((c) => c.token === token);
   // Dev (admin) accounts get the dev menu in levels too, where there is no room to say so.
   if (own?.player?.admin && !tunerShown) { tunerShown = true; gearTuner(); }
+  const p = own?.player;
+  if (p) gardens = (p.admin || p.alignment >= 60 ? 'h' : '') + (p.admin || p.alignment <= -60 ? 'd' : '');
   const record = own?.record;
   const bytes = record ? Uint8Array.from(atob(record), (ch) => ch.charCodeAt(0)) : null;
   // The card lists this Chao with no record: it never played, so its egg is
@@ -274,8 +279,8 @@ const roomZones = { '': 'hub', 1: 'garden', 2: 'hero', 3: 'dark', 4: 'chao-race'
 let room = null;
 function joinRoom(token, zone) {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws?token=${encodeURIComponent(token)}`);
-  room = { ws, zone };
-  ws.onopen = () => ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: room.zone }));
+  room = { ws, zone, askedAt: performance.now() };
+  ws.onopen = () => { room.askedAt = performance.now(); ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: room.zone })); };
   // The MMO overlay (Inventory, breeding, Tiny Garden) is the client's own module; the game boots without it.
   let overlay = null;
   import('/src/game-overlay.js').then(m => { overlay = m.mountOverlay(ws); }).catch(() => {});
@@ -286,6 +291,13 @@ function joinRoom(token, zone) {
       // The picker's list once the signed-in Chao is known; asked again (every 10 s) until it has a record.
       if (self && !cardIds.size && Date.now() - cardAt > 10000) { cardAt = Date.now(); cardSelf = self; cardChao(token); }
       if (self) firstSheet(self, token);
+      // Not unlocked for this Chao: out of the Hero or Dark garden, back to the lobby.
+      if (self && gardenRefused(room.zone, self.zone, performance.now() - room.askedAt)) {
+        log(`the ${room.zone} garden is not unlocked for this Chao; back to the lobby`, true);
+        room.zone = 'hub';
+        ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: 'hub' }));
+        staffGoto({ room: 'hub' });
+      }
       // Dev (admin) accounts always get the dev menu (gear tuner, debug toggles, info).
       if (self?.admin && !tunerShown) { tunerShown = true; gearTuner(); }
       showCard(self); overlay?.snapshot(m); othersIn(m, token); tagNames(m); breedSnapshot(m);
@@ -604,7 +616,7 @@ function roomArea(area) {
   // Arrived in Chao World from a level (the pause menu's EXIT): no room yet.
   if (!room && zone && mmoToken()) return joinRoom(mmoToken(), zone);
   if (!room || !zone || zone === room.zone) return;
-  room.zone = zone;
+  room.zone = zone; room.askedAt = performance.now();
   if (room.ws.readyState === 1) room.ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: zone }));
 }
 // ---- Chao Karate attack buttons (sa2-boot karate.rs) ----------------------
@@ -945,7 +957,7 @@ async function start() {
   if (q.get('hatch') === '1') e.SA2_HATCH_EGG = '1';
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
-  if (token) { e.SA2_OWN_RECORD_IN = '/mmo/own-record'; if (await ownRecord(token).catch(() => {}) === 'hatch') e.SA2_HATCH_EGG = '1'; }
+  if (token) { e.SA2_OWN_RECORD_IN = '/mmo/own-record'; if (await ownRecord(token).catch(() => {}) === 'hatch') e.SA2_HATCH_EGG = '1'; e.SA2_GARDENS = gardens; }
   if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_PVP_IN: '/mmo/pvp-in', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_RINGS_IN: '/mmo/rings-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_STORY_IN: '/mmo/story-in', SA2_STORY_OUT: '/mmo/story-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick', SA2_SKILLS_IN: '/mmo/skills-in', SA2_GOTO_IN: '/mmo/goto-in' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);

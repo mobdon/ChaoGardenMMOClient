@@ -10,3 +10,11 @@ export function gotoLine(event, seq) {
   // A room alone when the player has no place there yet.
   return [seq, area, ...(at.every((v) => typeof v === 'number' && Number.isFinite(v)) ? at : [])].join(' ');
 }
+
+// The server keeps a Chao that is not aligned out of the Hero and Dark rooms
+// (server game.rs chao-world), but the game can still be in that garden (an
+// old save's door, ?area=). True once the room's snapshot still shows another
+// zone 2 s after the page asked: the player goes back to the lobby.
+export function gardenRefused(asked, serverZone, msSinceAsked) {
+  return (asked === 'hero' || asked === 'dark') && serverZone !== asked && msSinceAsked > 2000;
+}
