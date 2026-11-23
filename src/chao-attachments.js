@@ -45,6 +45,8 @@ export function attachRigidGearAtRest(root, fit, desired) {
   const uniform = (Math.abs(root.scaling.x) + Math.abs(root.scaling.y) + Math.abs(root.scaling.z)) / 3;
   root.scaling.set(Math.sign(root.scaling.x) * uniform, Math.sign(root.scaling.y) * uniform, Math.sign(root.scaling.z) * uniform);
   root.parent = fit.socket;
+  // Dev dump (hub-vs-game port): the socket-local matrix of each gear root.
+  (globalThis.__gearLocal ??= []).push({ name: root.name, socket: fit.socket?.name, m: Array.from(local.m) });
   return local;
 }
 
