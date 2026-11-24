@@ -3240,8 +3240,14 @@ fn foot_place(m: &mut Mem, i: usize, src: usize, own: &[[f32; 4]; 3], blend: f32
     // in the plane it travels in only, eased in over the first seventh of that reach.
     let back_max = std::env::var("SA2_FOOT_BACK").ok().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(25.0);
     let back = crate::skate::foot_back((now_p[0] - rest_p[0]) / (0.8 * his_leg), back_max).to_radians();
-    // The two are one turn about the Chao's side axis (toe down = sole back); together at most 60 degrees.
-    let pitch = pitch.map(|p| (p + back).min(60f32.to_radians()));
+    // Owner's rule (mob 2026-11-24): "bring the foot forward like 5 more degrees on the
+    // front step". While his foot leads (his heel ahead of its rest place), the shoe is
+    // swung forward about the Chao's foot point, up to SA2_FOOT_FWD degrees (5) at his full
+    // forward reach, by the same easing as the back swing.
+    let fwd_max = std::env::var("SA2_FOOT_FWD").ok().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(5.0);
+    let fwd = crate::skate::foot_back((rest_p[0] - now_p[0]) / (0.8 * his_leg), fwd_max).to_radians();
+    // All are one turn about the Chao's side axis (toe down = sole back); together at most 60 degrees either way.
+    let pitch = pitch.map(|p| (p + back - fwd).clamp(-60f32.to_radians(), 60f32.to_radians()));
     // The feet hang from the body node, and on his run the body takes his torso's turn
     // (up to 24 degrees, with its twist and roll): the foot points swung round with it,
     // one forward and one back, one up and one down, in his rhythm (mob 2026-11-24:
@@ -3261,10 +3267,16 @@ fn foot_place(m: &mut Mem, i: usize, src: usize, own: &[[f32; 4]; 3], blend: f32
             m.w32(cur_ptr + 4 * (4 * row + 3) as u32, (cur[row][3] + (v - cur[row][3]) * blend).to_bits());
         }
     }
+    // Owner's rule (mob 2026-11-24): "give it a tiny twist in the ankle to have it slightly
+    // more real". The side turn of his own foot in his run, eased to SA2_FOOT_TWIST degrees
+    // at most (6; 0 = none), about the Chao's up axis at its foot point. No roll.
+    let twist_max = std::env::var("SA2_FOOT_TWIST").ok().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(6.0).to_radians();
+    let twist = rest_r.map(|rest| crate::skate::foot_twist(&r3(&now), &rest, twist_max)).unwrap_or(0.0);
     if let (true, Some(pitch)) = (on, pitch) {
         let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
         let (sn, cs) = pitch.sin_cos();
-        let turn = crate::skate::mul(&[[1.0, 0.0, 0.0], [0.0, cs, -sn], [0.0, sn, cs]], &chao_r);
+        let (st, ct) = twist.sin_cos();
+        let turn = crate::skate::mul(&crate::skate::mul(&[[ct, 0.0, st], [0.0, 1.0, 0.0], [-st, 0.0, ct]], &[[1.0, 0.0, 0.0], [0.0, cs, -sn], [0.0, sn, cs]]), &chao_r);
         for row in 0..3 {
             for col in 0..3 {
                 let v: f32 = (0..3).map(|k| p[row][k] * turn[k][col]).sum();
@@ -3285,9 +3297,9 @@ fn foot_place(m: &mut Mem, i: usize, src: usize, own: &[[f32; 4]; 3], blend: f32
         let drawn_foot: [f32; 3] = { let c = inv_mul(&p, &cur); let l = mv(&r3(&c), mid); std::array::from_fn(|k| c[k][3] + l[k]) };
         let e = match (rest_r, chao_r) { (Some(a), Some(b)) => crate::skate::track(&r3(&now), &a, &r3(&inv_mul(&p, &cur)), &b).2, _ => f32::NAN };
         let (mot, mf) = RIDER_MOTION.get();
-        eprintln!("foot-trace: f{} node {i} motion {mot:#x} frame {mf:.2} blend {blend:.2} | his {now_p:?} | own {own_foot:?} | target {target:?} | drawn {drawn_foot:?} | rot {e:.2} | node moved {:.4} | pitch {:.1} back {:.1} | foot turn from rest: side {:.1} roll {:.1} | node at {:?} | body turn added: side {:.1} roll {:.1}",
+        eprintln!("foot-trace: f{} node {i} motion {mot:#x} frame {mf:.2} blend {blend:.2} | his {now_p:?} | own {own_foot:?} | target {target:?} | drawn {drawn_foot:?} | rot {e:.2} | node moved {:.4} | pitch {:.1} back {:.1} fwd {:.1} twist {:.2} | foot turn from rest: side {:.1} roll {:.1} | node at {:?} | body turn added: side {:.1} roll {:.1}",
             sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed),
-            (0..3).map(|k| { let c = inv_mul(&p, &cur); (c[k][3] - own_l[k][3]).powi(2) }).sum::<f32>().sqrt(), pitch.unwrap_or(f32::NAN).to_degrees(), back.to_degrees(),
+            (0..3).map(|k| { let c = inv_mul(&p, &cur); (c[k][3] - own_l[k][3]).powi(2) }).sum::<f32>().sqrt(), pitch.unwrap_or(f32::NAN).to_degrees(), back.to_degrees(), fwd.to_degrees(), twist.to_degrees(),
             side_roll(&crate::skate::mul(&crate::skate::unit(&r3(&inv_mul(&p, &cur))), &crate::skate::inv(&crate::skate::unit(&chao_r.unwrap())))).0,
             side_roll(&crate::skate::mul(&crate::skate::unit(&r3(&inv_mul(&p, &cur))), &crate::skate::inv(&crate::skate::unit(&chao_r.unwrap())))).1,
             { let c = inv_mul(&p, &cur); [c[0][3], c[1][3], c[2][3]] },
