@@ -25,8 +25,11 @@ pub(super) fn own_motion(state: u16) -> Option<(u32, bool)> {
 /// The overlay's share one frame on: out while the Chao plays its own motion,
 /// back in after, over the hub's skate times (0.28 s out, 0.42 s in at 60 a
 /// second; src/shadow-skate.js SkateCadence), so no part snaps.
+/// Into a spin state (punch 3 straight after punch 2) it comes back over four
+/// frames: at the hub's 0.42 s it was still coming in when the 26-frame
+/// uppercut ended (his arms 120 to 150 degrees from the Chao's on its first frames).
 pub(super) fn overlay_step(p: f32, own: bool) -> f32 {
-    if own { (p - 1.0 / (0.28 * 60.0)).max(0.0) } else { (p + 1.0 / (0.42 * 60.0)).min(1.0) }
+    if own { (p - 1.0 / (0.28 * 60.0)).max(0.0) } else if SPIN.get() { (p + 0.25).min(1.0) } else { (p + 1.0 / (0.42 * 60.0)).min(1.0) }
 }
 
 thread_local! {
@@ -110,10 +113,12 @@ pub(super) fn punch_lock(m: &mut Mem, chao: u32, state: u16) {
 }
 
 /// His states in which his whole body turns right round or over in his
-/// skeleton, his own heading staying as it was: punch 3 (111, the uppercut)
-/// and the drill claw (115 the dive, head down; 116 its end).
+/// skeleton, his own heading staying as it was: punch 3 (111, the uppercut),
+/// the drill claw (115 the dive, head down; 116 its end), his jump (65 to 68:
+/// he curls up and turns over; measured 152 degrees between his body and the
+/// Chao's with the cap on) and the leap out of a dig (92, 93: 104 degrees).
 pub(super) fn spins(state: u16) -> bool {
-    matches!(state, 111 | 115 | 116)
+    matches!(state, 111 | 115 | 116 | 65..=68 | 92 | 93)
 }
 
 thread_local! {
@@ -137,8 +142,10 @@ pub(super) fn spin_limits(node: usize, w: f32, cap: f32) -> (f32, f32) {
 /// it had, and its stand after six frames on one spot. Picked by the ground
 /// covered a frame it changed between its walk and run at the top of every
 /// jump and every few frames against a wall (test copy 2026-11-24).
+/// A motion the Chao played on its own for one of his moves (karate 582, fly 130,
+/// climb 155) is not kept once that move is over: its stand.
 pub(super) fn under_motion(still_frames: u32, last: u32) -> u32 {
-    if still_frames >= 6 { 0 } else { last }
+    if still_frames >= 6 || matches!(last, 582 | 130 | 155) { 0 } else { last }
 }
 
 /// His run states (action numbers; his own table plays motions 8, 9 and 126 in them).
@@ -665,6 +672,8 @@ mod tests {
         assert_eq!(under_motion(0, 119), 119);
         assert_eq!(under_motion(5, 578), 578);
         assert_eq!(under_motion(6, 119), 0);
+        for own in [582, 130, 155] { assert_eq!(under_motion(0, own), 0); }
+        assert!(spins(66) && spins(92) && spins(93) && !spins(15) && !spins(16));
         assert!(spins(111) && spins(115) && spins(116) && !spins(109) && !spins(110) && !spins(0));
         assert!(runs(8) && runs(9) && runs(10) && !runs(7) && !runs(6) && !runs(0) && !runs(11));
         // His 8-frame run at frame 6 = three quarters through: frame 3 of a 4-frame skate cycle.
