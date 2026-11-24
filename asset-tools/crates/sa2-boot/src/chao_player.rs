@@ -4393,6 +4393,9 @@ fn player_move_on() -> bool {
 /// shortcut: the Chao twp's first word (mode, smode, id, btimer) carries the
 /// character's action state while this runs; unverified that no Chao code
 /// reads it for the player's Chao (its AI is off).
+/// The longest step in one frame taken as a push by a solid object.
+const PUSH_MAX: f32 = 3.0;
+
 fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
     let (cw, mw, own) = (m.r32(chao + 0x34), m.r32(chao + 0x38), m.r32(task + 0x34));
     if cw == 0 || own == 0 {
@@ -4403,6 +4406,23 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
     }
     if mw != 0 {
         m.w16(mw + 0x40, m.r16(mw + 0x40) | 0x10);
+    }
+    // Solid objects push the player through its collision work's task, which
+    // is the character's: its task work moved since the Chao's place was
+    // mirrored into it, and the Chao takes the same step (mob, 2026-11-24:
+    // the lobby's exit teleporter had no collision). A step over PUSH_MAX is
+    // not a push (the game placing the character) and is left alone.
+    if let Some(at) = MIRRORED.take() {
+        let step: [f32; 3] = std::array::from_fn(|i| f32::from_bits(m.r32(own + 0x14 + 4 * i as u32)) - at[i]);
+        if step.iter().any(|d| *d != 0.0) && step.iter().all(|d| d.abs() <= PUSH_MAX) {
+            for (i, d) in step.iter().enumerate() {
+                let a = cw + 0x14 + 4 * i as u32;
+                m.w32(a, (f32::from_bits(m.r32(a)) + d).to_bits());
+            }
+            if std::env::var("SA2_PUSH_LOG").is_ok_and(|v| v == "1") {
+                eprintln!("chao-drive: pushed {step:?}");
+            }
+        }
     }
     // The Chao's exec enters its own collision (CCL_Entry) while twp +0xA0
     // has bit 8; the character's collision is at the same spot, and a
@@ -4575,6 +4595,8 @@ const LOBBY_MODULE: u32 = 65;
 const LOBBY_EXIT_EXEC: u32 = 0x58C;
 const HIT_PLAYER: u32 = 0x8000_5F88;
 const LEAVE_CHAO_WORLD: u32 = 0x2_7DA0;
+/// The exit trigger's radius plus the player's width (as tiny_transporter's PLAYER_R).
+const EXIT_REACH: f32 = 1.8 + 2.0;
 
 fn lobby_exit_hook(c: &mut Cpu, m: &mut Mem) {
     let at = if chao_world(m) && module_linked(m, LOBBY_MODULE) { rt::sec(m, LOBBY_MODULE, 1) + LOBBY_EXIT_EXEC } else { 0 };
@@ -4588,8 +4610,18 @@ fn lobby_exit_exec(c: &mut Cpu, m: &mut Mem) {
     let twp = m.r32(task + 0x34);
     // SA2_EXIT_AT=frame (debug): the exit counts as walked into from that frame on.
     let debug = std::env::var("SA2_EXIT_AT").ok().and_then(|v| v.trim().parse::<u64>().ok()).is_some_and(|f| sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= f);
-    if twp != 0 && m.r8(twp) == 1 && m.r16(twp + 4) & 0x100 == 0 && (debug || call(c, m, HIT_PLAYER, &[task, 0]) != 0) {
-        eprintln!("chao-player: lobby exit -> the game's Stage Select");
+    // MMO glue: the game's own hit did not fire for the Chao standing in the
+    // trigger (headless run, 2026-11-24; mob: the centre was hard to hit), so
+    // the Chao within reach of the trigger's ball counts too: the ball's radius
+    // (1.8, ChaoStgLobby .data +0x12870) and the player's width, measured flat
+    // (the platform under it is solid, so the Chao there is on top of it).
+    let own = own_twp(m);
+    let reach = twp != 0 && own != 0 && {
+        let d = |o: u32| f32::from_bits(m.r32(own + o)) - f32::from_bits(m.r32(twp + o));
+        d(0x14).hypot(d(0x1C)) <= EXIT_REACH
+    };
+    if twp != 0 && m.r8(twp) == 1 && m.r16(twp + 4) & 0x100 == 0 && (debug || reach || call(c, m, HIT_PLAYER, &[task, 0]) != 0) {
+        eprintln!("chao-player: lobby exit -> the game's Stage Select (by {})", if debug { "debug" } else if reach { "reach" } else { "the game's own hit" });
         m.w16(twp + 4, m.r16(twp + 4) | 0x100);
         m.w8(twp, 6);
         crate::start_stage::to_stage_select();
@@ -4646,6 +4678,8 @@ thread_local! {
     static GEAR_LOAD_AT: Cell<u64> = const { Cell::new(0) };
     static LIVE_STAGE_NUM: Cell<u16> = const { Cell::new(u16::MAX) };
     static PMOVE_CHAO: Cell<u32> = const { Cell::new(0) };
+    /// The Chao's place as last mirrored into the character's task work.
+    static MIRRORED: Cell<Option<[f32; 3]>> = const { Cell::new(None) };
     /// The heading the character's exec left on the Chao's body (twp +0x08..).
     static CHAR_ANG: Cell<Option<[u32; 3]>> = const { Cell::new(None) };
     static AREA_DONE: Cell<bool> = const { Cell::new(false) };
@@ -4791,6 +4825,9 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             if own != 0 {
                 for o in (0x08..0x20).step_by(4) {
                     m.w32(own + o, m.r32(data1 + o));
+                }
+                if pmove {
+                    MIRRORED.set(Some([0x14, 0x18, 0x1C].map(|o| f32::from_bits(m.r32(own + o)))));
                 }
             }
         }
