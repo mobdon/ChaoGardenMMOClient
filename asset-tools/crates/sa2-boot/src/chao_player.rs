@@ -4394,8 +4394,10 @@ const GARDEN_FLY_POINTS: u16 = 134;
 const GARDEN_FLY_TOP: f32 = 100.0;
 
 /// Which flight the second press starts. mob 2026-11-24: the garden's
-/// take-off for every Chao. SA2_FLY_MODE=race: the race's glide for everyone;
-/// =gate: the take-off only from GARDEN_FLY_POINTS, the glide under that.
+/// take-off for every Chao, held level after its climb for the lift time.
+/// SA2_FLY_MODE=race: the race's glide for everyone; =gate: the take-off only
+/// from GARDEN_FLY_POINTS, the glide under that; =garden: the take-off with
+/// the game's own sink (no level hold).
 pub(crate) fn garden_flier(points: u16) -> bool {
     match std::env::var("SA2_FLY_MODE").as_deref() {
         Ok("race") => false,
@@ -4593,6 +4595,9 @@ fn chao_world_state(_c: &mut Cpu, m: &mut Mem, task: u32, chao: u32, area: u16) 
                 // garden's own weaker lift, 0.92, is not used for the player).
                 let from = FLY_V.get().or(again.then_some(now));
                 let v = if n < timer { garden_fly_step(from, true, g) } else { fly_step(from.unwrap_or(now), skill) };
+                // MMO rule (mob 2026-11-24), not the game's: at the top of the kick's climb the height is held
+                // level until the lift time is up, so Fly counts from flat ground. SA2_FLY_MODE=garden: the game's own sink.
+                let v = if n < timer && v.1 < 0.0 && !std::env::var("SA2_FLY_MODE").is_ok_and(|m| m == "garden") { (v.0, 0.0) } else { v };
                 if f(m, cw + 0x18) > GARDEN_FLY_TOP {
                     m.w32(cw + 0x18, GARDEN_FLY_TOP.to_bits());
                 }
