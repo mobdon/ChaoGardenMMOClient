@@ -2311,6 +2311,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(knux_rig::SET_PLAYER_CHAR, knux_rig::set_char);
     c.rt.set_override(knux_rig::AFTER_IMAGE_DISP, knux_rig::after_image);
     c.rt.set_override(knux_rig::SHADOW_DISP, knux_rig::shadow_disp);
+    c.rt.set_override(knux_rig::SONIC_SHADOW_DISP, knux_rig::sonic_shadow_disp);
     if std::env::var_os("SA2_CHAO_DRAWLOG").is_some() {
         c.rt.set_override(0x8011_E23C, |c, m| knux_rig::draw_probe(c, m, 0x8011_E23C));
         c.rt.set_override(0x8011_E368, |c, m| knux_rig::draw_probe(c, m, 0x8011_E368));
@@ -2476,6 +2477,7 @@ fn ev_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
         if addr == 0x8011_DF44 && knux_rig::item_draw(c.lr) { return; }
         return level_capture(c, m, addr);
     }
+    knux_rig::late_body_scale(m, lr);
     if knux_rig::late_body(lr) {
         return;
     }
@@ -2751,6 +2753,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
                 eprintln!("head-node: node {i} model {:#x} own det {:.3} at [{:.2} {:.2} {:.2}] drawn det {:.3} at [{:.2} {:.2} {:.2}] flags {:#x}", m.r32(c.r[3].wrapping_add(4)), det(&o), o[0][3], o[1][3], o[2][3], det(&x), x[0][3], x[1][3], x[2][3], m.r32(c.r[3]));
             }
             record_hand(m, i, m.r32(NJ_CURRENT_MATRIX));
+            shadow_node(m, i, c.r[3]);
             knux_rig::hit_node(m, i);
             track_log(m, i, &own);
             head_trace(m, i, &own);
@@ -3701,6 +3704,21 @@ fn hide_foot(m: &mut Mem, cur_ptr: u32) {
     }
 }
 
+thread_local! {
+    /// The player's Chao as last drawn in a stage: the camera matrix of that draw, and each
+    /// node's object and view-space matrix (knux_rig::shadow_disp draws them as its shadow).
+    static SHADOW_NODES: std::cell::RefCell<([[f32; 4]; 3], Vec<(u32, [[f32; 4]; 3])>)> = const { std::cell::RefCell::new(([[0.0; 4]; 3], Vec::new())) };
+}
+
+fn shadow_node(m: &Mem, i: usize, obj: u32) {
+    let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
+    let base = mtx(m, m.r32(NJ_BASE_MATRIX));
+    SHADOW_NODES.with_borrow_mut(|s| {
+        if i == 0 { *s = (base, Vec::new()); }
+        if plain_object(m, obj) && m.r32(obj + 4) != 0 { s.1.push((obj, cur)); }
+    });
+}
+
 /// Arm nodes 3/10's view-space matrices from this draw walk, for the gloves.
 fn record_hand(m: &Mem, i: usize, cur_ptr: u32) {
     if matches!(i, 1 | 3 | 6 | 10 | 13 | 16) {
@@ -4479,6 +4497,12 @@ fn chao_body_shape(m: &Mem, chao: u32) -> Option<(f32, [u32; 3])> {
     (0..n).map(|k| info + 0x30 * k).find(|&e| m.r8(e) == 129).map(|e| (f32::from_bits(m.r32(e + 0xC)), [m.r32(e + 0x14), m.r32(e + 0x18), m.r32(e + 0x1C)]))
 }
 
+/// The top of the Chao's head above its feet, without horns or the ball over it, in game units.
+/// Shortcut: read off the outline still of mob's Chaos Chao (knux/hd2-front.jpg: the 3.0 land box
+/// is 132 px tall there and the head top is 192 px above the feet), not from its model; other
+/// Chao shapes may differ. Upgrade: the head node's top from the Chao's own model.
+const CHAO_HEAD_TOP: f32 = 4.4;
+
 /// MMO rule (mob 2026-11-24: "need shrunk but his jump and dig need to be as
 /// deep as the full size", then "do the same with sonic/shadow collision"):
 /// while the player's Chao stands in for the hidden character, in every
@@ -4497,14 +4521,22 @@ fn collision_fit(m: &mut Mem, chao: u32) {
     };
     let f = |m: &Mem, a: u32| f32::from_bits(m.r32(a));
     let body = chao_body_shape(m, chao);
-    let fit = fitted_size(f(m, mw + CHAO_MOVE_RADIUS), f(m, mw + CHAO_MOVE_HEIGHT), body.map(|b| b.0), full.map(f32::from_bits));
+    // mob 2026-11-24 ("hit box and collision should prob be the same for them"): one size for the
+    // land collision and the body hit shape, in every stage: the Chao's width (its move work's
+    // radius, 1.5) and from its feet to the top of its head (CHAO_HEAD_TOP, our measure), centre
+    // half-way up. SA2_LAND_LOW=1: the Chao's own move height (3.0) and body centre (2.0), as before.
+    let low = std::env::var("SA2_LAND_LOW").is_ok_and(|v| v == "1");
+    let fit = if low {
+        fitted_size(f(m, mw + CHAO_MOVE_RADIUS), f(m, mw + CHAO_MOVE_HEIGHT), body.map(|b| b.0), full.map(f32::from_bits))
+    } else {
+        fitted_size(f(m, mw + CHAO_MOVE_RADIUS), CHAO_HEAD_TOP, Some(CHAO_HEAD_TOP / 2.0), full.map(f32::from_bits))
+    };
     let use_full = std::env::var("SA2_FULL_SIZE").is_ok_and(|v| v == "1");
     let size = match fit { Some(s) if !use_full => s.map(f32::to_bits), _ => full };
     for (a, v) in at.into_iter().zip(size) { m.w32(obj2 + a, v); }
     // His body's hit shape (the first entry of his collision table: his own sizes 4.0, 4.0,
-    // 0.65, at his position plus the centre height above): the Chao's own body sizes, so
-    // what is hit is what is seen. His other four spheres (8.0, 4.5, 2.75, 30.0: attack
-    // and pick-up reaches, not told apart yet) stay his.
+    // 0.65, at his position plus the centre height above; the only one of his five that is
+    // on outside his attacks, so it is both what is hurt and what picks rings up).
     let his_cwp = { let t = m.r32(0x801E_7768); if (0x8000_0000..0x8C00_0000).contains(&t) { m.r32(t + 0x2C) } else { 0 } };
     let his_body = if (0x8000_0000..0x8C00_0000).contains(&his_cwp) { m.r32(his_cwp + 0xC) } else { 0 };
     if (0x8000_0000..0x8C00_0000).contains(&his_body) {
@@ -4512,8 +4544,22 @@ fn collision_fit(m: &mut Mem, chao: u32) {
             Some(o) => o.1,
             None => { let o = [0x14, 0x18, 0x1C].map(|a| m.r32(his_body + a)); FULL_BODY.set(Some((his_body, o))); o }
         };
-        let shape = match (body, fit) { (Some(b), Some(_)) if !use_full => b.1, _ => own };
+        // mob 2026-11-24, marked on the outline still ("this should be the body shape, the green"): the
+        // shape that is hurt and that picks rings up is the Chao's width and stands from its feet to the
+        // top of its head. Width: the Chao's own body collision size (1.5). Height: CHAO_HEAD_TOP.
+        // SA2_BODY_FULL=1: his own shape (4.0 / 4.0 / 0.65); SA2_BODY_SMALL=1: the Chao's own body
+        // collision sizes (1.5 / 2.5 / 0.7), as before that mark.
+        let env = |k: &str| std::env::var(k).is_ok_and(|v| v == "1");
+        let shape = match (body, fit) {
+            (Some(_), Some(_)) if use_full || env("SA2_BODY_FULL") => own,
+            (Some(b), Some(_)) if env("SA2_BODY_SMALL") => b.1,
+            (Some(b), Some(_)) => [b.1[0], (CHAO_HEAD_TOP / 2.0).to_bits(), own[2]],
+            _ => own,
+        };
         for (a, v) in [0x14, 0x18, 0x1C].into_iter().zip(shape) { m.w32(his_body + a, v); }
+        if std::env::var_os("SA2_HIT_LOG").is_some() && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
+            eprintln!("hit-entry: kind {:#x} words +4.. {:x?} centre [{:.2} {:.2} {:.2}] sizes [{:.2} {:.2} {:.2}]", m.r8(his_body), (4..8).map(|o| m.r8(his_body + o)).collect::<Vec<_>>(), f(m, his_body + 8), f(m, his_body + 0xC), f(m, his_body + 0x10), f(m, his_body + 0x14), f(m, his_body + 0x18), f(m, his_body + 0x1C));
+        }
     }
     if SIZE_SAID.replace(obj2) != obj2 {
         eprintln!("chao-player size: his land collision radius {:.2} height {:.2} centre {:.2} -> {:?} (Chao move work {:.2} {:.2})", f32::from_bits(full[0]), f32::from_bits(full[1]), f32::from_bits(full[2]), size.map(f32::from_bits), f(m, mw + CHAO_MOVE_RADIUS), f(m, mw + CHAO_MOVE_HEIGHT));
@@ -4674,6 +4720,23 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         let keep = c.r;
         call(c, m, 0x8001_C810, &[0]);
         c.r = keep;
+    }
+    // SA2_WARP=frame,x,y,z,yaw (debug, test only; yaw in hex): for the ten frames from that one, in a
+    // stage, the hidden character is put at that place facing that way, to stand him at a set
+    // distance from an object (punch reach checks).
+    if let Some(w) = std::env::var("SA2_WARP").ok().filter(|_| !chao_world(m)) {
+        let p: Vec<&str> = w.split(',').collect();
+        let now = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+        let twp = m.r32(task + 0x34);
+        if let (Some(at), true, true) = (p.first().and_then(|v| v.trim().parse::<u64>().ok()), p.len() >= 5, twp != 0) {
+            if (at..at + 10).contains(&now) {
+                for (i, v) in p[1..4].iter().enumerate() {
+                    if let Ok(x) = v.trim().parse::<f32>() { m.w32(twp + 0x14 + 4 * i as u32, x.to_bits()); }
+                }
+                if let Ok(y) = u32::from_str_radix(p[4].trim().trim_start_matches("0x"), 16) { m.w32(twp + 0x0C, y); }
+                if now == at { eprintln!("chao-player: debug warp to {:?}", &p[1..]); }
+            }
+        }
     }
     // SA2_TASK_LOG=1 (debug): his task's words, once.
     if std::env::var("SA2_TASK_LOG").is_ok_and(|v| v == "1") && !TASK_LOGGED.replace(true) {
@@ -4860,7 +4923,6 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // the rider's B is its own move, not Pet (action 31). Each frame, as
         // the Chao's behaviours may enable touch again (AL_EnableTouch 0x5AB0).
         call(c, m, rt::sec(m, 60, 1) + AL_DISABLE_NADE, &[chao]);
-        collision_fit(m, chao);
         if addr == KNUX_EXEC { knux_rig::no_touch(c, m, chao); }
         // The Chao's gear (Shadow's and Knuckles's textures and models, for the
         // Air Shoes, the ball and the Hammer Gloves), once per stage, in every
@@ -4926,6 +4988,11 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             knuckles_rules(c, m, chao);
             knux_rig::run_style(c, m);
         }
+        // After physics_row: off the board it writes Metal Sonic's whole row, his land size with
+        // it, so the Chao's size set before it was lost in Sonic's and Shadow's stages
+        // (Radical Highway 2026-11-24: radius 4.0, height 10.0 all run; City Escape had the
+        // Chao's size only because it starts on the board).
+        collision_fit(m, chao);
         return;
     }
     tick(c, m, pos);
@@ -4979,6 +5046,7 @@ fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
     }
     OWN_MOTION.set(own.is_some());
     knux_rig::SPIN.set(knux_rig::spins(act));
+    knux_rig::FALL.set(knux_rig::falls(act));
     MIRROR.set(own.is_some_and(|o| o.1));
     ARM_FWD.set(if matches!(act, 111 | 138) { 0.8 } else { 0.0 });
     if own.is_some_and(|o| o.0 == 582 || o.0 == 155) {
@@ -5515,7 +5583,12 @@ fn physics_row(m: &mut Mem) {
     let board = BOARD.with_borrow(|b| b.as_ref().is_some_and(|b| f <= b.0 + 2));
     // mob 2026-11-21: the board has its own physics. The game's row is
     // whatever it last wrote there (Metal's is ours), kept for the board.
-    let now: Vec<u32> = (0..0x84).step_by(4).map(|o| m.r32(obj2 + 0xC0 + o)).collect();
+    let mut now: Vec<u32> = (0..0x84).step_by(4).map(|o| m.r32(obj2 + 0xC0 + o)).collect();
+    // The three land sizes collision_fit sets are not the game's: his own again here, so a row
+    // is told from Metal's, and kept for the board, as the game wrote it.
+    if let Some((_, full)) = FULL_SIZE.get().filter(|o| o.0 == obj2) {
+        for (a, v) in [PW_RADIUS, PW_HEIGHT, PW_CENTRE].into_iter().zip(full) { now[((a - 0xC0) / 4) as usize] = v; }
+    }
     let metal = PHYSICS + 0x84 * METAL_ROW;
     let metal: Vec<u32> = (0..0x84).step_by(4).map(|o| m.r32(metal + o)).collect();
     let own = SONIC_ROW.with_borrow_mut(|r| {
