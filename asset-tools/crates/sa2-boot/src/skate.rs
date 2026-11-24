@@ -151,6 +151,19 @@ pub fn foot_back(behind: f32, max: f32) -> f32 {
     s * 0.4 * max + f * 0.6 * max
 }
 
+/// Owner's rule (mob 2026-11-24: far too much twist in the feet on walk and jog): a foot's turn
+/// from its rest in the Chao's axes (it faces +z, y up) with its roll taken out and its side
+/// turn eased so it never passes `cap` (cap * tanh(turn / cap); none for a cap of 0), as on the
+/// run. The pitch (toe up or down along the way it goes) is kept whole. The side turn is read
+/// from the side axis, which holds when the foot is pitched steeply.
+pub fn ankle_limit(d: &M3, cap: f32) -> M3 {
+    let pitch = (-d[1][2]).atan2(d[2][2]);
+    let turn = (-d[2][0]).atan2(d[0][0]);
+    let twist = if cap <= 0.0 { 0.0 } else { cap * (turn / cap).tanh() };
+    let ((sn, cs), (st, ct)) = (pitch.sin_cos(), twist.sin_cos());
+    mm(&[[ct, 0.0, st], [0.0, 1.0, 0.0], [-st, 0.0, ct]], &[[1.0, 0.0, 0.0], [0.0, cs, -sn], [0.0, sn, cs]])
+}
+
 /// Degrees between two rotations (either may carry scale).
 pub fn angle_between(a: &M3, b: &M3) -> f32 {
     let d = mm(&unit(a), &tr(&unit(b)));
@@ -252,6 +265,30 @@ mod tests {
         // A cap of 0 (SA2_FOOT_PITCH=0) is exactly 0, never 0/0.
         assert_eq!(foot_pitch(&id, &id, 0.0), 0.0, "rest, no cap");
         assert_eq!(foot_pitch(&kick, &id, 0.0), 0.0, "pitched, no cap");
+    }
+    #[test]
+    fn ankle_limit_keeps_the_pitch_eases_the_side_turn_and_drops_the_roll() {
+        let rot = |axis: usize, deg: f32| -> M3 {
+            let (s, c) = deg.to_radians().sin_cos();
+            match axis { 0 => [[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]], 1 => [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]], _ => [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]] }
+        };
+        let cap = 6f32.to_radians();
+        let id = rot(0, 0.0);
+        assert!(angle_between(&ankle_limit(&id, cap), &id) < 1e-3, "rest stays rest");
+        // The jog's kick: 90 degrees of pitch with 16 to the side and 6 of roll.
+        let d = mm(&rot(1, 16.0), &mm(&rot(0, 90.0), &rot(2, 6.0)));
+        let l = ankle_limit(&d, cap);
+        let (yaw, roll) = ((-l[2][0]).atan2(l[0][0]).to_degrees(), l[1][0].atan2(l[0][0]).to_degrees());
+        assert!(yaw.abs() < 6.0 && yaw.abs() > 4.0, "side turn {yaw}");
+        assert!(roll.abs() < 1e-3, "roll {roll}");
+        // Pitch alone is untouched, at any size.
+        for p in [-58.0, 30.0, 92.0] {
+            assert!(angle_between(&ankle_limit(&rot(0, p), cap), &rot(0, p)) < 1e-2, "pitch {p}");
+        }
+        // A small side turn passes nearly whole; a cap of 0 takes all of it out.
+        let small = ankle_limit(&rot(1, 1.0), cap);
+        assert!(((-small[2][0]).atan2(small[0][0]).to_degrees() - 1.0).abs() < 0.02);
+        assert!(angle_between(&ankle_limit(&rot(1, 16.0), 0.0), &id) < 1e-3);
     }
     #[test]
     fn foot_back_is_ten_to_twenty_five_degrees_behind_only() {

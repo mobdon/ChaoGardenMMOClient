@@ -2639,7 +2639,9 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
             // 142) the walker's r3 here is not one, and reading it as a model
             // ran into unmapped memory (the game stopped 15 frames into a jump).
             if i == 6 { DRAWN_FOOT.set(if plain_object(m, c.r[3]) { c.r[3] } else { 0 }); }
-            let own = mtx(m, m.r32(NJ_CURRENT_MATRIX));
+            let native = mtx(m, m.r32(NJ_CURRENT_MATRIX));
+            // The feet on the hidden Sonic's walk, jog and run (the Chao's own motions 100, 101, 119).
+            let own = if (i == 6 || i == 13) && GAIT.get().is_some() && matches!(LAST_MOTION.get(), 100 | 101 | 119) { foot_limit(m, i, &native) } else { native };
             // Wearing Shadow's shoes and moving: the web hub's skate overlay
             // (skate.rs) on its 8 mapped nodes, from the rider's live pose.
             let blend = skate_blend(i == 0);
@@ -2673,7 +2675,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
                 let rest = CHAO_REST.with_borrow(|r| r.as_ref().and_then(|r| r.worlds(&[]).get(i).map(|x| x.0)));
                 if let Some(rest) = rest {
                     let turn = |x: &[[f32; 4]; 3]| crate::skate::mul(&crate::skate::unit(&r3(&inv_mul(&p, x))), &crate::skate::inv(&crate::skate::unit(&rest)));
-                    let (d, o) = (turn(&mtx(m, m.r32(NJ_CURRENT_MATRIX))), turn(&own));
+                    let (d, o) = (turn(&mtx(m, m.r32(NJ_CURRENT_MATRIX))), turn(&native));
                     // The side turn read from the side axis (skate::foot_twist's way): it holds when the foot is pitched steeply.
                     let yaw = |t: &[[f32; 3]; 3]| (-t[2][0]).atan2(t[0][0]).to_degrees();
                     let body = BODY.get().map(|(bo, bd, _)| side_roll(&crate::skate::mul(&crate::skate::unit(&r3(&inv_mul(&p, &bd))), &crate::skate::inv(&crate::skate::unit(&r3(&inv_mul(&p, &bo)))))));
@@ -3007,6 +3009,36 @@ fn track_log(m: &Mem, i: usize, own: &[[f32; 4]; 3]) {
         TRACK_LINE.with_borrow_mut(|l| l.push_str(&format!(" heading: rider {rider_yaw:.1?} chao {chao_yaw:.1} diff {diff:.1?}")));
         eprintln!("track: f{f} blend {:.2} motion {}{}", skate_blend(false), LAST_MOTION.get(), TRACK_LINE.take());
     }
+}
+
+/// Owner's rule (mob 2026-11-24: "far too much twist in the feet/boots"): on the hidden
+/// Sonic's walk and jog the Chao's own motion turns its feet to the side (the jog by 16
+/// degrees either way) and rolls them (6 degrees). The foot keeps the motion's pitch and
+/// its foot point; its side turn is eased to the run's ankle limit (SA2_FOOT_TWIST, 6
+/// degrees) and its roll is taken out (skate::ankle_limit). The run's overlay starts from
+/// this foot, so the fade between jog and run stays inside the limit too; at the whole
+/// overlay the run's own foot replaces it as before. Returns the foot as now drawn.
+/// MMO glue. SA2_FOOT_LIMIT=0 (debug): as the motion has it.
+fn foot_limit(m: &mut Mem, i: usize, own: &[[f32; 4]; 3]) -> [[f32; 4]; 3] {
+    let rest = CHAO_REST.with_borrow(|r| r.as_ref().and_then(|r| r.worlds(&[]).get(i).map(|x| x.0)));
+    let (Some(rest), false) = (rest, std::env::var("SA2_FOOT_LIMIT").is_ok_and(|v| v == "0")) else { return *own };
+    let r3 = |x: &[[f32; 4]; 3]| -> [[f32; 3]; 3] { std::array::from_fn(|a| std::array::from_fn(|b| x[a][b])) };
+    let p = CHAO_PLACE.get();
+    let local = r3(&inv_mul(&p, own));
+    // Its turn from rest in the Chao's placement, and the turn that takes it to the limited one.
+    let d = crate::skate::mul(&crate::skate::unit(&local), &crate::skate::inv(&crate::skate::unit(&rest)));
+    let cap = std::env::var("SA2_FOOT_TWIST").ok().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(6.0).to_radians();
+    let fix = crate::skate::mul(&crate::skate::ankle_limit(&d, cap), &crate::skate::inv(&d));
+    let turned = crate::skate::mul(&r3(&p), &crate::skate::mul(&fix, &local));
+    let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+    let mut out = *own;
+    for row in 0..3 {
+        for col in 0..3 {
+            out[row][col] = turned[row][col];
+            m.w32(cur_ptr + 4 * (4 * row + col) as u32, turned[row][col].to_bits());
+        }
+    }
+    out
 }
 
 /// One skate-mapped node: rotation from skate::desired (Chao model space,
