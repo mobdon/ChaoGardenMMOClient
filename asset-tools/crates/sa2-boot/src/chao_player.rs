@@ -1934,6 +1934,7 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
     let task = c.r[3];
     let cw = m.r32(task + 0x34);
     let own = matches!(STEP.get(), Step::Live(ch) if ch == task) && cw != 0 && self_drive(m) && !std::env::var("SA2_CHAO_TILT").is_ok_and(|v| v == "1");
+    if own && PMOVE_CHAO.get() == task { carry_his_moves(m, cw); }
     let keep = (m.r32(cw.wrapping_add(0x08)), m.r32(cw.wrapping_add(0x10)));
     // The character's exec leaves its own yaw in the shared task work, and
     // the two do not mean the same: the character goes along (cos, sin) of
@@ -4411,6 +4412,7 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
     // World). Unverified that the hitter was the Chao itself.
     m.w32(cw + 0xA0, m.r32(cw + 0xA0) & !8);
     let chao_cwp = m.r32(cw + 0x2C);
+    carry_his_moves(m, cw);
     m.w32(task + 0x34, cw);
     m.w32(cw + 0x2C, m.r32(own + 0x2C));
     c.r[3] = task;
@@ -4427,6 +4429,21 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
     IN_PMOVE.set(false);
     m.w32(own, m.r32(cw));
     m.w32(own + 4, m.r32(cw + 4));
+    // His body's hit shape is put by his exec at his own centre height above
+    // his feet (5.4, whatever his land collision's centre is set to), over the
+    // Chao's head: object triggers at the Chao's height were missed (the lobby
+    // exit's, 4.0 above its pad). Brought down to the fitted centre height,
+    // along the same line from his feet.
+    if let Some((obj2, full)) = FULL_SIZE.get().filter(|o| o.0 == m.r32(P1_OBJ2)) {
+        let (fit, full) = (f32::from_bits(m.r32(obj2 + PW_CENTRE)), f32::from_bits(full[2]));
+        let body = { let p = m.r32(own + 0x2C); if (0x8000_0000..0x8C00_0000).contains(&p) { m.r32(p + 0xC) } else { 0 } };
+        if fit > 0.0 && fit < full && (0x8000_0000..0x8C00_0000).contains(&body) {
+            for o in [0u32, 4, 8] {
+                let (p, at) = (f32::from_bits(m.r32(cw + 0x14 + o)), f32::from_bits(m.r32(body + 8 + o)));
+                m.w32(body + 8 + o, (p + (at - p) * fit / full).to_bits());
+            }
+        }
+    }
     CHAR_ANG.set(Some([m.r32(cw + 0x08), m.r32(cw + 0x0C), m.r32(cw + 0x10)]));
     m.w32(cw, chao_head[0]);
     m.w32(cw + 4, chao_head[1]);
@@ -4438,7 +4455,34 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
     }
 }
 
+/// The Chao's position with what the game changed in the character's own
+/// since the mirror (`was` -> `now`): each changed coordinate is his.
+pub(crate) fn carried(was: [u32; 3], now: [u32; 3], chao: [u32; 3]) -> [u32; 3] {
+    std::array::from_fn(|i| if now[i] != was[i] { now[i] } else { chao[i] })
+}
+
+/// What the game did to the character's own position since it was last made
+/// the Chao's (its collision pass, after every exec, pushes his task out of
+/// an object's solid shapes and stands him on their tops: the gardens'
+/// transporter and the lobby exit's pad are such cylinders; main.dol
+/// CCL_Entry 0x8000F4EC lists tasks, not positions) goes to the Chao's body
+/// `cw`. Left in his own task work it was written over each frame and the
+/// Chao sank into the pad. Done before the Chao is drawn and before his next
+/// exec, whichever comes first.
+fn carry_his_moves(m: &mut Mem, cw: u32) {
+    let Some((own, was)) = HIS_POS.take() else { return };
+    let now = [0x14, 0x18, 0x1C].map(|o| m.r32(own + o));
+    if now == was { return; }
+    let to = carried(was, now, [0x14, 0x18, 0x1C].map(|o| m.r32(cw + o)));
+    if std::env::var("SA2_PUSH_LOG").is_ok_and(|v| v == "1") && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 30 == 0 {
+        eprintln!("chao-drive: the game moved him {:?} -> {:?} (flag {:#x}); carried to the Chao", was.map(f32::from_bits), now.map(f32::from_bits), m.r16(own + 4));
+    }
+    for (o, v) in [0x14, 0x18, 0x1C].into_iter().zip(to) { m.w32(cw + o, v); }
+}
+
 thread_local! {
+    /// The character's task work and the position mirrored into it from the Chao's this frame.
+    static HIS_POS: Cell<Option<(u32, [u32; 3])>> = const { Cell::new(None) };
     /// The hidden character's own land collision size (player work, its three words), to put back.
     static FULL_SIZE: Cell<Option<(u32, [u32; 3])>> = const { Cell::new(None) };
     /// His body hit shape's own three sizes (his collision table's first entry), to put back.
@@ -4583,10 +4627,24 @@ fn lobby_exit_hook(c: &mut Cpu, m: &mut Mem) {
     }
 }
 
+/// The Chao at `d` from the lobby exit's spot stands on its pad (top 3.1,
+/// radius 16.5) within the native character's reach of its trigger (1.8 + 4.0).
+pub(crate) fn exit_reach(d: [f32; 3]) -> bool {
+    d[0].hypot(d[2]) < 5.8 && (2.0..5.0).contains(&d[1])
+}
+
 fn lobby_exit_exec(c: &mut Cpu, m: &mut Mem) {
     let (task, at) = (c.r[3], rt::sec(m, LOBBY_MODULE, 1) + LOBBY_EXIT_EXEC);
     let twp = m.r32(task + 0x34);
-    if twp != 0 && m.r8(twp) == 1 && m.r16(twp + 4) & 0x100 == 0 && call(c, m, HIT_PLAYER, &[task, 0]) != 0 {
+    // MMO glue (mob 2026-11-24: "the center was hard to hit"): its trigger is a
+    // sphere of radius 1.8 at 4.0 above the pad's middle, met by his body of
+    // radius 4.0; the Chao's body is 1.5. The Chao on the pad within his reach
+    // of the middle (5.8) opens it too.
+    let near = twp != 0 && player_chao().map(|ch| m.r32(ch + 0x34)).filter(|&cw| cw != 0).is_some_and(|cw| {
+        let d = [0x14, 0x18, 0x1C].map(|o| f32::from_bits(m.r32(cw + o)) - f32::from_bits(m.r32(twp + o)));
+        exit_reach(d)
+    });
+    if twp != 0 && m.r8(twp) == 1 && m.r16(twp + 4) & 0x100 == 0 && (call(c, m, HIT_PLAYER, &[task, 0]) != 0 || near) {
         eprintln!("chao-player: lobby exit -> the game's Stage Select");
         m.w16(twp + 4, m.r16(twp + 4) | 0x100);
         m.w8(twp, 6);
@@ -4790,6 +4848,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
                 for o in (0x08..0x20).step_by(4) {
                     m.w32(own + o, m.r32(data1 + o));
                 }
+                HIS_POS.set(pmove.then(|| (own, [0x14, 0x18, 0x1C].map(|o| m.r32(own + o)))));
             }
         }
     }
@@ -5846,6 +5905,22 @@ fn create_at(c: &mut Cpu, m: &mut Mem, pos: [u32; 3], param: u32) -> Step {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_lobby_exit_opens_for_a_chao_on_its_pad_near_the_middle() {
+        assert!(exit_reach([3.0, 3.09, 4.0]));
+        assert!(!exit_reach([5.0, 3.09, 4.0]), "past his reach");
+        assert!(!exit_reach([3.0, 0.0, 4.0]), "under the pad, on the floor");
+    }
+
+    #[test]
+    fn game_moves_of_the_character_go_to_the_chao() {
+        let b = |v: [f32; 3]| v.map(f32::to_bits);
+        // Nothing moved him: the Chao stays where its own code put it.
+        assert_eq!(carried(b([1.0, 0.0, 2.0]), b([1.0, 0.0, 2.0]), b([1.5, 0.0, 2.0])), b([1.5, 0.0, 2.0]));
+        // Stood on the lobby exit's pad (top 3.1): only the height is his.
+        assert_eq!(carried(b([1.0, 2.4, 2.0]), b([1.0, 3.09, 2.0]), b([1.5, 2.4, 2.0])), b([1.5, 3.09, 2.0]));
+    }
+
     #[test]
     fn garden_water_and_swim_motion_as_the_game_decides() {
         use super::{in_water, swim_motion, water_level};
