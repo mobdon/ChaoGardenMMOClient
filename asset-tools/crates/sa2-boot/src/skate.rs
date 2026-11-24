@@ -149,14 +149,18 @@ pub fn foot_back(behind: f32, max: f32) -> f32 {
 /// Owner's rule (mob 2026-11-24: far too much twist in the feet on walk and jog): a foot's turn
 /// from its rest in the Chao's axes (it faces +z, y up) with its roll taken out and its side
 /// turn eased so it never passes `cap` (cap * tanh(turn / cap); none for a cap of 0), as on the
-/// run. The pitch (toe up or down along the way it goes) is kept whole. The side turn is read
-/// from the side axis, which holds when the foot is pitched steeply.
+/// run. The pitch (toe up or down along the way it goes) is kept whole.
+/// One decomposition throughout, pitch outermost: d = Rx(pitch) * Ry(turn) * Rz(roll), so the
+/// forward axis goes to (sin turn, -sin pitch cos turn, cos pitch cos turn). The pitch is read
+/// over its full range (the jog's kick passes 90 degrees), the side turn is the forward axis'
+/// lean out of the plane it travels in (a roll alone reads as none), and the foot is rebuilt as
+/// Rx(pitch) * Ry(eased turn), which reads back the same pitch.
 pub fn ankle_limit(d: &M3, cap: f32) -> M3 {
     let pitch = (-d[1][2]).atan2(d[2][2]);
-    let turn = (-d[2][0]).atan2(d[0][0]);
+    let turn = d[0][2].clamp(-1.0, 1.0).asin();
     let twist = if cap <= 0.0 { 0.0 } else { cap * (turn / cap).tanh() };
     let ((sn, cs), (st, ct)) = (pitch.sin_cos(), twist.sin_cos());
-    mm(&[[ct, 0.0, st], [0.0, 1.0, 0.0], [-st, 0.0, ct]], &[[1.0, 0.0, 0.0], [0.0, cs, -sn], [0.0, sn, cs]])
+    mm(&[[1.0, 0.0, 0.0], [0.0, cs, -sn], [0.0, sn, cs]], &[[ct, 0.0, st], [0.0, 1.0, 0.0], [-st, 0.0, ct]])
 }
 
 /// Degrees between two rotations (either may carry scale).
@@ -267,12 +271,23 @@ mod tests {
         let cap = 6f32.to_radians();
         let id = rot(0, 0.0);
         assert!(angle_between(&ankle_limit(&id, cap), &id) < 1e-3, "rest stays rest");
-        // The jog's kick: 90 degrees of pitch with 16 to the side and 6 of roll.
-        let d = mm(&rot(1, 16.0), &mm(&rot(0, 90.0), &rot(2, 6.0)));
-        let l = ankle_limit(&d, cap);
-        let (yaw, roll) = ((-l[2][0]).atan2(l[0][0]).to_degrees(), l[1][0].atan2(l[0][0]).to_degrees());
-        assert!(yaw.abs() < 6.0 && yaw.abs() > 4.0, "side turn {yaw}");
+        // Read back by the same decomposition (pitch outermost): pitch, side turn, roll in degrees.
+        let read = |l: &M3| ((-l[1][2]).atan2(l[2][2]).to_degrees(), l[0][2].clamp(-1.0, 1.0).asin().to_degrees(), (-l[0][1]).atan2(l[0][0]).to_degrees());
+        let foot = |pitch: f32, turn: f32, roll: f32| mm(&rot(0, pitch), &mm(&rot(1, turn), &rot(2, roll)));
+        // The jog's kick: past 90 degrees of pitch with 16 to the side and 6 of roll.
+        let (pitch, yaw, roll) = read(&ankle_limit(&foot(92.0, 16.0, 6.0), cap));
+        assert!((pitch - 92.0).abs() < 1e-2, "pitch {pitch}");
+        assert!(yaw < 6.0 && yaw > 4.0, "side turn {yaw}");
         assert!(roll.abs() < 1e-3, "roll {roll}");
+        // Pitched and rolled with no side turn: none comes of the roll.
+        let (pitch, yaw, roll) = read(&ankle_limit(&foot(45.0, 0.0, 30.0), cap));
+        assert!((pitch - 45.0).abs() < 1e-2 && yaw.abs() < 1e-3 && roll.abs() < 1e-3, "{pitch} {yaw} {roll}");
+        // Pitched and turned: the pitch reads back whole, the side turn inside the cap.
+        let (pitch, yaw, _) = read(&ankle_limit(&foot(45.0, 30.0, 0.0), cap));
+        assert!((pitch - 45.0).abs() < 1e-2 && yaw > 5.0 && yaw < 6.0, "{pitch} {yaw}");
+        // However far it is turned, the cap holds.
+        let (pitch, yaw, _) = read(&ankle_limit(&foot(-58.0, -80.0, 0.0), cap));
+        assert!((pitch + 58.0).abs() < 1e-2 && yaw >= -6.0001 && yaw < -5.9, "{pitch} {yaw}");
         // Pitch alone is untouched, at any size.
         for p in [-58.0, 30.0, 92.0] {
             assert!(angle_between(&ankle_limit(&rot(0, p), cap), &rot(0, p)) < 1e-2, "pitch {p}");
