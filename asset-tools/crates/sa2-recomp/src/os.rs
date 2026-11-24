@@ -591,10 +591,79 @@ pub fn pump(c: &mut Cpu, m: &mut Mem) {
 pub const OS_LINK: u32 = 0x800E_839C;
 pub const OS_UNLINK: u32 = 0x800E_87F8;
 
+/// A module's id and its sections' address ranges (OSModuleInfo: id +0x00,
+/// section count +0x0C, section table +0x10 of 8-byte entries: address with
+/// the code flag in bit 0, size). Only a linked module's table holds addresses.
+fn module_ranges(m: &Mem, info: u32) -> (u32, Vec<(u32, u32)>) {
+    let ram = |a: u32| (0x8000_0000..0x8C00_0000).contains(&a);
+    if !ram(info) {
+        return (0, Vec::new());
+    }
+    let (count, table) = (m.r32(info + 0x0C).min(32), m.r32(info + 0x10));
+    let ranges = if ram(table) {
+        (0..count).map(|i| (m.r32(table + 8 * i) & !1, m.r32(table + 8 * i + 4))).filter(|&(a, n)| ram(a) && n != 0).map(|(a, n)| (a, a + n)).collect()
+    } else {
+        Vec::new()
+    };
+    (m.r32(info), ranges)
+}
+
+thread_local! {
+    /// Overrides taken off an unlinked module, by module id: (address, the
+    /// start of the section it was in, function) (see relinked).
+    static PARKED: std::cell::RefCell<std::collections::HashMap<u32, Vec<(u32, u32, crate::rt::Func)>>> = std::cell::RefCell::new(Default::default());
+}
+
 /// The game's own OSLink/OSUnlink, then forget cached calls into modules.
+///
+/// Overrides are kept by address. One set on a module's function stayed
+/// after the module was unlinked, and ran in place of whatever function the
+/// next module had at that address: leaving the Chao Lobby for the Stage
+/// Select stopped with "access outside RAM at 0x9421fff8" while the menu
+/// module made its tasks (2026-11-24). An unlinked module's overrides are
+/// taken off; each comes back when the same module is linked with that
+/// section at the same address again (the glue sets its hooks once per load
+/// address), and waits otherwise (a level's copy of ChaoMain and the game's
+/// own share an id and load at different places).
 fn relinked(c: &mut Cpu, m: &mut Mem, addr: u32) {
+    let info = c.r[3];
+    let before = if addr == OS_UNLINK { module_ranges(m, info) } else { (0, Vec::new()) };
     if let Some(f) = (c.rt.generated)(addr) {
         f(c, m);
+    }
+    if addr == OS_UNLINK {
+        let (id, ranges) = before;
+        let section = |a: u32| ranges.iter().find(|&&(s, e)| (s..e).contains(&a)).map(|r| r.0);
+        let gone: Vec<(u32, u32, crate::rt::Func)> = c.rt.overrides.iter().filter_map(|(a, f)| Some((*a, section(*a)?, *f))).collect();
+        for (a, _, _) in &gone {
+            c.rt.overrides.remove(a);
+        }
+        if !gone.is_empty() {
+            eprintln!("os: module {id} unlinked; {} overrides taken off with it", gone.len());
+            PARKED.with_borrow_mut(|p| {
+                let kept = p.entry(id).or_default();
+                kept.retain(|k| !gone.iter().any(|g| g.0 == k.0));
+                kept.extend(gone);
+            });
+        }
+    } else {
+        let (id, ranges) = module_ranges(m, info);
+        let same = |a: u32, start: u32| ranges.iter().any(|&(s, e)| s == start && (s..e).contains(&a));
+        let back: Vec<(u32, u32, crate::rt::Func)> = PARKED.with_borrow_mut(|p| p.get_mut(&id).map(|k| {
+            let (back, wait) = std::mem::take(k).into_iter().partition(|&(a, start, _)| same(a, start));
+            *k = wait;
+            back
+        })).unwrap_or_default();
+        let mut n = 0;
+        for (a, _, f) in back {
+            if !c.rt.overrides.contains_key(&a) {
+                c.rt.set_override(a, f);
+                n += 1;
+            }
+        }
+        if n != 0 {
+            eprintln!("os: module {id} linked at the same place; {n} overrides back");
+        }
     }
     c.rt.modules_changed();
 }
