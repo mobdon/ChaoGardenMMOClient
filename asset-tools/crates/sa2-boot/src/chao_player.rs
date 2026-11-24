@@ -4192,7 +4192,13 @@ fn info_out(m: &Mem, area: u16) {
         Step::Live(chao) => { let cw = m.r32(chao + 0x34); let g = |o: u32| f32::from_bits(m.r32(cw + o)); format!("({:.0}, {:.0}, {:.0})", g(0x14), g(0x18), g(0x1C)) }
         s => format!("{s:?}"),
     };
-    let line = format!("frame {f} stage {} area {area}\n{}\nothers {} ({} drawn)\nChao {place}\n", m.r16(STAGE_NUM), heaps.join(", "), remote.0, remote.1);
+    // The skate's state, to read off the panel when the Chao does not skate
+    // (mob 2026-11-24: no skate with Air Shoes on his own Chao; not seen on a test account).
+    let obj2 = m.r32(P1_OBJ2);
+    let his = if (0x8000_0000..0x8C00_0000).contains(&obj2) { format!("action {} table {:#x} char {}", m.r16(obj2 + OBJ2_ACTION), m.r32(obj2 + OBJ2_PLACTPTR), m.r8(obj2 + 1)) } else { "none".into() };
+    let skate = format!("skate {:.2} style {} gear {} moves {} moving {} gait {:?} Chao motion {} own {} swim {} air {}\nhis {his}",
+        skate_blend(false), if shadow_style() { "Shadow" } else { "Sonic" }, SHADOW_TEX.get().is_some(), SHADOW_MOVES.get(), MOVING.get(), GAIT.get().map(|g| g.motion()), LAST_MOTION.get(), OWN_MOTION.get(), SWIM.get().is_some(), AIR.get());
+    let line = format!("frame {f} stage {} area {area}\n{}\nothers {} ({} drawn)\nChao {place}\n{skate}\n", m.r16(STAGE_NUM), heaps.join(", "), remote.0, remote.1);
     let _ = std::fs::write(path, line);
 }
 
