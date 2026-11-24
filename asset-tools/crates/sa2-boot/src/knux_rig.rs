@@ -17,7 +17,10 @@ pub(super) fn own_motion(state: u16) -> Option<(u32, bool)> {
         109 => Some((582, false)),
         110 => Some((582, true)),
         105 => Some((130, false)),
-        100 => Some((155, false)),
+        // On a wall: climbing up (100), sideways (101, 102) and hanging still (103) are all the
+        // Chao's climb, at his motion's place in its cycle (punch_lock: the hang barely moves).
+        // Before 2026-11-24 only 100 was: hanging, the Chao stood in its stand pose on the wall.
+        100..=103 => Some((155, false)),
         _ => None,
     }
 }
@@ -165,6 +168,8 @@ thread_local! {
     /// Per stage: the motion numbers of Shadow's skate and of Sonic's run for his run states 8, 9, 10
     /// (0 = not loaded), and Shadow's body model the two are walked on.
     pub(super) static RUN_TABLES: Cell<Option<([u32; 3], [u32; 3], u32)>> = const { Cell::new(None) };
+    /// The run-look files' blocks in the module's own memory.
+    static RUN_BLOCKS: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
     /// The Chao is drawn from Shadow's skate this frame.
     static SKATING: Cell<bool> = const { Cell::new(false) };
     static RUN_SAID: Cell<u8> = const { Cell::new(0) };
@@ -179,6 +184,12 @@ fn find_name(m: &Mem, name: &[u8]) -> Option<u32> {
 fn spare_motions(m: &Mem, table: u32, n: usize) -> Vec<u32> {
     let used: std::collections::BTreeSet<u32> = (0..217u32).map(|k| u32::from(m.r16(table + 0x10 * k))).collect();
     (0..300u32).rev().filter(|k| m.r32(MOTIONS + 8 * k + 4) == 0 && !used.contains(k)).take(n).collect()
+}
+
+/// A stage change: the run look is loaded again there, and its files' blocks are free again.
+pub(super) fn forget_run_look() {
+    RUN_TABLES.set(None);
+    super::remote_release(&RUN_BLOCKS.take());
 }
 
 /// MMO rule (mob 2026-11-24: "i want just the skating when ur at running speed
@@ -211,22 +222,25 @@ pub(super) fn run_style(c: &mut Cpu, m: &mut Mem) {
     let heap_var = c.r[13].wrapping_sub(SY_HEAP_SDA);
     let keep_heap = m.r32(heap_var);
     let mut made = [[0u32; 3]; 2];
-    // The look the shoes ask for now first: there may be room for only one file.
-    // (Measured in Wild Canyon: Shadow's file takes about 600 KB; the gear heap had 790 KB
-    // left after the gear, the game's own heap 1.3 MB.) A file goes into the gear heap
-    // when 450 KB is free there, else into the game's own heap when it has 1250 KB free (about 650 KB stay).
+    // The files go into the module's own memory (super::remote_heap, outside the game's two
+    // heaps), and their blocks are given back at the next stage change (forget_run_look).
+    // Before 2026-11-24 they went into the game's heaps: in the texture heap (1) they left
+    // about 100 KB in one piece, and the result screen's textures (RESULT, about 80 KB) no
+    // longer fitted with Air Shoes, Hammer Gloves and the emeralds loaded (mob: static on the
+    // result panels and on the Chao); the one in the game's heap (0) was never freed, so
+    // the lobby came up with 0.25 MB left after the stage (mob: stopped at the Chao World card).
     let looks = [(0usize, Some(SHADOW_MTN_NAME), SHADOW_ACTIONS), (1, find_name(m, b"SONICMTN.PRS"), SONIC_ACTIONS)];
     let order = if shadow_style() { [0, 1] } else { [1, 0] };
     for (which, name, actions) in order.map(|i| looks[i]) {
-        let (gear, game) = (crate::chao_player::os_heap_free(m, GEAR_HEAP), crate::chao_player::os_heap_free(m, 0));
-        let heap = if gear > 450 * 1024 { Some(GEAR_HEAP) } else if game > 1250 * 1024 { Some(0) } else { None };
-        let (Some(name), Some(heap)) = (name, heap) else {
-            eprintln!("chao-player knux: run look {which} not loaded (name {name:?}, gear heap free {} KB, game heap free {} KB): his own run there", gear / 1024, game / 1024);
+        let (Some(name), Some(heap)) = (name, super::remote_heap(c, m)) else {
+            eprintln!("chao-player knux: run look {which} not loaded (name {name:?}, no memory of the module's own): his own run there");
             continue;
         };
+        let before = super::remote_blocks();
         m.w32(heap_var, heap);
         let mtn = call(c, m, LOAD_MTN, &[name]);
         m.w32(heap_var, keep_heap);
+        RUN_BLOCKS.with_borrow_mut(|b| b.extend(super::remote_blocks().into_iter().filter(|a| !before.contains(a))));
         // The three motions of that character's run states, then the motion table as it was.
         let theirs: Vec<[u32; 2]> = (8..=10u32).map(|st| { let k = u32::from(m.r16(actions + 0x10 * st)); [m.r32(MOTIONS + 8 * k), m.r32(MOTIONS + 8 * k + 4)] }).collect();
         for (k, o) in (0..0x960u32).step_by(4).enumerate() { m.w32(MOTIONS + o, keep[k]); }
@@ -241,7 +255,7 @@ pub(super) fn run_style(c: &mut Cpu, m: &mut Mem) {
             (keep[2 * k as usize], keep[2 * k as usize + 1]) = (e[0], e[1]);
             made[which][i] = k;
         }
-        eprintln!("chao-player knux: run look {which} ({}) loaded {mtn:#x} at motion numbers {spare:?}, gear heap free {} KB", if which == 0 { "Shadow's skate" } else { "Sonic's run" }, crate::chao_player::os_heap_free(m, GEAR_HEAP) / 1024);
+        eprintln!("chao-player knux: run look {which} ({}) loaded {mtn:#x} at motion numbers {spare:?}; game heaps free {} KB and {} KB", if which == 0 { "Shadow's skate" } else { "Sonic's run" }, crate::chao_player::os_heap_free(m, 0) / 1024, crate::chao_player::os_heap_free(m, GEAR_HEAP) / 1024);
     }
     RUN_TABLES.set(Some((made[0], made[1], body)));
 }
@@ -464,6 +478,9 @@ pub(super) fn log(m: &Mem, chao: u32, state: u16) {
     if ACTS_SAID.replace(u64::from_le_bytes([acts[0], acts[1], acts[2], acts[3], m.r8(obj2 + 0xC), m.r8(obj2 + 0xD), m.r8(obj2 + 0xE), 0])) != u64::from_le_bytes([acts[0], acts[1], acts[2], acts[3], m.r8(obj2 + 0xC), m.r8(obj2 + 0xD), m.r8(obj2 + 0xE), 0]) {
         eprintln!("knux-acts: f{} offered {acts:?} count {} picked {} done {} (state {state} mode {})", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r8(obj2 + 0xC), m.r8(obj2 + 0xD), m.r8(obj2 + 0xE), m.r8(data1));
     }
+    if on_wall(m.r8(data1)) && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 20 == 0 {
+        SKEL.with_borrow(|s| if s.len() == 62 { let r = s[0]; eprintln!("knux-root: f{} mode {} root x [{:.2} {:.2} {:.2}] y [{:.2} {:.2} {:.2}] z [{:.2} {:.2} {:.2}] at [{:.2} {:.2} {:.2}] his place [{:.2} {:.2} {:.2}] his turn {:#x} {:#x} {:#x}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r8(data1), r[0][0], r[1][0], r[2][0], r[0][1], r[1][1], r[2][1], r[0][2], r[1][2], r[2][2], r[0][3], r[1][3], r[2][3], f(data1 + 0x14), f(data1 + 0x18), f(data1 + 0x1C), m.r32(data1 + 8), m.r32(data1 + 0xC), m.r32(data1 + 0x10)); });
+    }
     eprintln!("knux: f{} state {state} mode {} his motion len {n} frame {his:.2} y {:.2} pelvis {pelvis:.2} sink {:.2} wallsink {:.2} his hands fwd {:.2} {:.2} | chao motion {} frame {:.2} of {:.0}..{:.0} link {} next {:.2} of {:.0}..{:.0} hands fwd {:.2} {:.2} overlay {:.2} skel {}",
         sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r8(data1), f(data1 + 0x18), SINK.get(), WALL_SINK.get(), hands[0], hands[1],
         LAST_MOTION.get(), f(ctrl + 0x1C), f(ctrl + 0x20), f(ctrl + 0x24), m.r16(ctrl) & 2 != 0, f(ctrl + 0x34), f(ctrl + 0x38), f(ctrl + 0x3C), ch[0], ch[1], OVERLAY.get(), SKEL.with_borrow(|s| s.len()));
@@ -502,10 +519,9 @@ pub(super) fn walk_unseen(c: &mut Cpu, m: &mut Mem) -> bool {
 /// the motion draw 0x8011E214, returning to 0x8009B358 / 0x8009B38C
 /// (SA2_TRACE_EVDRAW in Wild Canyon: these two, every frame, outside his first
 /// display 0x80099BA0 that the Chao's code already walks without drawing).
-/// SA2_KNUX_LATE=1 (debug): left drawing.
+/// It is his drop shadow (own_shadow). SA2_KNUX_LATE=1 or SA2_SHOW_SONIC (debug): left drawing.
 pub(super) fn late_body(lr: u32) -> bool {
-    // TEST only (SA2_KNUX_LATE=0 skips it): skipping it did not bring the Chao's head back.
-    matches!(lr, 0x8009_B358 | 0x8009_B38C) && matches!(STEP.get(), Step::Live(_)) && std::env::var("SA2_KNUX_LATE").is_ok_and(|v| v == "0")
+    matches!(lr, 0x8009_B358 | 0x8009_B38C) && matches!(STEP.get(), Step::Live(_)) && std::env::var_os("SA2_SHOW_SONIC").is_none() && !std::env::var("SA2_KNUX_LATE").is_ok_and(|v| v == "1")
 }
 
 thread_local! {
@@ -554,6 +570,59 @@ pub(super) fn hit_log(m: &Mem, chao: u32) {
     eprintln!("hit: f{} root {:.3} {:.3} {:.3} eyes {:.3} {:.3} {:.3} / {:.3} {:.3} {:.3} feet {:.3} {:.3} {:.3} up {:.4} {:.4} {:.4} land {:.3} {:.3} {:.3}{shapes}",
         sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), n[0][0], n[0][1], n[0][2], n[1][0], n[1][1], n[1][2], n[2][0], n[2][1], n[2][2],
         feet[0], feet[1], feet[2], up[0], up[1], up[2], f(obj2 + 0x130), f(obj2 + 0x134), f(obj2 + 0x140));
+}
+
+/// His action modes on a wall: 69 hanging and climbing (animation states 100 to 103, 106 the
+/// grab), 70 (104: over the top), 65 and 66 the wall dig.
+pub(super) fn on_wall(mode: u8) -> bool {
+    matches!(mode, 69 | 70 | 65 | 66)
+}
+
+/// On a wall the game turns him to the rock: his root node's up axis is the wall's own
+/// direction out of the rock and his forward (-x) points up the wall (logged in Wild
+/// Canyon, SA2_KNUX_LOG `root x / y`), as if the wall were his floor and he lay on it.
+/// The Chao's display places it by its heading alone, so it stood upright in the air
+/// beside the wall with its back or side to it (mob 2026-11-24: "not rigged right").
+/// The Chao's climb (motion 155) is made upright against a tree: so on a wall the Chao
+/// is placed from his root node, upright along his forward with its belly to the rock.
+/// View space, for chao_node's node 0 (as board_place). SA2_KNUX_WALL=0 (debug): as before.
+pub(super) fn wall_place(m: &Mem) -> Option<[[f32; 4]; 3]> {
+    let data1 = RIDER.get();
+    if LAST_EXEC.get() != KNUX_EXEC || data1 == 0 || !on_wall(m.r8(data1)) || std::env::var("SA2_KNUX_WALL").is_ok_and(|v| v == "0") {
+        return None;
+    }
+    let root = SKEL.with_borrow(|s| (s.len() == 62).then(|| s[0]))?;
+    let world = wall_frame(&root);
+    Some(mul34(&mtx(m, m.r32(NJ_BASE_MATRIX)), &world))
+}
+
+/// The Chao's world placement for his root node on a wall: its up = his forward (-x),
+/// its front (+z, the belly) = into the rock (-his up), at his root's place.
+pub(super) fn wall_frame(root: &[[f32; 4]; 3]) -> [[f32; 4]; 3] {
+    let col = |j: usize| { let l = (0..3).map(|i| root[i][j] * root[i][j]).sum::<f32>().sqrt().max(1e-6); [root[0][j] / l, root[1][j] / l, root[2][j] / l] };
+    let (hx, hy) = (col(0), col(1));
+    let up = [-hx[0], -hx[1], -hx[2]];
+    let front = [-hy[0], -hy[1], -hy[2]];
+    let side = [up[1] * front[2] - up[2] * front[1], up[2] * front[0] - up[0] * front[2], up[0] * front[1] - up[1] * front[0]];
+    std::array::from_fn(|i| [side[i], up[i], front[i], root[i][3]])
+}
+
+/// His task's second display (main.dol 0x8009ADFC, task +0x2C) draws his whole body as the
+/// drop shadow: his shape and size around a Chao a third as tall (mob 2026-11-24). Not drawn
+/// while the Chao stands in for him (late_body); the Chao draws its own instead: its display
+/// ends in ChaoMain .text 0x855C, which draws the Chao's shadow models only while the float at
+/// [task +0x3C] +0x30 is under the ChaoMain table value at .data 0x2A50 +0x7C. In a stage
+/// that float is past it (no shadow at all with his gone, run sh-late0). It reads 0 while the
+/// player's own Chao is drawn in his stage, and gets its value back.
+/// unverified: what the float is (it is compared like a distance from the camera).
+pub(super) fn own_shadow(m: &mut Mem, task: u32) -> Option<(u32, u32)> {
+    let w = m.r32(task + 0x3C);
+    if LAST_EXEC.get() != KNUX_EXEC || !(0x8000_0000..0x8C00_0000).contains(&w) || std::env::var("SA2_KNUX_LATE").is_ok_and(|v| v == "1") {
+        return None;
+    }
+    let keep = m.r32(w + 0x30);
+    m.w32(w + 0x30, 0);
+    Some((w + 0x30, keep))
 }
 
 /// The Ninja draw state words the game's displays set and restore around
@@ -643,8 +712,8 @@ mod tests {
         assert_eq!(own_motion(109), Some((582, false)));
         assert_eq!(own_motion(110), Some((582, true)));
         assert_eq!(own_motion(105), Some((130, false)));
-        assert_eq!(own_motion(100), Some((155, false)));
-        for s in [0, 90, 91, 92, 95, 96, 111, 138] { assert_eq!(own_motion(s), None, "{s}: overlay"); }
+        for s in 100..=103 { assert_eq!(own_motion(s), Some((155, false))); }
+        for s in [0, 90, 91, 92, 95, 96, 104, 106, 111, 138] { assert_eq!(own_motion(s), None, "{s}: overlay"); }
     }
     #[test]
     fn only_player_one_as_rouge_becomes_knuckles() {
@@ -681,6 +750,19 @@ mod tests {
         assert_eq!(run_frame(6.0, 8.0, 4.0), 3.0);
         assert_eq!(run_frame(9.0, 8.0, 4.0), 0.5);
         assert_eq!(run_frame(1.0, 0.0, 4.0), 0.0);
+    }
+    #[test]
+    fn on_a_wall_the_chao_is_upright_with_its_belly_to_the_rock() {
+        // A wall whose rock is at -z: his up (y) points out of it (+z), his forward (-x) up the wall (+y).
+        let root = [[0.0, 0.0, 1.0, 5.0], [-1.0, 0.0, 0.0, 6.0], [0.0, 1.0, 0.0, 7.0]];
+        let w = wall_frame(&root);
+        let col = |j: usize| [w[0][j], w[1][j], w[2][j]];
+        assert_eq!(col(1), [0.0, 1.0, 0.0], "the Chao's up is the world's up");
+        assert_eq!(col(2), [0.0, 0.0, -1.0], "its front is into the rock");
+        assert_eq!(col(3), [5.0, 6.0, 7.0]);
+        let x = col(0);
+        assert!((x[0].abs() - 1.0).abs() < 1e-6 && x[1].abs() < 1e-6 && x[2].abs() < 1e-6);
+        assert!(on_wall(69) && on_wall(65) && !on_wall(59) && !on_wall(6));
     }
     #[test]
     fn only_the_dig_modes_sink() {

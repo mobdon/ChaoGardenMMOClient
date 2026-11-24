@@ -1957,7 +1957,11 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
     if turn {
         m.w32(cw + 0x0C, chao_yaw(keep_yaw));
     }
+    let shade = Some(task).filter(|_| matches!(STEP.get(), Step::Live(ch) if ch == task) && RIDER.get() != 0).and_then(|t| knux_rig::own_shadow(m, t));
     chao_display_inner(c, m);
+    if let Some((at, keep)) = shade {
+        m.w32(at, keep);
+    }
     if swim.is_some() {
         m.w32(cw + 0x18, keep_y);
     }
@@ -2060,7 +2064,7 @@ fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
         CHAO_NODE.set(0);
         let level = !chao_world(m) && PILOT_SEAT.get().is_none();
         LEVEL_RIG.set(level);
-        BOARD_PLACE.set(if level { board_place(m) } else { None });
+        BOARD_PLACE.set(if level { board_place(m).or_else(|| knux_rig::wall_place(m)) } else { None });
         rel_original(c, m, a, chao_display);
         LEVEL_RIG.set(false);
         BOARD_PLACE.set(None);
@@ -2263,6 +2267,8 @@ fn pin(m: &mut Mem, chao: u32, data1: u32) {
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
     if std::env::var_os("SA2_HEAP_LOG").is_some() {
         sa2_recomp::os::add_frame_hook(|_, m| heap_log(m));
+        c.rt.set_override(0x8007_2820, |c, m| tex_load_log(c, m, 0x8007_2820));
+        c.rt.set_override(LOAD_TEX, |c, m| tex_load_log(c, m, LOAD_TEX));
     }
     // SA2_HANG_LOG=1 (debug): a thread that prints the latest guest calls when
     // frames stop for 5 s while calls go on (a guest loop that never ends).
@@ -4071,6 +4077,25 @@ pub(crate) fn os_heap_free(m: &Mem, h: u32) -> u32 {
     free
 }
 
+/// SA2_HEAP_LOG (debug): each texture file the game loads by name (0x80072548, 0x80072820):
+/// its name, what the loader answered, and each heap's free bytes and largest free block after.
+fn tex_load_log(c: &mut Cpu, m: &mut Mem, addr: u32) {
+    let (name, list) = (c.r[3], c.r[4]);
+    original(c, m, addr);
+    let text: String = (0..24).map(|i| m.r8(name + i)).take_while(|&b| b != 0).map(|b| b as char).collect();
+    let heaps: Vec<String> = (0..2).map(|h| {
+        let (mut free, mut big, mut cell) = (0u32, 0u32, m.r32(m.r32(0x803A_DC68) + 12 * h + 4));
+        for _ in 0..100_000 {
+            if !(0x8000_0000..0x8C00_0000).contains(&cell) { break; }
+            free += m.r32(cell + 8);
+            big = big.max(m.r32(cell + 8));
+            cell = m.r32(cell + 4);
+        }
+        format!("h{h} free {} KB largest {} KB", free / 1024, big / 1024)
+    }).collect();
+    eprintln!("tex-load: {addr:#x} {text:?} list {list:#x} -> {:#x} (list now: names {:#x} count {}); {}", c.r[3], m.r32(list), m.r32(list.wrapping_add(4)), heaps.join(", "));
+}
+
 /// SA2_HEAP_LOG=n (debug): every n frames, the OS heaps (HeapArray
 /// 0x803ADC68: size, free list, allocated list per 12-byte descriptor) as
 /// total and free bytes, and the arena (0x803ADC70/74).
@@ -4441,6 +4466,7 @@ fn collision_fit(m: &mut Mem, chao: u32) {
 
 thread_local! {
     static SIZE_SAID: Cell<u32> = const { Cell::new(0) };
+    static WIN_DONE: Cell<bool> = const { Cell::new(false) };
 }
 
 /// A new stage (not a Chao World area change): the game has released the
@@ -4450,7 +4476,7 @@ thread_local! {
 /// (frames stopped right after the new Chao's first draw).
 /// Unverified: which allocations the stage change frees; this drops all of them.
 fn drop_stage_loads() {
-    knux_rig::RUN_TABLES.set(None);
+    knux_rig::forget_run_look();
     FULL_SIZE.set(None);
     FULL_BODY.set(None);
     RIDER_REST.set(None);
@@ -4583,6 +4609,15 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         eprintln!("chao-drive: self mode {me} (stage {}, step {:?})", m.r16(STAGE_NUM), STEP.get());
     }
     let pmove = me && player_move_on();
+    // SA2_WIN_AT=frame (debug, test only): once at that frame in a stage, the game's own
+    // stage-clear call for player 0 (main.dol 0x8001C810: it starts the result screen
+    // 0x8005DD88 / 0x8005ED8C), to test the result and the way back without playing to the goal.
+    if !chao_world(m) && std::env::var("SA2_WIN_AT").ok().and_then(|v| v.trim().parse::<u64>().ok()).is_some_and(|f| sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= f) && !WIN_DONE.replace(true) {
+        eprintln!("chao-player: debug stage clear (0x8001C810)");
+        let keep = c.r;
+        call(c, m, 0x8001_C810, &[0]);
+        c.r = keep;
+    }
     // SA2_TASK_LOG=1 (debug): his task's words, once.
     if std::env::var("SA2_TASK_LOG").is_ok_and(|v| v == "1") && !TASK_LOGGED.replace(true) {
         eprintln!("task-log: character task {task:#x} words +0x00..+0x40 {:x?}", (0..0x40).step_by(4).map(|o| m.r32(task + o)).collect::<Vec<_>>());
@@ -4888,7 +4923,7 @@ fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
     knux_rig::SPIN.set(knux_rig::spins(act));
     MIRROR.set(own.is_some_and(|o| o.1));
     ARM_FWD.set(if matches!(act, 111 | 138) { 0.8 } else { 0.0 });
-    if own.is_some_and(|o| o.0 == 582) {
+    if own.is_some_and(|o| o.0 == 582 || o.0 == 155) {
         knux_rig::punch_lock(m, chao, act);
     }
     knux_rig::log(m, chao, act);
@@ -6422,6 +6457,22 @@ fn remote_heap(c: &mut Cpu, m: &mut Mem) -> Option<u32> {
     eprintln!("chao-player remote: heap at {REMOTE_HEAP_START:#x}..{REMOTE_HEAP_END:#x} ({} KB, about {} Chao)",
         (REMOTE_HEAP_END - REMOTE_HEAP_START) / 1024, (REMOTE_HEAP_END - REMOTE_HEAP_START) / REMOTE_CHAO_BYTES);
     Some(REMOTE_HEAP)
+}
+
+/// The blocks now allocated in the module's own heap.
+fn remote_blocks() -> std::collections::BTreeSet<u32> {
+    REMOTE_ALLOC.with_borrow(|r| r.as_ref().map(|(_, sizes)| sizes.keys().copied().collect()).unwrap_or_default())
+}
+
+/// Give blocks of the module's own heap back (ones already freed are skipped).
+fn remote_release(blocks: &[u32]) {
+    REMOTE_ALLOC.with_borrow_mut(|r| if let Some((reg, sizes)) = r.as_mut() {
+        for p in blocks {
+            if let Some(n) = sizes.remove(p) {
+                reg.free(*p, n);
+            }
+        }
+    });
 }
 
 fn alloc_from_heap(c: &mut Cpu, m: &mut Mem) {
