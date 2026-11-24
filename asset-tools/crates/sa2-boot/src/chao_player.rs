@@ -4263,6 +4263,7 @@ thread_local! {
     static UP_FOR: Cell<u32> = const { Cell::new(0) };
     static CLIMB_V: Cell<f32> = const { Cell::new(0.0) };
     static FLY_T: Cell<Option<(u32, u32)>> = const { Cell::new(None) };
+    static FLY_Y: Cell<Option<f32>> = const { Cell::new(None) };
     static CLIMB_WIN: Cell<(u32, [f32; 2], f32, bool)> = const { Cell::new((0, [0.0; 2], 0.0, false)) };
 }
 
@@ -4316,18 +4317,29 @@ pub(crate) fn swim_motion(skill: u32, low: u32, mid: u32) -> u32 {
 /// 400 (ChaoMain fn_60_4BC10): 134 points.
 const GARDEN_FLY_POINTS: u16 = 134;
 const GARDEN_FLY_TOP: f32 = 100.0;
-const RAND: u32 = 0x8010_DC88;
 
-/// Which flight the second press starts (mob to choose, 2026-11-23).
-/// Default: the garden's take-off for a Chao with GARDEN_FLY_POINTS or more,
-/// the race's glide under that. SA2_FLY_MODE=race: the glide for everyone;
-/// =garden: the take-off for everyone.
+/// Which flight the second press starts. mob 2026-11-24: the garden's
+/// take-off for every Chao. SA2_FLY_MODE=race: the race's glide for everyone;
+/// =gate: the take-off only from GARDEN_FLY_POINTS, the glide under that.
 pub(crate) fn garden_flier(points: u16) -> bool {
     match std::env::var("SA2_FLY_MODE").as_deref() {
         Ok("race") => false,
-        Ok("garden") => true,
-        _ => points >= GARDEN_FLY_POINTS,
+        Ok("gate") => points >= GARDEN_FLY_POINTS,
+        _ => true,
     }
+}
+
+/// The best Fly a Chao can reach by the game's rules (S grade, level 99, three reincarnations).
+const BEST_POINTS: f32 = 3266.0;
+
+/// MMO rule (mob 2026-11-24), not the game's: the strong-lift time of the player's take-off grows with its Fly
+/// points, 300 frames at 0 to 600 at BEST_POINTS (the game draws 300..600 at random for a garden Chao).
+/// SA2_FLY_LIFT=frames (test only): that time instead, to film the hand-over to the glide.
+pub(crate) fn lift_frames(points: f32) -> u32 {
+    if let Some(n) = std::env::var("SA2_FLY_LIFT").ok().and_then(|v| v.trim().parse().ok()) {
+        return n;
+    }
+    (300.0 + 300.0 * points.clamp(0.0, BEST_POINTS) / BEST_POINTS) as u32
 }
 
 /// One frame of the garden's flight (ChaoMain fn_60_3D978): it starts at 0.4
@@ -4382,7 +4394,7 @@ pub(crate) fn pad_filter(mut p: sa2_asset_tools::input::PadStatus) -> sa2_asset_
 /// Chao World, self mode, after the hidden character moved the body: is the
 /// Chao swimming or in the air, and the motion it plays then (None: the usual
 /// stand / walk / run). In flight his speed is set by the race's rule.
-fn chao_world_state(c: &mut Cpu, m: &mut Mem, task: u32, chao: u32, area: u16) -> Option<u32> {
+fn chao_world_state(_c: &mut Cpu, m: &mut Mem, task: u32, chao: u32, area: u16) -> Option<u32> {
     let (own, cw, pwp) = (m.r32(task + 0x34), m.r32(chao + 0x34), m.r32(P1_OBJ2));
     if own == 0 || cw == 0 {
         (SWIM.set(None), AIR.set(false));
@@ -4496,12 +4508,16 @@ fn chao_world_state(c: &mut Cpu, m: &mut Mem, task: u32, chao: u32, area: u16) -
                 let again = FLY_T.get().is_some();
                 let (n, timer) = match FLY_T.get() {
                     Some((n, t)) => (n + 1, t),
-                    None => (0, 300 + (call(c, m, RAND, &[]) as f32 * (1.0 / 32768.0) * 301.0) as u32),
+                    None => (0, lift_frames(skill)),
                 };
                 FLY_T.set(Some((n, timer)));
                 let mw = m.r32(chao + 0x38);
                 let g = if mw != 0 { -f(m, mw + 0x48) } else { 0.055 };
-                let v = garden_fly_step(FLY_V.get().or(again.then_some(now)), n < timer, g);
+                // mob 2026-11-24: when the strong lift ends the flight goes
+                // straight on as the race's glide by the same Fly points (the
+                // garden's own weaker lift, 0.92, is not used for the player).
+                let from = FLY_V.get().or(again.then_some(now));
+                let v = if n < timer { garden_fly_step(from, true, g) } else { fly_step(from.unwrap_or(now), skill) };
                 if f(m, cw + 0x18) > GARDEN_FLY_TOP {
                     m.w32(cw + 0x18, GARDEN_FLY_TOP.to_bits());
                 }
@@ -4510,16 +4526,24 @@ fn chao_world_state(c: &mut Cpu, m: &mut Mem, task: u32, chao: u32, area: u16) -
                 fly_step(FLY_V.get().unwrap_or(now), skill)
             };
             FLY_V.set(Some(v));
-            // His next step adds his own fall before it moves: given back here.
+            // His next step takes his own fall off before it moves: given back
+            // here, and what his step still got wrong last frame (his fall is
+            // not the same every frame) is made up, so the height follows the
+            // flight's own speed exactly (the take-off climbed 15 units where
+            // the garden Chao climbs 22).
+            let y = f(m, cw + 0x18);
+            let miss = FLY_Y.get().map_or(0.0, |want| (want - y).clamp(-0.5, 0.5));
+            FLY_Y.set(Some(y + miss + v.1));
             m.w32(pwp + 0x64, v.0.to_bits());
-            m.w32(pwp + 0x68, (v.1 + HIS_GRAVITY.get()).to_bits());
+            m.w32(pwp + 0x68, (v.1 + miss + HIS_GRAVITY.get()).to_bits());
             // (The Chao's own fall is cleared in pin, so only the race's sink acts.)
             if std::env::var("SA2_FLY_LOG").is_ok_and(|v| v == "1") {
-                eprintln!("fly: f{} skill {skill} speed forward {:.3} up {:.3} (his fall {:.3}) height {:.2}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), v.0, v.1, HIS_GRAVITY.get(), f(m, cw + 0x18));
+                eprintln!("fly: f{} skill {skill} speed forward {:.3} up {:.3} (his fall {:.3}) height {:.2} yaw {:#06x} at ({:.1}, {:.1}) lift {:?}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), v.0, v.1, HIS_GRAVITY.get(), f(m, cw + 0x18), m.r32(cw + 0x0C) & 0xFFFF, f(m, cw + 0x14), f(m, cw + 0x1C), FLY_T.get());
             }
         }
     } else {
         FLY_V.set(None);
+        FLY_Y.set(None);
     }
     if !air {
         FLY_T.set(None);
@@ -4998,7 +5022,8 @@ mod tests {
         assert!((v.0 - 0.5).abs() < 1e-3);
         // after the timer it comes down faster
         assert!(super::garden_fly_step(Some((0.5, 0.0)), false, 0.055).1 < super::garden_fly_step(Some((0.5, 0.0)), true, 0.055).1);
-        assert!(!super::garden_flier(133) && super::garden_flier(134));
+        assert!(super::garden_flier(0));
+        assert_eq!([0.0, 1633.0, 3266.0, 9999.0].map(super::lift_frames), [300, 450, 600, 600]);
     }
 
     #[test]
