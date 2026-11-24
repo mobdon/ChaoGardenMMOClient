@@ -33,6 +33,7 @@ thread_local! {
     static OVERLAY: Cell<f32> = const { Cell::new(1.0) };
     static SAID_REST: Cell<u32> = const { Cell::new(0) };
     static SAID_TABLE: Cell<u32> = const { Cell::new(0) };
+    static ACTS_SAID: Cell<u64> = const { Cell::new(0) };
 }
 
 /// The overlay's share in a level (skate_blend under LEVEL_RIG).
@@ -448,6 +449,12 @@ pub(super) fn log(m: &Mem, chao: u32, state: u16) {
         eprintln!("knux-size2: his table{} | Chao's table{} | his physics radius {:.3} height {:.3} weight {:.3} camera y {:.3} centre height {:.3} | Chao move work floats {}", table(m.r32(0x801E_7768)), table(cw), f(obj2 + 0x130), f(obj2 + 0x134), f(obj2 + 0x138), f(obj2 + 0x13C), f(obj2 + 0x140), mwf.join(" "));
         let _ = his_task_twp;
         eprintln!("knux-size: his collision {} | Chao's {} | his player work +0x134 {:.3} +0x138 {:.3} +0x13c {:.3} +0x140 {:.3}", info(data1), info(cw), f(obj2 + 0x134), f(obj2 + 0x138), f(obj2 + 0x13C), f(obj2 + 0x140));
+    }
+    // His action window (player work +4: the actions on offer, their count at +0xC, the one picked at +0xD,
+    // the one last done at +0xE; main.dol 0x80095334 does the picked one on B).
+    let acts: Vec<u8> = (4..0xCu32).map(|o| m.r8(obj2 + o)).collect();
+    if ACTS_SAID.replace(u64::from_le_bytes([acts[0], acts[1], acts[2], acts[3], m.r8(obj2 + 0xC), m.r8(obj2 + 0xD), m.r8(obj2 + 0xE), 0])) != u64::from_le_bytes([acts[0], acts[1], acts[2], acts[3], m.r8(obj2 + 0xC), m.r8(obj2 + 0xD), m.r8(obj2 + 0xE), 0]) {
+        eprintln!("knux-acts: f{} offered {acts:?} count {} picked {} done {} (state {state} mode {})", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r8(obj2 + 0xC), m.r8(obj2 + 0xD), m.r8(obj2 + 0xE), m.r8(data1));
     }
     eprintln!("knux: f{} state {state} mode {} his motion len {n} frame {his:.2} y {:.2} pelvis {pelvis:.2} sink {:.2} wallsink {:.2} his hands fwd {:.2} {:.2} | chao motion {} frame {:.2} of {:.0}..{:.0} link {} next {:.2} of {:.0}..{:.0} hands fwd {:.2} {:.2} overlay {:.2} skel {}",
         sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r8(data1), f(data1 + 0x18), SINK.get(), WALL_SINK.get(), hands[0], hands[1],
