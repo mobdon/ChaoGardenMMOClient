@@ -3096,6 +3096,8 @@ thread_local! {
 thread_local! {
     /// The body node's place in the Chao's placement as last drawn, and the frame (bob_calm).
     static BOB: Cell<Option<(u64, [f32; 3], [f32; 3])>> = const { Cell::new(None) };
+    /// The frame and the running mean of the hidden character's body node height in his root's space (the run's bounce).
+    static HIS_BODY: Cell<Option<(u64, f32)>> = const { Cell::new(None) };
     static BOB_SAID: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -3131,14 +3133,32 @@ fn bob_calm(m: &mut Mem) -> [f32; 3] {
         _ => (now, now),
     };
     let view = |v: [f32; 3]| -> [f32; 3] { std::array::from_fn(|row| (0..3).map(|q| p[row][q] * v[q]).sum::<f32>() + p[row][3]) };
+    // Owner's rule (mob 2026-11-24; not native Chao behaviour): "a tiny amount of bounce of
+    // the chao's body in each step while it is running". In his run only, the body rises and
+    // falls with his own body node (4) about its running mean, at the Chao's size (the leg
+    // ratio, 0.28) and a share of it: SA2_BODY_BOUNCE (0.2; 0 = none). Measured on the test
+    // copy: the body travels 0.116 Chao units peak to peak with it (0.4 gave 0.18; his own
+    // is 0.277 at the Chao's size). Added after the easing, so the head only rides it; the
+    // feet keep their own track of the body's place.
+    let share = std::env::var("SA2_BODY_BOUNCE").ok().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.2);
+    let his = SKEL.with_borrow(|s| (s.len() == 62).then(|| inv_mul(&s[0], &s[4])[1][3]));
+    let bounce = match (his, on && GAIT.get() == Some(Gait::Run)) {
+        (Some(y), true) => {
+            let mean = HIS_BODY.get().filter(|x| f.wrapping_sub(x.0) <= 2).map_or(y, |x| x.1 + (y - x.1) * 0.05);
+            HIS_BODY.set(Some((f, mean)));
+            (y - mean) * 0.28 * share * skate_blend(false)
+        }
+        _ => 0.0,
+    };
+    let shown = [drawn[0], drawn[1] + bounce, drawn[2]];
     if on {
-        let v = view(drawn);
+        let v = view(shown);
         for row in 0..3 {
             m.w32(cur_ptr + 4 * (4 * row + 3) as u32, v[row].to_bits());
         }
     }
     if std::env::var("SA2_FOOT_TRACE").is_ok_and(|v| v == "1") {
-        eprintln!("bob-trace: f{f} chao motion {} own {now:?} drawn {drawn:?} feet {feet:?}", LAST_MOTION.get());
+        eprintln!("bob-trace: f{f} chao motion {} own {now:?} drawn {shown:?} feet {feet:?} his body {:?} bounce {bounce:.4}", LAST_MOTION.get(), his.map(|y| y * 0.28));
     }
     BOB.set(Some((f, drawn, feet)));
     view(feet)
