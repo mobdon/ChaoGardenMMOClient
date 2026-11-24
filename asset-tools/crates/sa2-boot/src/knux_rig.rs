@@ -118,7 +118,8 @@ pub(super) fn punch_lock(m: &mut Mem, chao: u32, state: u16) {
 /// he curls up and turns over; measured 152 degrees between his body and the
 /// Chao's with the cap on) and the leap out of a dig (92, 93: 104 degrees).
 pub(super) fn spins(state: u16) -> bool {
-    matches!(state, 111 | 115 | 116 | 65..=68 | 92 | 93)
+    // and the digs themselves (90, 91 on the ground; 95, 96, 98 on a wall: 111 to 122 degrees measured).
+    matches!(state, 111 | 115 | 116 | 65..=68 | 90..=93 | 95 | 96 | 98)
 }
 
 thread_local! {
@@ -673,7 +674,7 @@ mod tests {
         assert_eq!(under_motion(5, 578), 578);
         assert_eq!(under_motion(6, 119), 0);
         for own in [582, 130, 155] { assert_eq!(under_motion(0, own), 0); }
-        assert!(spins(66) && spins(92) && spins(93) && !spins(15) && !spins(16));
+        assert!(spins(66) && spins(90) && spins(91) && spins(92) && spins(93) && spins(96) && !spins(15) && !spins(16) && !spins(100));
         assert!(spins(111) && spins(115) && spins(116) && !spins(109) && !spins(110) && !spins(0));
         assert!(runs(8) && runs(9) && runs(10) && !runs(7) && !runs(6) && !runs(0) && !runs(11));
         // His 8-frame run at frame 6 = three quarters through: frame 3 of a 4-frame skate cycle.
