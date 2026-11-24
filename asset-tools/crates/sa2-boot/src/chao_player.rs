@@ -1934,6 +1934,10 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
     let task = c.r[3];
     let cw = m.r32(task + 0x34);
     let own = matches!(STEP.get(), Step::Live(ch) if ch == task) && cw != 0 && self_drive(m) && !std::env::var("SA2_CHAO_TILT").is_ok_and(|v| v == "1");
+    if own && PMOVE_CHAO.get() == task {
+        let his = m.r32(0x801E_7768);
+        if (0x8000_0000..0x8C00_0000).contains(&his) { take_push(m, his, cw); }
+    }
     let keep = (m.r32(cw.wrapping_add(0x08)), m.r32(cw.wrapping_add(0x10)));
     // The character's exec leaves its own yaw in the shared task work, and
     // the two do not mean the same: the character goes along (cos, sin) of
@@ -4382,6 +4386,31 @@ fn player_move_on() -> bool {
     std::env::var("SA2_CHAO_PMOVE").is_ok_and(|v| v.trim() == "1")
 }
 
+/// The step the game moved the character's task work `own` since the Chao's
+/// place was mirrored into it, taken by the Chao's `cw`. Before the Chao is
+/// drawn too: the push that stands him on a pad's top comes after his exec,
+/// and drawn before it the Chao stood 0.58 into the pad.
+/// The step from `at` to `now` when it is a push: something moved, and no
+/// coordinate by more than PUSH_MAX (the game placing the character).
+pub(crate) fn push_step(at: [f32; 3], now: [f32; 3]) -> Option<[f32; 3]> {
+    let step: [f32; 3] = std::array::from_fn(|i| now[i] - at[i]);
+    (step.iter().any(|d| *d != 0.0) && step.iter().all(|d| d.abs() <= PUSH_MAX)).then_some(step)
+}
+
+fn take_push(m: &mut Mem, own: u32, cw: u32) {
+    if let Some(at) = MIRRORED.take() {
+        if let Some(step) = push_step(at, std::array::from_fn(|i| f32::from_bits(m.r32(own + 0x14 + 4 * i as u32)))) {
+            for (i, d) in step.iter().enumerate() {
+                let a = cw + 0x14 + 4 * i as u32;
+                m.w32(a, (f32::from_bits(m.r32(a)) + d).to_bits());
+            }
+            if std::env::var("SA2_PUSH_LOG").is_ok_and(|v| v == "1") {
+                eprintln!("chao-drive: pushed {step:?}");
+            }
+        }
+    }
+}
+
 /// The character's exec (Sonic/Shadow/Metal 0x80083E44: action state in twp
 /// +0x00, then e.g. 0x80048490, 0x8004C734, 0x80046DE4 speed (pwp +0x64 +=
 /// acc +0x58), 0x80045880, 0x8003E668 per state) run on the Chao's body: for
@@ -4412,18 +4441,7 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
     // mirrored into it, and the Chao takes the same step (mob, 2026-11-24:
     // the lobby's exit teleporter had no collision). A step over PUSH_MAX is
     // not a push (the game placing the character) and is left alone.
-    if let Some(at) = MIRRORED.take() {
-        let step: [f32; 3] = std::array::from_fn(|i| f32::from_bits(m.r32(own + 0x14 + 4 * i as u32)) - at[i]);
-        if step.iter().any(|d| *d != 0.0) && step.iter().all(|d| d.abs() <= PUSH_MAX) {
-            for (i, d) in step.iter().enumerate() {
-                let a = cw + 0x14 + 4 * i as u32;
-                m.w32(a, (f32::from_bits(m.r32(a)) + d).to_bits());
-            }
-            if std::env::var("SA2_PUSH_LOG").is_ok_and(|v| v == "1") {
-                eprintln!("chao-drive: pushed {step:?}");
-            }
-        }
-    }
+    take_push(m, own, cw);
     // The Chao's exec enters its own collision (CCL_Entry) while twp +0xA0
     // has bit 8; the character's collision is at the same spot, and a
     // jump into it went down the character's hit path (main.dol 0x80055A50:
@@ -4447,6 +4465,21 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
     IN_PMOVE.set(false);
     m.w32(own, m.r32(cw));
     m.w32(own + 4, m.r32(cw + 4));
+    // His body's hit shape is put by his exec at his own centre height above
+    // his feet (5.4, whatever his land collision's centre is set to), over the
+    // Chao's head: object triggers at the Chao's height were missed (the lobby
+    // exit's, 4.0 above its pad, by the game's own hit). Brought down to the
+    // fitted centre height, along the same line from his feet.
+    if let Some((obj2, full)) = FULL_SIZE.get().filter(|o| o.0 == m.r32(P1_OBJ2)) {
+        let (fit, full) = (f32::from_bits(m.r32(obj2 + PW_CENTRE)), f32::from_bits(full[2]));
+        let body = { let p = m.r32(own + 0x2C); if (0x8000_0000..0x8C00_0000).contains(&p) { m.r32(p + 0xC) } else { 0 } };
+        if fit > 0.0 && fit < full && (0x8000_0000..0x8C00_0000).contains(&body) {
+            for o in [0u32, 4, 8] {
+                let (p, at) = (f32::from_bits(m.r32(cw + 0x14 + o)), f32::from_bits(m.r32(body + 8 + o)));
+                m.w32(body + 8 + o, (p + (at - p) * fit / full).to_bits());
+            }
+        }
+    }
     CHAR_ANG.set(Some([m.r32(cw + 0x08), m.r32(cw + 0x0C), m.r32(cw + 0x10)]));
     m.w32(cw, chao_head[0]);
     m.w32(cw + 4, chao_head[1]);
@@ -5893,6 +5926,15 @@ fn create_at(c: &mut Cpu, m: &mut Mem, pos: [u32; 3], param: u32) -> Step {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_solid_objects_push_is_taken_and_a_placement_is_not() {
+        // Stood on the lobby exit's pad: lifted 0.58 to its top after his exec.
+        let s = super::push_step([1.0, 2.51, 2.0], [1.0, 3.09, 2.0]).unwrap();
+        assert!(s[0] == 0.0 && (s[1] - 0.58).abs() < 1e-5 && s[2] == 0.0);
+        assert_eq!(super::push_step([1.0, 2.51, 2.0], [1.0, 2.51, 2.0]), None, "not moved");
+        assert_eq!(super::push_step([1.0, 2.51, 2.0], [80.0, 0.0, 80.0]), None, "placed by the game");
+    }
+
     #[test]
     fn garden_water_and_swim_motion_as_the_game_decides() {
         use super::{in_water, swim_motion, water_level};
