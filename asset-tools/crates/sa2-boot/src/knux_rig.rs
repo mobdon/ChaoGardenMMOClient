@@ -62,43 +62,50 @@ pub(super) fn punch_frame(his: f32, his_len: f32, start: f32, end: f32, hit: Opt
     }
 }
 
-/// The hit frames (his motion's, the Chao karate 582's from its start), by
-/// his motion's length: where each one's punching hand is furthest forward,
-/// measured with SA2_KNUX_LOG=1 (`knux:` lines, columns `his hands fwd` and
-/// `chao hands fwd`). None until measured: the plain share.
-fn hit_pair(_his_len: u32) -> Option<(f32, f32)> {
-    None
+/// The hit frames, his and the Chao's: where each one's punching hand is
+/// furthest forward, measured on the test copy with SA2_KNUX_LOG=1
+/// (knux/r3-side, columns `his hands fwd` / chao `hands fwd`):
+/// his punch 1 (state 109, 8 frames) first at its most, 4.56 units, at frame
+/// 4.5; his punch 2 (110, 12 frames) first at 4.40 at frame 9.0; the Chao's
+/// karate 582 (frames 0..8) at its most, 0.79, at frame 4.67 (sampled every
+/// third of a frame, overlay off). Not the frame his hit counts in the game's
+/// collision: that was not found.
+pub(super) fn hit_pair(state: u16) -> Option<(f32, f32)> {
+    match state {
+        109 => Some((4.5, 4.67)),
+        110 => Some((9.0, 4.67)),
+        _ => None,
+    }
+}
+
+/// ChaoMain AL_SetMotionLinkStep(task, motion, frames) (.text 0x1B4DC, the
+/// wrapper of main.dol SetMotionLinkStep 0x8002CFF8: link speed 1 / frames).
+pub(super) const AL_SET_MOTION_LINK_STEP: u32 = 0x1B4DC;
+
+/// The frames his own action row links a state in over: 1 / its blend share
+/// a frame (row +8: punch 1 and 2 = 1.0, glide and climb = 0.25). The Chao's
+/// own table links karate 582 in too slowly for his 16-frame punch (test
+/// copy 2026-11-24: still linking when his punch ended, no punch seen).
+pub(super) fn link_frames(his_blend: f32) -> u32 {
+    if his_blend > 0.0 && his_blend <= 1.0 { (1.0 / his_blend).round() as u32 } else { 1 }
 }
 
 /// Punch 1 and 2: the Chao's karate frame follows his motion frame.
-pub(super) fn punch_lock(m: &mut Mem, chao: u32) {
+/// The game's motion control (chaowk +0xAC; main.dol MotionControl
+/// 0x8002D214): flag 0x2 = linking, the motion playing at +0x18 (frame +4,
+/// start +8, end +0xC), the one linking in at +0x30 (same fields).
+pub(super) fn punch_lock(m: &mut Mem, chao: u32, state: u16) {
     let cw = m.r32(chao + 0x34);
     let (mot, his) = RIDER_MOTION.get();
     if cw == 0 || !(0x8000_0000..0x8C00_0000).contains(&mot) || std::env::var("SA2_PUNCH_LOCK").is_ok_and(|v| v == "0") {
         return;
     }
     let ctrl = cw + CHAO_MOTION_CTRL;
-    // Not while the Chao's motion is still linking in (flag 0x2), as stride_lock.
-    if m.r16(ctrl) & 2 != 0 {
-        return;
-    }
+    let info = ctrl + if m.r16(ctrl) & 2 != 0 { 0x30 } else { 0x18 };
     let f = |m: &Mem, a: u32| f32::from_bits(m.r32(a));
     let n = m.r32(mot + 4);
-    let to = punch_frame(his, n as f32, f(m, ctrl + 0x20), f(m, ctrl + 0x24), hit_pair(n));
-    m.w32(ctrl + 0x1C, to.to_bits());
-}
-
-/// B on the ground made him pick the Chao up (action mode 19, animation
-/// 31; test copy 2026-11-24: 3 presses, 3 pick-ups, no punch): the Chao
-/// stands on his spot and its body collision can be held. ChaoMain
-/// AL_DisableTouch (.text 0x5A60 = CCL_Disable(task, 0) and (task, 2)) each
-/// frame, as AL_DisableNade is. MMO rule: the player's own Chao cannot be
-/// picked up by the character it stands in for.
-/// SA2_KNUX_PICKUP=1 (debug): left as it was.
-pub(super) fn no_pick_up(c: &mut Cpu, m: &mut Mem, chao: u32) {
-    if !std::env::var("SA2_KNUX_PICKUP").is_ok_and(|v| v == "1") {
-        call(c, m, rt::sec(m, 60, 1) + 0x5A60, &[chao]);
-    }
+    let to = punch_frame(his, n as f32, f(m, info + 8), f(m, info + 0xC), hit_pair(state));
+    m.w32(info + 4, to.to_bits());
 }
 
 /// The game's SetPlayerChar(player, character) (main.dol 0x8001DDC0), called
@@ -122,11 +129,27 @@ pub(super) fn set_char(c: &mut Cpu, m: &mut Mem) {
     original(c, m, SET_PLAYER_CHAR);
 }
 
-/// SA2_KNUX_UPGRADES=hex (test): OR into his upgrades word (obj2 +0x10), to
-/// reach moves the test save has no item for (0x400 = Shovel Claws, dig).
+/// Where his display (main.dol 0x80099BA0) draws his items with
+/// njDrawObject 0x8011DF44, by the return address: the Air Necklace (upgrade
+/// bit 0x2000) at 0x8009A1AC, then per hand the Shovel Claw (0x400, model
+/// table +0x514 / +0x51C) and the Hammer Glove (0x1000, +0x524 / +0x52C).
+/// Walked for the Chao his body draws nothing, but these did: the claws hung
+/// at his own hidden hands, as large as he is, over the Chao (test copy
+/// 2026-11-24, knux/r3-side, r5-side). Not drawn while the Chao stands in
+/// for him. SA2_SHOW_SONIC (debug: the character drawn) keeps them.
+const ITEM_DRAWS: [u32; 5] = [0x8009_A1AC, 0x8009_A1E8, 0x8009_A20C, 0x8009_A23C, 0x8009_A260];
+
+pub(super) fn item_draw(lr: u32) -> bool {
+    ITEM_DRAWS.contains(&lr) && std::env::var_os("SA2_SHOW_SONIC").is_none()
+}
+
+/// SA2_KNUX_UPGRADES=hex (test): OR into his upgrade bits (obj2 +0x24, the
+/// word fn_8004F838 fills from the save's upgrade bytes; sa2-runtime
+/// player.rs upgrade_bits), to reach moves the test save has no item for
+/// (0x400 = Shovel Claws, dig).
 pub(super) fn test_upgrades(m: &mut Mem, obj2: u32) {
     if let Some(bits) = std::env::var("SA2_KNUX_UPGRADES").ok().and_then(|v| u32::from_str_radix(v.trim().trim_start_matches("0x"), 16).ok()) {
-        m.w32(obj2 + 0x10, m.r32(obj2 + 0x10) | bits);
+        m.w32(obj2 + 0x24, m.r32(obj2 + 0x24) | bits);
     }
 }
 
@@ -165,24 +188,42 @@ pub(super) fn log(m: &Mem, chao: u32, state: u16) {
     let p = CHAO_PLACE.get();
     let ch = HANDS.with_borrow(|h| h.map(|x| x.map_or(f32::NAN, |x| inv_mul(&p, &x)[2][3])));
     let data1 = RIDER.get();
-    eprintln!("knux: f{} state {state} mode {} his motion len {n} frame {his:.2} y {:.2} pelvis {pelvis:.2} sink {:.2} his hands fwd {:.2} {:.2} | chao motion {} frame {:.2} of {:.0}..{:.0} link {} hands fwd {:.2} {:.2} overlay {:.2} skel {}",
+    eprintln!("knux: f{} state {state} mode {} his motion len {n} frame {his:.2} y {:.2} pelvis {pelvis:.2} sink {:.2} his hands fwd {:.2} {:.2} | chao motion {} frame {:.2} of {:.0}..{:.0} link {} next {:.2} of {:.0}..{:.0} hands fwd {:.2} {:.2} overlay {:.2} skel {}",
         sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r8(data1), f(data1 + 0x18), SINK.get(), hands[0], hands[1],
-        LAST_MOTION.get(), f(ctrl + 0x1C), f(ctrl + 0x20), f(ctrl + 0x24), m.r16(ctrl) & 2 != 0, ch[0], ch[1], OVERLAY.get(), SKEL.with_borrow(|s| s.len()));
+        LAST_MOTION.get(), f(ctrl + 0x1C), f(ctrl + 0x20), f(ctrl + 0x24), m.r16(ctrl) & 2 != 0, f(ctrl + 0x34), f(ctrl + 0x38), f(ctrl + 0x3C), ch[0], ch[1], OVERLAY.get(), SKEL.with_borrow(|s| s.len()));
 }
 
 thread_local! {
-    /// His root node's height over the Chao's placement at the last draw
-    /// (the Chao's own units along its up axis; measured, not yet applied).
+    /// His root node's height over his own position at the last draw (world units).
     static SINK: Cell<f32> = const { Cell::new(0.0) };
 }
 
-/// At the Chao's node 0 in a level: his root node against the Chao's
-/// placement (both view space, this draw).
-pub(super) fn at_root(m: &Mem) {
-    let p = mtx(m, m.r32(NJ_CURRENT_MATRIX));
-    if let Some(root) = SKEL.with_borrow(|s| s.first().copied()) {
-        let d = inv_mul(&p, &root);
-        SINK.set(d[1][3]);
+/// His action modes (task work byte 0) in which his display draws him sunk
+/// into the ground: 61 digging in, 62 coming back out (seen in Wild Canyon,
+/// SA2_KNUX_LOG: his position stays on the ground while his root node goes
+/// down and up again).
+pub(super) fn digging(mode: u8) -> bool {
+    matches!(mode, 61 | 62)
+}
+
+/// At the Chao's node 0 in a level, before its placement is taken: while he
+/// digs, the Chao goes into the ground as far as his root node is under his
+/// own position (SKEL is in world space; both numbers are the game's).
+pub(super) fn at_root(m: &mut Mem) {
+    let data1 = RIDER.get();
+    let Some(root) = SKEL.with_borrow(|s| (s.len() == 62).then(|| s[0])) else { return };
+    if data1 == 0 || LAST_EXEC.get() != KNUX_EXEC {
+        return;
+    }
+    let sink = root[1][3] - f32::from_bits(m.r32(data1 + 0x18));
+    SINK.set(sink);
+    if digging(m.r8(data1)) && std::env::var("SA2_KNUX_SINK").map_or(true, |v| v != "0") {
+        // World up in view space is the base matrix's y column.
+        let (base, cur) = (mtx(m, m.r32(NJ_BASE_MATRIX)), m.r32(NJ_CURRENT_MATRIX));
+        for r in 0..3u32 {
+            let a = cur + 4 * (4 * r + 3);
+            m.w32(a, (f32::from_bits(m.r32(a)) + base[r as usize][1] * sink).to_bits());
+        }
     }
 }
 
@@ -203,6 +244,35 @@ mod tests {
         assert_eq!(swapped_char(0, 5, true), 5);
         assert_eq!(swapped_char(1, 5, false), 5);
         for ch in [0, 1, 2, 3, 4, 6, 7] { assert_eq!(swapped_char(0, ch, false), ch); }
+    }
+    #[test]
+    fn link_frames_from_his_rows_blend() {
+        assert_eq!(link_frames(1.0), 1); // punch 1, 2
+        assert_eq!(link_frames(0.25), 4); // glide, climb
+        assert_eq!(link_frames(0.0625), 16);
+        assert_eq!(link_frames(0.0), 1);
+        assert_eq!(link_frames(f32::NAN), 1);
+    }
+    #[test]
+    fn only_the_dig_modes_sink() {
+        for mode in 0..=255u8 { assert_eq!(digging(mode), mode == 61 || mode == 62); }
+    }
+    #[test]
+    fn the_chaos_fist_is_out_when_his_is() {
+        // Karate 582 is frames 0..8; his punch 1 is 8 frames, his punch 2 12.
+        for (state, len) in [(109u16, 8.0f32), (110, 12.0)] {
+            let (his, chao) = hit_pair(state).unwrap();
+            assert!((punch_frame(his, len, 0.0, 8.0, hit_pair(state)) - chao).abs() < 1e-4);
+            assert_eq!(punch_frame(0.0, len, 0.0, 8.0, hit_pair(state)), 0.0);
+            assert_eq!(punch_frame(len, len, 0.0, 8.0, hit_pair(state)), 8.0);
+        }
+        assert_eq!(hit_pair(111), None);
+    }
+    #[test]
+    fn only_his_item_draw_sites_are_skipped() {
+        for lr in ITEM_DRAWS { assert!(ITEM_DRAWS.contains(&lr)); }
+        // His body's motion draws return to these: never an item site.
+        for lr in [0x8009_A070u32, 0x8009_A0D8, 0x8009_A10C] { assert!(!ITEM_DRAWS.contains(&lr)); }
     }
     #[test]
     fn overlay_goes_out_and_in_without_a_step() {

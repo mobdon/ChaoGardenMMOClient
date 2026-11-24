@@ -2403,6 +2403,8 @@ fn ev_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
         eprintln!("chao-player ev: chao draw via {addr:#x} obj {obj:#x} motion {mot:#x} lr {lr:#x} nodes so far {}", CHAO_NODE.get());
     }
     if LCAP.get() {
+        // Knuckles's own items (claws, gloves, necklace) at his hidden hands: not drawn.
+        if addr == 0x8011_DF44 && knux_rig::item_draw(c.lr) { return; }
         return level_capture(c, m, addr);
     }
     if from_board_disp(c, m) {
@@ -4101,7 +4103,6 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // the rider's B is its own move, not Pet (action 31). Each frame, as
         // the Chao's behaviours may enable touch again (AL_EnableTouch 0x5AB0).
         call(c, m, rt::sec(m, 60, 1) + AL_DISABLE_NADE, &[chao]);
-        if addr == KNUX_EXEC { knux_rig::no_pick_up(c, m, chao); }
         // The Chao's gear (Shadow's and Knuckles's textures and models, for the
         // Air Shoes, the ball and the Hammer Gloves), once per stage, in every
         // stage the Chao plays, whoever the hidden character is: each file is
@@ -4210,8 +4211,9 @@ fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
     if LAST_ACT.replace(act) != act {
         eprintln!("chao-player knux: state {act} motion {} -> chao motion {own:?}", m.r16(table + 0x10 * idx));
         if let Some((mo, _)) = own {
-            let s1 = rt::sec(m, 60, 1);
-            call(c, m, s1 + AL_SET_MOTION_LINK, &[chao, mo]);
+            // Linked in over as many frames as his own row links this state in.
+            let step = knux_rig::link_frames(f32::from_bits(m.r32(table + 0x10 * idx + 8)));
+            call(c, m, rt::sec(m, 60, 1) + knux_rig::AL_SET_MOTION_LINK_STEP, &[chao, mo, step]);
             LAST_MOTION.set(mo);
         }
     }
@@ -4219,7 +4221,7 @@ fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
     MIRROR.set(own.is_some_and(|o| o.1));
     ARM_FWD.set(if matches!(act, 111 | 138) { 0.8 } else { 0.0 });
     if own.is_some_and(|o| o.0 == 582) {
-        knux_rig::punch_lock(m, chao);
+        knux_rig::punch_lock(m, chao, act);
     }
     knux_rig::log(m, chao, act);
 }
