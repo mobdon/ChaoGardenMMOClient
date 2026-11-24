@@ -816,10 +816,11 @@ function gearTuner() {
   // is on the game draws fist 2 as the reflection of fist 1's sliders and these are not used.
   Object.assign(vals.fist1, { dx: 0.137, dy: 1.368, dz: 1.873, rx: 53.84, ry: -14.64, rz: 0.72, scale: 1.32 });
   // The other set places (chao_player.rs TRY_ON, BOOT_TUNE).
-  vals.boot0.scale = vals.boot1.scale = 0.75;
-  Object.assign(vals.sunglasses, { dx: 0, dy: -0.5, dz: -0.64, rx: -180, ry: -90, rz: 0, scale: 1.6 });
-  Object.assign(vals.necklace, { dx: 0, dy: -0.16, dz: 1.8, rx: -155, ry: 90, rz: -155, scale: 1.41 });
-  Object.assign(vals.bracelet, { dx: 0.58, dy: -0.76, dz: -0.12, rx: 171, ry: 88, rz: 0, scale: 1.46 });
+  // The Flame Ring crown's height above the head (chao_player.rs CROWN_UP).
+  vals.sflame.dy = vals.ring.dy = 0.75;
+  Object.assign(vals.sunglasses, { dx: 0, dy: -0.35, dz: -0.38, rx: 0, ry: -90, rz: -180, scale: 1.5 });
+  Object.assign(vals.necklace, { dx: 0, dy: -0.26, dz: 1.5, rx: 0, ry: 90, rz: 0, scale: 1.35 });
+  Object.assign(vals.bracelet, { dx: 0.78, dy: -0.68, dz: -0.06, rx: 170, ry: 90, rz: 0, scale: 1.09 });
   const text = () => Object.entries(vals).map(([p, v]) => [p, ...keys.map(([k]) => v[k])].join(' ')).join('\n') + '\n';
   const send = () => {
     const b = new TextEncoder().encode(text() + setText()).subarray(0, MMO.GEAR_MAX);
@@ -846,7 +847,7 @@ function gearTuner() {
   });
   pick.onchange = () => rows.forEach((f) => f());
   // Debug toggles and the sound mute list: "set key value" lines in the same file.
-  const sets = { fists: '1', shoes: '1', jets: '1', tryon: '1', sunglasses: '1', necklace: '1', sflame: '1', lshoe0: '1', lshoe1: '1', ring: '1', bracelet: '1', selog: '0', link: '1', mute: '', tp: '' };
+  const sets = { fists: '1', shoes: '1', jets: '1', tryon: '1', sunglasses: '1', necklace: '1', sflame: '1', lshoe0: '1', lshoe1: '1', ring: '1', bracelet: '1', selog: '0', link: '0', mute: '', tp: '' };
   const setText = () => Object.entries(sets).map(([k, v]) => `set ${k} ${v}`).join('\n') + '\n';
   const fx = document.createElement('div');
   fx.style.cssText = 'margin-top:6px;display:flex;flex-wrap:wrap;gap:6px';
