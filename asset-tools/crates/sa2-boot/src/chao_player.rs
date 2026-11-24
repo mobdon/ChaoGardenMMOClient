@@ -4440,6 +4440,12 @@ fn chao_body_shape(m: &Mem, chao: u32) -> Option<(f32, [u32; 3])> {
     (0..n).map(|k| info + 0x30 * k).find(|&e| m.r8(e) == 129).map(|e| (f32::from_bits(m.r32(e + 0xC)), [m.r32(e + 0x14), m.r32(e + 0x18), m.r32(e + 0x1C)]))
 }
 
+/// The top of the Chao's head above its feet, without horns or the ball over it, in game units.
+/// Shortcut: read off the outline still of mob's Chaos Chao (knux/hd2-front.jpg: the 3.0 land box
+/// is 132 px tall there and the head top is 192 px above the feet), not from its model; other
+/// Chao shapes may differ. Upgrade: the head node's top from the Chao's own model.
+const CHAO_HEAD_TOP: f32 = 4.4;
+
 /// MMO rule (mob 2026-11-24: "need shrunk but his jump and dig need to be as
 /// deep as the full size", then "do the same with sonic/shadow collision"):
 /// while the player's Chao stands in for the hidden character, in every
@@ -4458,7 +4464,16 @@ fn collision_fit(m: &mut Mem, chao: u32) {
     };
     let f = |m: &Mem, a: u32| f32::from_bits(m.r32(a));
     let body = chao_body_shape(m, chao);
-    let fit = fitted_size(f(m, mw + CHAO_MOVE_RADIUS), f(m, mw + CHAO_MOVE_HEIGHT), body.map(|b| b.0), full.map(f32::from_bits));
+    // mob 2026-11-24 ("hit box and collision should prob be the same for them"): one size for the
+    // land collision and the body hit shape, in every stage: the Chao's width (its move work's
+    // radius, 1.5) and from its feet to the top of its head (CHAO_HEAD_TOP, our measure), centre
+    // half-way up. SA2_LAND_LOW=1: the Chao's own move height (3.0) and body centre (2.0), as before.
+    let low = std::env::var("SA2_LAND_LOW").is_ok_and(|v| v == "1");
+    let fit = if low {
+        fitted_size(f(m, mw + CHAO_MOVE_RADIUS), f(m, mw + CHAO_MOVE_HEIGHT), body.map(|b| b.0), full.map(f32::from_bits))
+    } else {
+        fitted_size(f(m, mw + CHAO_MOVE_RADIUS), CHAO_HEAD_TOP, Some(CHAO_HEAD_TOP / 2.0), full.map(f32::from_bits))
+    };
     let use_full = std::env::var("SA2_FULL_SIZE").is_ok_and(|v| v == "1");
     let size = match fit { Some(s) if !use_full => s.map(f32::to_bits), _ => full };
     for (a, v) in at.into_iter().zip(size) { m.w32(obj2 + a, v); }
@@ -4472,11 +4487,22 @@ fn collision_fit(m: &mut Mem, chao: u32) {
             Some(o) => o.1,
             None => { let o = [0x14, 0x18, 0x1C].map(|a| m.r32(his_body + a)); FULL_BODY.set(Some((his_body, o))); o }
         };
-        // mob 2026-11-24 (choice between the two): the shape that is hurt and that picks rings up stays
-        // his own size; only the land collision above is the Chao's. SA2_BODY_SMALL=1: the Chao's own
-        // body sizes here too (what it was for a few hours that day: rings above the Chao were missed).
-        let shape = match (body, fit) { (Some(b), Some(_)) if !use_full && std::env::var("SA2_BODY_SMALL").is_ok_and(|v| v == "1") => b.1, _ => own };
+        // mob 2026-11-24, marked on the outline still ("this should be the body shape, the green"): the
+        // shape that is hurt and that picks rings up is the Chao's width and stands from its feet to the
+        // top of its head. Width: the Chao's own body collision size (1.5). Height: CHAO_HEAD_TOP.
+        // SA2_BODY_FULL=1: his own shape (4.0 / 4.0 / 0.65); SA2_BODY_SMALL=1: the Chao's own body
+        // collision sizes (1.5 / 2.5 / 0.7), as before that mark.
+        let env = |k: &str| std::env::var(k).is_ok_and(|v| v == "1");
+        let shape = match (body, fit) {
+            (Some(_), Some(_)) if use_full || env("SA2_BODY_FULL") => own,
+            (Some(b), Some(_)) if env("SA2_BODY_SMALL") => b.1,
+            (Some(b), Some(_)) => [b.1[0], (CHAO_HEAD_TOP / 2.0).to_bits(), own[2]],
+            _ => own,
+        };
         for (a, v) in [0x14, 0x18, 0x1C].into_iter().zip(shape) { m.w32(his_body + a, v); }
+        if std::env::var_os("SA2_HIT_LOG").is_some() && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
+            eprintln!("hit-entry: kind {:#x} words +4.. {:x?} centre [{:.2} {:.2} {:.2}] sizes [{:.2} {:.2} {:.2}]", m.r8(his_body), (4..8).map(|o| m.r8(his_body + o)).collect::<Vec<_>>(), f(m, his_body + 8), f(m, his_body + 0xC), f(m, his_body + 0x10), f(m, his_body + 0x14), f(m, his_body + 0x18), f(m, his_body + 0x1C));
+        }
     }
     if SIZE_SAID.replace(obj2) != obj2 {
         eprintln!("chao-player size: his land collision radius {:.2} height {:.2} centre {:.2} -> {:?} (Chao move work {:.2} {:.2})", f32::from_bits(full[0]), f32::from_bits(full[1]), f32::from_bits(full[2]), size.map(f32::from_bits), f(m, mw + CHAO_MOVE_RADIUS), f(m, mw + CHAO_MOVE_HEIGHT));

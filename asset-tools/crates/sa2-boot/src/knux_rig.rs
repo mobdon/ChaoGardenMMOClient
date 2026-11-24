@@ -732,7 +732,7 @@ pub(super) fn shadow_disp(c: &mut Cpu, m: &mut Mem) {
             let pass = mtx(m, cur_ptr);
             let (base, nodes) = super::SHADOW_NODES.with_borrow(|s| s.clone());
             if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
-                let w: Vec<String> = nodes.iter().take(3).map(|(o, mt)| { let x = inv_mul(&base, mt); format!("{o:#x} model {:#x} at [{:.1} {:.1} {:.1}]", m.r32(o + 4), x[0][3], x[1][3], x[2][3]) }).collect();
+                let w: Vec<String> = nodes.iter().take(3).map(|(o, mt)| { let x = inv_mul(&base, mt); format!("{o:#x} flags {:#x} model {:#x} (vlist {:#x} plist {:#x} first words {:#x} {:#x}) child {:#x} sib {:#x} at [{:.1} {:.1} {:.1}]", m.r32(*o), m.r32(o + 4), m.r32(m.r32(o + 4)), m.r32(m.r32(o + 4) + 4), m.r32(m.r32(m.r32(o + 4))), m.r32(m.r32(m.r32(o + 4) + 4)), m.r32(o + 0x2C), m.r32(o + 0x30), x[0][3], x[1][3], x[2][3]) }).collect();
                 eprintln!("knux-shadow: {} Chao nodes; pass row0 [{:.2} {:.2} {:.2} {:.1}]; {}", nodes.len(), pass[0][0], pass[0][1], pass[0][2], pass[0][3], w.join(" | "));
             }
             for (obj, mat) in nodes {
