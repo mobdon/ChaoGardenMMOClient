@@ -4093,7 +4093,9 @@ fn tex_load_log(c: &mut Cpu, m: &mut Mem, addr: u32) {
         }
         format!("h{h} free {} KB largest {} KB", free / 1024, big / 1024)
     }).collect();
-    eprintln!("tex-load: {addr:#x} {text:?} list {list:#x} -> {:#x} (list now: names {:#x} count {}); {}", c.r[3], m.r32(list), m.r32(list.wrapping_add(4)), heaps.join(", "));
+    // 0x80072548 takes no list: its r4 is whatever was there (Radical Highway: 0xFFFFD412, a read there stopped the game).
+    let lw = |o: u32| if (0x8000_0000..0x8C00_0000).contains(&list) { m.r32(list + o) } else { 0 };
+    eprintln!("tex-load: {addr:#x} {text:?} list {list:#x} -> {:#x} (list now: names {:#x} count {}); {}", c.r[3], lw(0), lw(4), heaps.join(", "));
 }
 
 /// SA2_HEAP_LOG=n (debug): every n frames, the OS heaps (HeapArray
