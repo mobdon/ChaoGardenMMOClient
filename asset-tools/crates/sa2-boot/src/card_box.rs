@@ -73,6 +73,13 @@ const LANGUAGE: u32 = 0x801C_C168 + 0x11;
 const SPRITE: u32 = 0x50314;
 /// The window display's first call: normal blending for the sprite draw.
 const SPRITE_BLEND: u32 = 0x4F594;
+/// The Chao font's set-up (fn_60_1B5D0): counts its users at .bss 0x386B8 and
+/// for the first one loads the three font files and clears the glyph cache;
+/// fn_60_1B590 frees them with the last user. Only two of the game's own
+/// windows use it (their FExec 0x39A8 / 0x480C), so outside the lobby there
+/// is often no user at all.
+const FONT_INIT: u32 = 0x1_B5D0;
+const FONT_USERS: u32 = 0x3_86B8;
 const FONT_BEGIN: u32 = 0x1C424;
 const FONT_BUILD: u32 = 0x1BD24;
 const FONT_PLACE: u32 = 0x1B8F0;
@@ -329,6 +336,18 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
     }
     if TEX.get().is_none() {
         TEX.set(Some(load(c, m)));
+    }
+    // The box's text is a user of the font too. Without one, the game freed
+    // the font with the lobby's window and the box drew its glyphs from, and
+    // into, freed memory (mob 2026-11-24: the name and rings as stripes and
+    // noise in the garden). This user is never taken back, so the font stays
+    // for the whole visit to Chao World, for the Tab chart's text as well.
+    let users = m.r32(rt::sec(m, CHAOMAIN, 6) + FONT_USERS);
+    eprintln!("card-box: the Chao font has {users} users");
+    if users == 0 {
+        let c1 = rt::sec(m, CHAOMAIN, 1);
+        call(c, m, c1 + FONT_INIT, &[]);
+        eprintln!("card-box: font set up for the box; game heap 0 free {} KB", crate::chao_player::os_heap_free(m, 0) / 1024);
     }
     m.load(NAME, b"MMOCard\0");
     let task = call(c, m, CREATE_ELEMENTAL_TASK, &[2, 3, MAIN, NAME]);
