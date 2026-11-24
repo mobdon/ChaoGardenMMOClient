@@ -532,11 +532,20 @@ pub fn pump(c: &mut Cpu, m: &mut Mem) {
     let at = std::env::var("SA2_STACK")
         .ok()
         .and_then(|s| s.parse::<u64>().ok());
-    if at.is_some() && at == Some(pumps()) {
+    // SA2_STACK=stall: once, when 600 pumps go by with no new game frame (the main thread is
+    // waiting on something), every thread's stack (as SA2_STACK_THREAD=all).
+    let stall = std::env::var("SA2_STACK").is_ok_and(|v| v.trim() == "stall") && {
+        use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+        static SEEN: AtomicU64 = AtomicU64::new(0);
+        static SINCE: AtomicU64 = AtomicU64::new(0);
+        let f = crate::host::FRAMES.load(Relaxed);
+        if SEEN.swap(f, Relaxed) != f { SINCE.store(0, Relaxed); false } else { f > 600 && SINCE.fetch_add(1, Relaxed) + 1 == 600 }
+    };
+    if stall || (at.is_some() && at == Some(pumps())) {
         // SA2_STACK_THREAD=addr: that thread's saved stack instead (its
         // OSContext keeps r1 at +4); =all: every thread on the OS's active
         // list (head at 0x800000DC, linked at +0x2FC), with its state.
-        let which = std::env::var("SA2_STACK_THREAD").unwrap_or_default();
+        let which = if stall { "all".to_string() } else { std::env::var("SA2_STACK_THREAD").unwrap_or_default() };
         let mut stacks: Vec<(String, u32)> = Vec::new();
         if which.trim() == "all" {
             let mut t = m.r32(0x8000_00DC);
@@ -562,7 +571,7 @@ pub fn pump(c: &mut Cpu, m: &mut Mem) {
             stacks.push(("current".into(), sp));
         }
         for (who, mut sp) in stacks {
-            eprint!("stack at pump {} ({who}):", at.unwrap_or(0));
+            eprint!("stack at pump {} ({who}):", at.unwrap_or(pumps()));
             for _ in 0..24 {
                 sp = m.r32(sp);
                 if sp == 0 || sp == u32::MAX {
