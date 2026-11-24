@@ -855,7 +855,7 @@ function gearTuner() {
     const cb = Object.assign(document.createElement('input'), { type: 'checkbox', checked: sets[k] === '1' });
     cb.onchange = () => { sets[k] = cb.checked ? '1' : '0'; send(); rows.forEach((f) => f()); };
     const l = document.createElement('label');
-    l.append(cb, k === 'selog' ? 'sound log' : k === 'link' ? 'Link fists' : pieces[k] || k);
+    l.append(cb, { fists: 'Fists', shoes: 'Shoes', jets: 'Jets', tryon: 'Try-on gear', selog: 'Sound log', link: 'Link fists' }[k] || pieces[k]);
     fx.append(l);
   }
   const mute = Object.assign(document.createElement('input'), { placeholder: 'mute ids, e.g. 2003,601c', style: 'width:100%;margin-top:4px' });
