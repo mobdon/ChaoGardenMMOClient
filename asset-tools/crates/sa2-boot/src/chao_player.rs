@@ -4664,6 +4664,23 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         call(c, m, 0x8001_C810, &[0]);
         c.r = keep;
     }
+    // SA2_WARP=frame,x,y,z,yaw (debug, test only; yaw in hex): for the ten frames from that one, in a
+    // stage, the hidden character is put at that place facing that way, to stand him at a set
+    // distance from an object (punch reach checks).
+    if let Some(w) = std::env::var("SA2_WARP").ok().filter(|_| !chao_world(m)) {
+        let p: Vec<&str> = w.split(',').collect();
+        let now = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+        let twp = m.r32(task + 0x34);
+        if let (Some(at), true, true) = (p.first().and_then(|v| v.trim().parse::<u64>().ok()), p.len() >= 5, twp != 0) {
+            if (at..at + 10).contains(&now) {
+                for (i, v) in p[1..4].iter().enumerate() {
+                    if let Ok(x) = v.trim().parse::<f32>() { m.w32(twp + 0x14 + 4 * i as u32, x.to_bits()); }
+                }
+                if let Ok(y) = u32::from_str_radix(p[4].trim().trim_start_matches("0x"), 16) { m.w32(twp + 0x0C, y); }
+                if now == at { eprintln!("chao-player: debug warp to {:?}", &p[1..]); }
+            }
+        }
+    }
     // SA2_TASK_LOG=1 (debug): his task's words, once.
     if std::env::var("SA2_TASK_LOG").is_ok_and(|v| v == "1") && !TASK_LOGGED.replace(true) {
         eprintln!("task-log: character task {task:#x} words +0x00..+0x40 {:x?}", (0..0x40).step_by(4).map(|o| m.r32(task + o)).collect::<Vec<_>>());
