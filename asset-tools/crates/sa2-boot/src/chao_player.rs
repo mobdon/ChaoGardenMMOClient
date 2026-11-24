@@ -4640,7 +4640,9 @@ fn lobby_exit_hook(c: &mut Cpu, m: &mut Mem) {
 fn lobby_exit_exec(c: &mut Cpu, m: &mut Mem) {
     let (task, at) = (c.r[3], rt::sec(m, LOBBY_MODULE, 1) + LOBBY_EXIT_EXEC);
     let twp = m.r32(task + 0x34);
-    if twp != 0 && m.r8(twp) == 1 && m.r16(twp + 4) & 0x100 == 0 && call(c, m, HIT_PLAYER, &[task, 0]) != 0 {
+    // SA2_EXIT_AT=frame (debug): the exit counts as walked into from that frame on.
+    let debug = std::env::var("SA2_EXIT_AT").ok().and_then(|v| v.trim().parse::<u64>().ok()).is_some_and(|f| sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= f);
+    if twp != 0 && m.r8(twp) == 1 && m.r16(twp + 4) & 0x100 == 0 && (debug || call(c, m, HIT_PLAYER, &[task, 0]) != 0) {
         eprintln!("chao-player: lobby exit -> the game's Stage Select");
         m.w16(twp + 4, m.r16(twp + 4) | 0x100);
         m.w8(twp, 6);
