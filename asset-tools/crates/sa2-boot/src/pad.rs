@@ -80,7 +80,10 @@ fn read(c: &mut Cpu, m: &mut Mem) {
             );
         }
     }
-    for (i, p) in PADS.get().iter().enumerate() {
+    let mut pads = PADS.get();
+    // Chao World: the second jump press in the air is the Chao's flight, not the character's own air move.
+    pads[0] = crate::chao_player::pad_filter(pads[0]);
+    for (i, p) in pads.iter().enumerate() {
         to_guest(m, base + 12 * i as u32, p);
     }
     c.r[3] = 0;

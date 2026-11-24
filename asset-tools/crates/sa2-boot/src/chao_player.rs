@@ -32,6 +32,8 @@ mod emerald_orbit;
 const SONIC_EXEC: u32 = 0x8008_3E44;
 const SONIC_DISP: u32 = 0x8007_BFF4;
 const KNUX_EXEC: u32 = 0x8009_F8A0;
+/// Tails's and Eggman's walkers (coordinator note 2026-11-23; unverified here).
+const WALKER_EXEC: u32 = 0x800B_3A8C;
 const KNUX_DISP: u32 = 0x8009_9BA0;
 const ROUGE_DISP: u32 = 0x8009_8280;
 const READ_FILE: u32 = 0x8001_ACAC;
@@ -266,6 +268,7 @@ fn board_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
     // The centre in Sonic's model space: the Chao draws before the board, so
     // seat() places it with next frame's root instead of lagging a frame.
     BOARD.set(Some((f, tris, apply(&rel, cw))));
+    BOARD_AXES.set(Some((f, w[0][0].atan2(w[2][0]).to_degrees(), w[0][2].atan2(w[2][2]).to_degrees())));
     // Draw scaled about its world centre: cur' = base * S_c * inv(base) * cur.
     let s = BOARD_SCALE;
     let ws: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { w[i][j] * s } else { w[i][3] * s + (1.0 - s) * cw[i] }));
@@ -310,10 +313,6 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
         original(c, m, addr);
     }
     let n = NODES.with_borrow(|n| n.len());
-    // Any rider (Knuckles's and Rouge's skeletons too): once a frame.
-    if n > 8 && !SELF_CAP.get() {
-        hammer_gloves(c, m);
-    }
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
     if f % 60 == 0 {
         eprintln!("chao-player lvl: frame {f} draw {addr:#x} obj {obj:#x} motion {mot:#x} nodes {n}");
@@ -326,16 +325,21 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
             None => nodes,
         };
         SKEL.set(nodes);
+        // The motion and frame this skeleton was drawn with (stride_lock).
+        RIDER_MOTION.set((mot, f1.ps0 as f32));
         if SELF_CAP.get() {
             RIDER_OBJ.set(obj);
             return;
         }
         RIDER_OBJ.set(obj);
-        air_shoes(c, m);
     } else if n > 0 && SELF_CAP.get() {
-        // Self mode: the ball as he draws it, under the view scaled to the Chao.
-        (c.r, c.f[1]) = (regs, f1);
-        original(c, m, addr);
+        // Self mode (Chao World): no spin ball; the Chao stays and plays its
+        // own motion in the air (mob 2026-11-23: the ball only in Sonic's and
+        // Shadow's own levels). SA2_SELF_BALL=1 (debug): the ball as he draws it.
+        if std::env::var("SA2_SELF_BALL").is_ok_and(|v| v == "1") {
+            (c.r, c.f[1]) = (regs, f1);
+            original(c, m, addr);
+        }
     } else if n > 0 {
         // In the ball the motion draw is the ball model alone (2 nodes, lvl9\g30b).
         let obj2 = m.r32(P1_OBJ2);
@@ -500,14 +504,122 @@ fn gear_tune(name: &str) -> Option<[[f32; 4]; 3]> {
     Some(tune_matrix(&v))
 }
 
-/// The fists' set places, both from the gear tuner by hand ("fist0" and
-/// "fist1" lines: dx dy dz rx ry rz scale). The left plate (331) is the
-/// right one's (329) mirror along its own z, not x, and each is fitted to
-/// its own arm, so the two lines differ in more than a sign.
+/// The fists' set places ("fist0" and "fist1" tuner lines: dx dy dz rx ry rz
+/// scale). Fist 1 (fist0) is tuned by hand. Fist 2 is drawn as its reflection
+/// across the Chao's left-right plane (mirror_fist, from the two fits), also
+/// in the tuner while its "Link fists" is on. Fist 2's line here is that
+/// reflection written out (SA2_FIST_LOG=1 logs it), where the panel's fist 2
+/// sliders start when unlinked; it was [0.3, 1.26, 1.8, 60, -10, 0, 1.35] by
+/// hand before (0.073 model units and 7.6 degrees off the reflection).
+/// The left plate (331) is the right one's (329) mirror along its own z, not
+/// x, and each is fitted to its own arm, so the two lines differ in more than a sign.
 const FIST_SET: [[f32; 7]; 2] = [
     [0.3, 1.26, -2.2, -60.0, 10.0, 0.0, 1.35],
-    [0.3, 1.26, 1.8, 60.0, -10.0, 0.0, 1.35],
+    [0.137, 1.368, 1.873, 53.84, -14.64, 0.72, 1.32],
 ];
+
+thread_local! {
+    /// The two gloves' fitted places in the Chao's rest model space.
+    static FIST_D: Cell<Option<([[f32; 4]; 3], [[f32; 4]; 3])>> = const { Cell::new(None) };
+    /// Fist 2's line as last logged.
+    static FIST2_SAID: Cell<[f32; 7]> = const { Cell::new([0.0; 7]) };
+}
+
+/// Fist 2's tuner matrix as the reflection of fist 1's (`t1`), from the
+/// fitted gloves (`fit`: per arm node 3 / 10, the glove's place under its arm
+/// node at rest).
+fn fist2_mirror(m: &Mem, fit: &[(u32, [[f32; 4]; 3]); 2], t1: &[[f32; 4]; 3]) -> Option<[[f32; 4]; 3]> {
+    let (d1, d2) = match FIST_D.get() {
+        Some(d) => d,
+        None => {
+            let w = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| r.worlds(&[])))?;
+            let world = |n: usize| -> [[f32; 4]; 3] { let (r, t) = w[n]; std::array::from_fn(|i| [r[i][0], r[i][1], r[i][2], t[i]]) };
+            let d = (mul34(&world(3), &fit[0].1), mul34(&world(10), &fit[1].1));
+            FIST_D.set(Some(d));
+            d
+        }
+    };
+    let t1 = *t1;
+    let t2 = mirror_fist(&d1, &t1, &d2);
+    let line = tune_values(&t2);
+    let said = FIST2_SAID.get();
+    let log = std::env::var("SA2_FIST_LOG").is_ok_and(|v| v == "1");
+    // With the tuner or the log: fist 2's line whenever fist 1's moves it.
+    if (log || std::env::var_os("SA2_GEAR_TUNE").is_some()) && (0..7).any(|i| (line[i] - said[i]).abs() > 1e-3) {
+        eprintln!("fist-log: fist 2 follows fist 1 by reflection: fist1 {:?} -> fist1 line for fist 2 {line:?}", tune_values(&t1));
+    }
+    if log && said == [0.0; 7] {
+        // How far each plate is from the other's z mirror (0 = exact mirrors).
+        let verts = |model: u32| -> Vec<[f32; 3]> {
+            let g = crate::chao_retarget::read_chao(&|a| m.r32(a), knux_obj(m, model), [vec![], vec![]]);
+            g.verts.iter().zip(g.worlds(&[])).flat_map(|(vs, (r, t))| vs.iter().map(move |v| std::array::from_fn(|i| t[i] + (0..3).map(|q| r[i][q] * v[q]).sum::<f32>())).collect::<Vec<_>>()).collect()
+        };
+        let (a, b) = (verts(fit[0].0), verts(fit[1].0));
+        let worst = a.iter().map(|p| b.iter().map(|q| ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] + q[2]).powi(2)).sqrt()).fold(f32::MAX, f32::min)).fold(0.0f32, f32::max);
+        // The hand-set fist 2 against the mirror: where the plate's origin sat, and its turn.
+        let old = mul34(&d2, &tune_matrix(&FIST_SET[1]));
+        let new = mul34(&d2, &t2);
+        let dp: [f32; 3] = std::array::from_fn(|i| old[i][3] - new[i][3]);
+        let r3 = |x: &[[f32; 4]; 3]| -> [[f32; 3]; 3] { std::array::from_fn(|i| std::array::from_fn(|j| x[i][j])) };
+        eprintln!("fist-log: plates {} / {} ({} / {} vertices), worst distance from the other's z mirror {worst:.4}", fit[0].0, fit[1].0, a.len(), b.len());
+        eprintln!("fist-log: fist 2 as fist 1's mirror: line {:?}; the set line is off by {dp:?} (Chao model units, {:.3} long) and {:.2} degrees", tune_values(&t2), (dp[0] * dp[0] + dp[1] * dp[1] + dp[2] * dp[2]).sqrt(), crate::skate::angle_between(&r3(&old), &r3(&new)));
+        // The plate's box, for the drawn check (fist_drawn_log).
+        let (lo, hi) = a.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(l, h), v| (std::array::from_fn(|i| l[i].min(v[i])), std::array::from_fn(|i| h[i].max(v[i]))));
+        FIST_BOX.set(Some((lo, hi)));
+    }
+    FIST2_SAID.set(line);
+    Some(t2)
+}
+
+thread_local! {
+    static FIST_BOX: Cell<Option<([f32; 3], [f32; 3])>> = const { Cell::new(None) };
+}
+
+/// SA2_FIST_LOG=1, once a second: the two gloves as drawn this frame (view
+/// space), in the Chao's own frame: fist 2's plate corners reflected across
+/// the Chao's left-right plane against fist 1's (largest distance in Chao
+/// model units, and the angle between the two turns). Standing it shows how
+/// far the drawn pair is from a mirror (the arms' own pose included); in a
+/// run the arms swing opposite ways, so it is not zero there.
+fn fist_drawn_log(places: &[Option<[[f32; 4]; 3]>; 2]) {
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let (Some(p1), Some(p2), Some((lo, hi))) = (places[0], places[1], FIST_BOX.get()) else { return };
+    if f % 60 != 0 {
+        return;
+    }
+    let chao = CHAO_PLACE.get();
+    let (l1, l2) = (inv_mul(&chao, &p1), inv_mul(&chao, &p2));
+    let mut worst = 0.0f32;
+    for k in 0..8 {
+        let g: [f32; 3] = std::array::from_fn(|i| if k >> i & 1 == 0 { lo[i] } else { hi[i] });
+        let (a, b) = (apply(&l1, g), apply(&l2, [g[0], g[1], -g[2]]));
+        worst = worst.max(((a[0] + b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt());
+    }
+    // fist 2's turn reflected: MX * R2 * MZ.
+    let r1: [[f32; 3]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| l1[i][j]));
+    let r2: [[f32; 3]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| l2[i][j] * if i == 0 { -1.0 } else { 1.0 } * if j == 2 { -1.0 } else { 1.0 }));
+    eprintln!("fist-log: drawn f{f} motion {} moving {}: fist 2 reflected against fist 1: corners up to {worst:.4} model units apart, turn {:.2} degrees apart", LAST_MOTION.get(), MOVING.get(), crate::skate::angle_between(&r1, &r2));
+}
+
+/// Fist 2's set place as the mirror of fist 1's (mob 2026-11-23: fist 1 is
+/// the hand-tuned one). `d1`, `d2`: each glove's fitted place in the Chao's
+/// rest model space; `t1`: fist 1's tuner matrix. The left plate is the right
+/// plate mirrored along its own z, so fist 2 is fist 1 mirrored across the
+/// Chao's left-right plane when d2 * T2 * MZ = MX * d1 * t1.
+pub(crate) fn mirror_fist(d1: &[[f32; 4]; 3], t1: &[[f32; 4]; 3], d2: &[[f32; 4]; 3]) -> [[f32; 4]; 3] {
+    const MX: [[f32; 4]; 3] = [[-1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]];
+    const MZ: [[f32; 4]; 3] = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, -1.0, 0.0]];
+    inv_mul(d2, &mul34(&mul34(&mul34(&MX, d1), t1), &MZ))
+}
+
+/// A tuner matrix back as its line "dx dy dz rx ry rz scale" (tune_matrix's inverse).
+pub(crate) fn tune_values(t: &[[f32; 4]; 3]) -> [f32; 7] {
+    let s = (0..3).map(|i| t[i][0] * t[i][0]).sum::<f32>().sqrt().max(1e-9);
+    let r = |i: usize, j: usize| t[i][j] / s;
+    let ry = (-r(2, 0)).clamp(-1.0, 1.0).asin();
+    let (rx, rz) = (r(2, 1).atan2(r(2, 2)), r(1, 0).atan2(r(0, 0)));
+    [t[0][3], t[1][3], t[2][3], rx.to_degrees(), ry.to_degrees(), rz.to_degrees(), s]
+}
 
 /// A tuner line "dx dy dz rx ry rz scale" as a matrix in the piece's own
 /// frame (move, then turn x, y, z in degrees, then scale).
@@ -576,6 +688,7 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
         return;
     }
     let bv = if hub != 0 { HUB_SHOE_VERTS.with_borrow(|v| v.clone()) } else if baked_boot(c, m) != 0 { BAKED_VERTS.with_borrow(|v| v.clone()) } else { bv };
+    jet_log(m, &bv);
     let node = SHOES[n].0;
     let hp = if bv.is_empty() { None } else { hub_boot_place(m, n, node, &br, &bv) };
     if let Some(place) = hp.map(|p| mul34(&p, &gear_tune(if n == 0 { "boot0" } else { "boot1" }).unwrap_or_else(|| tune_matrix(&BOOT_TUNE)))) {
@@ -594,6 +707,15 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
         // and its cached polygon list holds more of his leg (run r76).
         let parts = std::env::var("SA2_BOOT_PARTS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(2);
         if hub != 0 {
+            if n == 0 && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 300 {
+                tex_log(m, "Shadow's (at the shoe draw)", tex);
+                // The polygon lists' first words: the hub shoe's, and Shadow's own heel and toe
+                // (his body model's nodes 23 and 24), to compare their material chunks.
+                let words = |o: u32| -> String { let mdl = m.r32(o + 4); let pl = if mdl >> 24 == 0x80 { m.r32(mdl + 4) } else { 0 }; if pl >> 24 != 0x80 { return "-".into() } (0..28).map(|k| format!("{:04x}", m.r16(pl + 2 * k))).collect::<Vec<_>>().join(" ") };
+                let body = SHADOW_MODELS.with_borrow(|e| e.values().copied().collect::<Vec<_>>()).into_iter().find(|&o| (0x8000_0000..0x8C00_0000).contains(&o) && crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]).nodes.len() == 62).unwrap_or(0);
+                eprintln!("plist-log: hub shoe {} | Shadow heel 23 {} | toe 24 {} | heel 13 {}", words(hub), words(node_obj(m, body, 23)), words(node_obj(m, body, 24)), words(node_obj(m, body, 13)));
+            }
+            foot_log(m, n, node, "the hub's Air Shoe file", hub);
             put(m);
             call(c, m, 0x8011_DF44, &[hub]);
         }
@@ -618,21 +740,38 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
             put(m);
             call(c, m, 0x8011_DF44, &[overlay]);
         }
-        // The hub's jets (src/chao-attachments.js updateNativeShoeEffects and
-        // the shoe file's provenance): the right shoe's own jet models
-        // TERIOSMDL 96 toe narrow, 97 toe wide, 98 heel wide, 99 heel narrow
-        // (slots 193/195/197/199), one variant at a time: wide when fast,
-        // else narrow; only while moving. They sit in the shoe's own frame,
-        // moved by the shoe file's recentring (its shoeOriginShift
-        // 1.0672683, 0.2922889, -0.2537795 in the hub's X-mirrored space).
-        // (Slots 181/183, drawn before, are models 90/91, not jets.)
-        // unverified: the shift's signs in the game's space (checked by eye).
-        // Jets only while the skate is in (the hub shows them with its blend).
+        // The jets as the game draws them on Shadow (fn_8007BC7C, matrices
+        // saved by his display's node callback fn_8007CF1C): the right toe
+        // jets TERIOSMDL 96/97 (slots 193/195) in his right toe node's frame
+        // (body node 14, the node in slot 149), the right heel jets 98/99
+        // (slots 197/199) in his right heel node's (13, slot 181), and each
+        // frame the other of the two pairs by the game's frame count
+        // (GAME +0x7C bit 0: set = 96 with 98, clear = 97 with 99).
+        // The hub's shoe file is his right heel node's frame, recentred by
+        // its shoeOriginShift (1.0672683, 0.2922889, -0.2537795) and then
+        // mirrored in x (its up axis is that node's rest up with x negated):
+        // file = MX * (heel frame - shift). Before 2026-11-23 the jets were
+        // put at heel frame + (shift x, -y, -z) with no mirror, and the toe
+        // jets in the heel's frame instead of the toe's.
+        // Glue: shown while the skate is in (the game: while his skating
+        // motions 8-10 play).
         if skate_blend(false) > 0.0 && !debug_off("jets") {
-            let wide = skate_blend(false) >= 1.0;
-            let shift: [[f32; 4]; 3] = [[1.0, 0.0, 0.0, 1.067_268_3], [0.0, 1.0, 0.0, -0.292_288_9], [0.0, 0.0, 1.0, 0.253_779_5]];
-            let at = if hub != 0 { mul34(&place, &shift) } else { place };
-            for js in if wide { [195u32, 197] } else { [193, 199] } {
+            let odd = m.r32(0x801C_C168 + 0x7C) & 1 != 0;
+            // SA2_JET_OLD=1 (debug): where they were drawn before, to compare.
+            let old = std::env::var("SA2_JET_OLD").is_ok_and(|v| v == "1");
+            let to_file = if old { [[1.0, 0.0, 0.0, 1.067_268_3], JET_HEEL_TO_FILE[1], JET_HEEL_TO_FILE[2]] } else { JET_HEEL_TO_FILE };
+            let heel = if hub != 0 { mul34(&place, &to_file) } else { place };
+            let toe = jet_toe_in_heel(m).filter(|_| hub != 0 && !old).map_or(heel, |rel| mul34(&heel, &rel));
+            if std::env::var("SA2_JET_LOG").is_ok_and(|v| v == "1") {
+                // Each jet's origin in the drawn shoe's own frame (constant = fixed to the shoe),
+                // and where the game's own jet matrices for Shadow (saved by his display's node
+                // callback: toe 540 / 588, heel 636 / 684, right / left) sit in that same frame.
+                let o = |x: &[[f32; 4]; 3]| { let r = inv_mul(&place, x); [r[0][3], r[1][3], r[2][3]] };
+                let (nt, nh) = if n == 0 { (540, 636) } else { (588, 684) };
+                let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+                eprintln!("jet-frame: f{f} foot {n} ours toe {:?} heel {:?} game toe {:?} heel {:?}", o(&toe), o(&heel), o(&mtx(m, 0x801F_E758 + nt)), o(&mtx(m, 0x801F_E758 + nh)));
+            }
+            for (js, at) in if odd { [(193u32, toe), (197, heel)] } else { [(195, toe), (199, heel)] } {
                 let jo = shadow_obj(m, js);
                 if (0x8000_0000..0x8C00_0000).contains(&jo) {
                     for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, at[r][k].to_bits()); } }
@@ -644,40 +783,180 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
     }
 }
 
+/// Shadow's right heel node frame -> the hub shoe file's space:
+/// MX * (p - shoeOriginShift), as one matrix.
+const JET_HEEL_TO_FILE: [[f32; 4]; 3] = [[-1.0, 0.0, 0.0, 1.067_268_3], [0.0, 1.0, 0.0, -0.292_288_9], [0.0, 0.0, 1.0, 0.253_779_5]];
+
+/// SA2_FOOT_LOG=1 (debug): a texture list as loaded (NJS_TEXLIST: entries,
+/// count; each entry 12 bytes: name, attribute, loaded texture).
+fn tex_log(m: &Mem, whose: &str, list: u32) {
+    if list == 0 || !std::env::var("SA2_FOOT_LOG").is_ok_and(|v| v == "1") {
+        return;
+    }
+    let (names, n) = (m.r32(list), m.r32(list + 4).min(64));
+    let ok = |a: u32| (0x8000_0000..0x8C00_0000).contains(&a);
+    let rows: Vec<String> = (0..n).map(|i| {
+        let e = names + 12 * i;
+        let (name, attr, addr) = (m.r32(e), m.r32(e + 4), m.r32(e + 8));
+        // The loaded texture's first words (its own header), to tell two lists' entries apart.
+        let head = if ok(addr) { (0..6).map(|k| format!("{:x}", m.r32(addr + 4 * k))).collect::<Vec<_>>().join("/") } else { "-".into() };
+        format!("{i}:{}:{attr:#x}:{addr:#x}[{head}]", if ok(name) { crate::cstr(m, name) } else { format!("{name:#x}") })
+    }).collect();
+    eprintln!("tex-log: stage {} {whose} texture list {list:#x}, {n} entries: {}", m.r16(STAGE_NUM), rows.join(" "));
+}
+
+/// SA2_FOOT_LOG=1 (debug), each frame: the model drawn at Chao foot `n`
+/// (its node), where it comes from, and its node and vertex counts.
+fn foot_log(m: &Mem, n: usize, node: usize, what: &str, obj: u32) {
+    if !std::env::var("SA2_FOOT_LOG").is_ok_and(|v| v == "1") {
+        return;
+    }
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let (nodes, verts) = if (0x8000_0000..0x8C00_0000).contains(&obj) {
+        let r = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]);
+        (r.nodes.len(), r.verts.iter().map(Vec::len).sum::<usize>())
+    } else {
+        (0, 0)
+    };
+    eprintln!("foot-log: f{f} stage {} foot {n} (Chao node {node}): {what}, object {obj:#x}, {nodes} nodes, {verts} vertices", m.r16(STAGE_NUM));
+}
+
+thread_local! {
+    static JET_LOGGED: Cell<bool> = const { Cell::new(false) };
+    /// (body model, his right toe node 14 in his right heel node 13's frame, at rest).
+    static JET_TOE: Cell<Option<(u32, [[f32; 4]; 3])>> = const { Cell::new(None) };
+}
+
+/// Shadow's right toe node (14) in his right heel node's (13) frame, from his
+/// body model's rest pose (the shoe on the Chao is rigid, so the rest relation
+/// stands in for his live toe bend).
+fn jet_toe_in_heel(m: &Mem) -> Option<[[f32; 4]; 3]> {
+    // Shadow's own body (TERIOSMDL's 62-node model), also when Sonic rides.
+    let body = SHADOW_MODELS.with_borrow(|e| e.values().copied().find(|&o| JET_TOE.get().is_some_and(|(b, _)| b == o)))
+        .or_else(|| SHADOW_MODELS.with_borrow(|e| e.values().copied().collect::<Vec<_>>()).into_iter().find(|&o| (0x8000_0000..0x8C00_0000).contains(&o) && crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]).nodes.len() == 62))
+        .unwrap_or(RIDER_OBJ.get());
+    if !(0x8000_0000..0x8C00_0000).contains(&body) {
+        return None;
+    }
+    if let Some((b, rel)) = JET_TOE.get() {
+        if b == body {
+            return Some(rel);
+        }
+    }
+    let w = crate::chao_retarget::read_chao(&|a| m.r32(a), body, [vec![], vec![]]).worlds(&[]);
+    if w.len() != 62 {
+        return None;
+    }
+    let m34 = |(r, t): ([[f32; 3]; 3], [f32; 3])| -> [[f32; 4]; 3] { std::array::from_fn(|i| [r[i][0], r[i][1], r[i][2], t[i]]) };
+    let rel = inv_mul(&m34(w[13]), &m34(w[14]));
+    JET_TOE.set(Some((body, rel)));
+    Some(rel)
+}
+
+/// SA2_JET_LOG=1 (debug), once: what the jets' native placement needs.
+/// The game draws each jet at a marker node of Shadow's body, saved by his
+/// display's node callback (fn_8007CF1C, drawn by fn_8007BC7C): right toe jets
+/// (slots 193/195) at the node in slot 149, left toe (185/187) at 151, right
+/// heel (197/199) at 181, left heel (189/191) at 183.
+fn jet_log(m: &Mem, hub_verts: &[[f32; 3]]) {
+    if JET_LOGGED.get() || !std::env::var("SA2_JET_LOG").is_ok_and(|v| v == "1") {
+        return;
+    }
+    let body = RIDER_OBJ.get();
+    if !(0x8000_0000..0x8C00_0000).contains(&body) {
+        return;
+    }
+    JET_LOGGED.set(true);
+    let bounds = |p: &[[f32; 3]]| p.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), v| (std::array::from_fn(|i| lo[i].min(v[i])), std::array::from_fn(|i| hi[i].max(v[i]))));
+    let rest = crate::chao_retarget::read_chao(&|a| m.r32(a), body, [vec![], vec![]]);
+    let worlds = rest.worlds(&[]);
+    eprintln!("jet-log: body {body:#x} nodes {} hub shoe verts {} box {:?}", rest.nodes.len(), hub_verts.len(), bounds(hub_verts));
+    for i in [13usize, 14, 23, 24] {
+        if let (Some(v), Some((r, t))) = (rest.verts.get(i), worlds.get(i)) {
+            let w: Vec<[f32; 3]> = v.iter().map(|v| std::array::from_fn(|a| t[a] + (0..3).map(|k| r[a][k] * v[k]).sum::<f32>())).collect();
+            eprintln!("jet-log: body node {i}: {} verts, local box {:?}, as placed by its rest node {:?}, node rest rot {r:?} pos {t:?}", v.len(), bounds(v), bounds(&w));
+        }
+    }
+    for slot in [149u32, 151, 181, 183] {
+        let o = shadow_obj(m, slot);
+        let idx = (0..rest.nodes.len()).find(|&i| node_obj(m, body, i) == o);
+        eprintln!("jet-log: marker slot {slot} obj {o:#x} body node {idx:?} rest {:?}", idx.and_then(|i| worlds.get(i)));
+    }
+    for slot in [185u32, 187, 189, 191, 193, 195, 197, 199] {
+        let o = shadow_obj(m, slot);
+        if !(0x8000_0000..0x8C00_0000).contains(&o) {
+            eprintln!("jet-log: jet slot {slot} not loaded");
+            continue;
+        }
+        let j = crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]);
+        let jw = j.worlds(&[]);
+        let v: Vec<[f32; 3]> = j.verts.iter().zip(&jw).flat_map(|(vs, (r, t))| vs.iter().map(move |v| std::array::from_fn(|a| t[a] + (0..3).map(|k| r[a][k] * v[k]).sum::<f32>())).collect::<Vec<_>>()).collect();
+        eprintln!("jet-log: jet slot {slot} obj {o:#x} nodes {} verts {} box {:?} node0 {:?}", j.nodes.len(), v.len(), bounds(&v), j.nodes.first());
+        if slot >= 193 && !v.is_empty() {
+            // In the shoe file's space: where it was drawn before, where the game's rule puts it.
+            let toe = if slot < 197 { jet_toe_in_heel(m) } else { None };
+            let centre = |f: &dyn Fn([f32; 3]) -> [f32; 3]| { let s = v.iter().fold([0.0f32; 3], |a, &p| { let q = f(p); [a[0] + q[0], a[1] + q[1], a[2] + q[2]] }); s.map(|x| x / v.len() as f32) };
+            let old = centre(&|p| [p[0] + 1.067_268_3, p[1] - 0.292_288_9, p[2] + 0.253_779_5]);
+            let new = centre(&|p| apply(&JET_HEEL_TO_FILE, toe.map_or(p, |t| apply(&t, p))));
+            eprintln!("jet-log: jet slot {slot} centre in the shoe file's space: before {old:?} now {new:?} moved {:?} (shoe box half size [1.989, 2.156, 1.285])", [new[0] - old[0], new[1] - old[1], new[2] - old[2]]);
+        }
+    }
+}
+
 /// The hub's Air Shoes (its shadow-air-shoes-right.glb: TERIOSMDL 65 heel/toe
 /// and overlay 78, TERIOSTEX), converted by scripts/convert-hub-shoe-to-ninja.py
 /// into a Ninja chunk vertex and polygon list, read from the site's
 /// /mmo-assets/shadow-air-shoes-right.njsh (SA2_HUB_SHOE overrides; local
 /// game-derived data, never in git) into game heap 1 once per load. 0 without it.
 fn hub_shoe(c: &mut Cpu, m: &mut Mem) -> u32 {
-    if let Some(o) = HUB_SHOE.get() {
+    let path = std::env::var("SA2_HUB_SHOE").unwrap_or_else(|_| "/mmo-assets/shadow-air-shoes-right.njsh".into());
+    shoe_file(c, m, &HUB_SHOE, &HUB_SHOE_VERTS, &path)
+}
+
+type ShoeCell = std::thread::LocalKey<Cell<Option<u32>>>;
+type ShoeVerts = std::thread::LocalKey<std::cell::RefCell<Vec<[f32; 3]>>>;
+
+/// A rigid shoe file (.njsh, scripts/convert-hub-shoe-to-ninja.py) read into
+/// game heap 1 once per stage load: its object (0 without the file) in
+/// `cell`, its vertices for the fit in `verts`. The Air Shoes and Sonic's
+/// Light Shoes both come through here.
+fn shoe_file(c: &mut Cpu, m: &mut Mem, cell: &'static ShoeCell, verts_out: &'static ShoeVerts, path: &str) -> u32 {
+    if let Some(o) = cell.get() {
         return o;
     }
-    let path = std::env::var("SA2_HUB_SHOE").unwrap_or_else(|_| "/mmo-assets/shadow-air-shoes-right.njsh".into());
-    let Ok(b) = std::fs::read(&path) else {
-        eprintln!("chao-player boot: no hub shoe at {path}");
-        HUB_SHOE.set(Some(0));
+    let Ok(b) = std::fs::read(path) else {
+        eprintln!("chao-player boot: no shoe file at {path}");
+        cell.set(Some(0));
         return 0;
     };
     let u = |o: usize| b.get(o..o + 4).map_or(0, |x| u32::from_be_bytes([x[0], x[1], x[2], x[3]]));
     let (n, vlen, plen) = (u(4), u(8) as usize, u(12) as usize);
     if &b[..4.min(b.len())] != b"NJSH" || b.len() < 16 + vlen + plen {
         eprintln!("chao-player boot: {path} is not a hub shoe file");
-        HUB_SHOE.set(Some(0));
+        cell.set(Some(0));
         return 0;
     }
+    // A shoe file made before the converter wrote material chunks has none
+    // and takes its diffuse colour from whatever was drawn last: such a file
+    // gets one white material chunk in front (NJD_CM_D, source alpha /
+    // inverse source alpha). (This was not what made the shoes pink in
+    // Rouge's stages: that was the draw inside her display, see chao_display_inner.)
+    let old_file = b.get(16 + vlen + 1) != Some(&0x11);
+    let lead: &[u8] = if old_file { &[0x25, 0x11, 0x00, 0x02, 0xFF, 0xFF, 0xFF, 0xFF] } else { &[] };
+    let plist: Vec<u8> = [lead, &b[16 + vlen..16 + vlen + plen]].concat();
+    let plen = plist.len();
     let (model, obj) = (64u32, 0x40u32);
     let total = (vlen + plen) as u32 + model + obj + 8;
     let mem = call(c, m, OS_ALLOC_FROM_HEAP, &[GEAR_HEAP, total]);
     if mem == 0 {
-        HUB_SHOE.set(Some(0));
+        cell.set(Some(0));
         return 0;
     }
     zero(m, mem, total);
     let vl = mem;
     let pl = (mem + vlen as u32 + 3) & !3;
     m.load(vl, &b[16..16 + vlen]);
-    m.load(pl, &b[16 + vlen..16 + vlen + plen]);
+    m.load(pl, &plist);
     let mdl = (pl + plen as u32 + 3) & !3;
     let o = mdl + model;
     m.w32(mdl, vl);
@@ -693,9 +972,9 @@ fn hub_shoe(c: &mut Cpu, m: &mut Mem) -> u32 {
         for k in 0..cnt { let p = a + 8 + 24 * k; verts.push([f(p), f(p + 4), f(p + 8)]); }
         a += 4 + 4 * size;
     }
-    eprintln!("chao-player boot: hub shoe {path} ({n} vertices, {} read) at {o:#x}", verts.len());
-    HUB_SHOE_VERTS.set(verts);
-    HUB_SHOE.set(Some(o));
+    eprintln!("chao-player boot: shoe file {path} ({n} vertices, {} read) at {o:#x}", verts.len());
+    verts_out.set(verts);
+    cell.set(Some(o));
     o
 }
 
@@ -1026,15 +1305,21 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
     let posed = POSED.with_borrow(|p| p.clone());
     let skel = SKEL.with_borrow(|s| s.clone());
-    // Chao World places the boots from the Chao's own feet (hub fit): no
-    // rider skeleton needed there, and in self mode there is none.
-    if !chao_world(m) && (posed.len() < 14 || skel.len() != 62) {
+    // The hub's shoe (shadow_boot) in every stage, placed from the Chao's own
+    // feet. Before 2026-11-23 only Chao World took it; a level drew the model
+    // table's slots 161/163 on the feet, which hold hand models (TERIOSMDL
+    // 80/81: 2 nodes, 174 vertices, the same pair the guard below lets
+    // through as "Shadow's shoe"): white gloved hands on the Chao's feet on
+    // City Escape's board, and no shoes.
+    // SA2_SHOE_MODELS / SA2_SHADOW_BOOT=0 (debug): the old slot draw.
+    let models: Vec<u32> = std::env::var("SA2_SHOE_MODELS").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default();
+    let slot_draw = !models.is_empty() || std::env::var("SA2_SHADOW_BOOT").is_ok_and(|v| v == "0");
+    if slot_draw && !chao_world(m) && (posed.len() < 14 || skel.len() != 62) {
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
             eprintln!("chao-player shoes: skipped (posed {}, skel {})", posed.len(), skel.len());
         }
         return;
     }
-    let models: Vec<u32> = std::env::var("SA2_SHOE_MODELS").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default();
     let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
     let keep_m = mtx(m, cur_ptr);
     let base = mtx(m, m.r32(NJ_BASE_MATRIX));
@@ -1043,10 +1328,11 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     let regs = (c.r, c.f);
     let ext = |vs: Vec<[f32; 3]>| (0..3).map(|k| { let (lo, hi) = vs.iter().fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v[k]), h.max(v[k]))); hi - lo }).fold(0.0f32, f32::max);
     for (n, &(node, foot, model)) in SHOES.iter().enumerate() {
-        if chao_world(m) && models.is_empty() && !std::env::var("SA2_SHADOW_BOOT").is_ok_and(|v| v == "0") {
+        if !slot_draw {
             shadow_boot(c, m, n, tex, cur_ptr, list);
             continue;
         }
+        foot_log(m, n, node, "model table slot (debug)", shadow_obj(m, models.get(n).copied().unwrap_or(model)));
         // Chao World: the right boot (78 = slot 163) on both feet, as the hub does.
         let model = models.get(n).copied().unwrap_or(if chao_world(m) { 163 } else { model });
         let obj = shadow_obj(m, model);
@@ -1179,6 +1465,12 @@ const BOOT_FWD: [f32; 3] = [-0.596_517_8, -0.802_573, 0.006_565_9];
 /// on the foot's lowest point), carried by the foot: FEET * inv(rest foot) * B.
 fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::ChaoRest, bv: &[[f32; 3]]) -> Option<[[f32; 4]; 3]> {
     let _ = br;
+    boot_place(_m, n, node, bv, None)
+}
+
+/// The same fit for a shoe with its own mount (`own`: the shoe model's frame
+/// to the Chao's rest model space), or the Air Shoes' mount without one.
+fn boot_place(_m: &Mem, n: usize, node: usize, bv: &[[f32; 3]], own: Option<[[f32; 3]; 3]>) -> Option<[[f32; 4]; 3]> {
     let fv = FEET.with_borrow(|f| f[n])?;
     let (worlds, foot_v) = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| (r.worlds(&[]), r.verts[6].clone())))?;
     let (rr, rt) = worlds[6];
@@ -1192,8 +1484,8 @@ fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::Ch
     ensure_rider_rest(_m);
     // The hub's own shoe file is in the hub's coordinates: its mount as it is
     // (src/chao-attachments.js shadowShoeMountRotation / mirroredShadowShoeRest).
-    let hub = HUB_SHOE.get().is_some_and(|o| o != 0);
-    let mount = if hub { mount } else { RIDER_REST.with_borrow(|r| r.as_ref().and_then(|(_, v)| v.get(24).copied()))
+    let hub = own.is_none() && HUB_SHOE.get().is_some_and(|o| o != 0);
+    let mount = if let Some(own) = own { own } else if hub { mount } else { RIDER_REST.with_borrow(|r| r.as_ref().and_then(|(_, v)| v.get(24).copied()))
         .map(|rf| crate::skate::mul(&[[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]], &crate::skate::unit(&rf)))
         .unwrap_or(mount) };
     // SA2_BOOT_FIX="rx,ry,rz" (debug, degrees): a turn after the hub mount, to
@@ -1233,7 +1525,7 @@ fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::Ch
     // file: 1.6 by eye (test copy run r83: at 1.0 it sat inside the foot,
     // at 1.6 it covers the foot as in the hub). The computed fit
     // alone sits inside the foot: find the measuring difference.
-    let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]) * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(if hub { 1.6 } else { 1.4 });
+    let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]) * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(if hub || own.is_some() { 1.6 } else { 1.4 });
     if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 0 {
         eprintln!("chao-player boot fit: foot {:?}..{:?} shoe {:?}..{:?} scale {sc}", flo, fhi, slo, shi);
     }
@@ -1468,6 +1760,7 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
             eprintln!("chao-player: Hammer Gloves fitted {fit:?}");
         }
         GLOVE_FIT.set(fit);
+        FIST_D.set(None);
     }
     let Some(fit) = GLOVE_FIT.with_borrow(|g| *g) else { return };
     let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
@@ -1475,13 +1768,30 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
     let list = m.r32(c.r[13].wrapping_sub(0x7228)) + 0x20;
     let keep_list = m.r32(list);
     let regs = (c.r, c.f);
+    let mut drawn = [None; 2];
     for (k, (model, local)) in fit.into_iter().enumerate() {
         let Some(node) = HANDS.with_borrow(|h| h[k]) else { continue };
         let place = mul34(&node, &local);
-        let place = mul34(&place, &gear_tune(if k == 0 { "fist0" } else { "fist1" }).unwrap_or_else(|| tune_matrix(&FIST_SET[k])));
+        // Fist 1: the tuner's line when the panel is open, else as set.
+        // Fist 2: fist 1's reflection (also in the panel while "Link fists"
+        // is on: `set link 1`); unlinked, the panel's own fist 2 line.
+        let t1 = gear_tune("fist0").unwrap_or_else(|| tune_matrix(&FIST_SET[0]));
+        let linked = debug_set("link").as_deref() != Some("0");
+        let set = if k == 0 {
+            t1
+        } else {
+            let own = if linked { None } else { gear_tune("fist1") };
+            own.or_else(|| fist2_mirror(m, &fit, &t1)).unwrap_or_else(|| tune_matrix(&FIST_SET[1]))
+        };
+        let place = mul34(&place, &set);
+        drawn[k] = Some(place);
         if f % 300 == 0 {
             let ft = FEET.with_borrow(|x| x[k].map(|v| [v[0][3], v[1][3], v[2][3]]));
             eprintln!("chao-player gloves: {k} arm node at {:?}, fist at {:?}, foot {:?}, local t {:?}", [node[0][3], node[1][3], node[2][3]], [place[0][3], place[1][3], place[2][3]], ft, [local[0][3], local[1][3], local[2][3]]);
+        }
+        if std::env::var("SA2_FOOT_LOG").is_ok_and(|v| v == "1") {
+            let ft = FEET.with_borrow(|x| x.map(|v| v.map(|v| [v[0][3], v[1][3], v[2][3]])));
+            eprintln!("foot-log: f{f} hand {k} (Chao arm node {}): Hammer Gloves plate, KNUCKMDL slot {model}, at {:?} (view); arm node at {:?}; feet at {ft:?}", [3, 10][k], [place[0][3], place[1][3], place[2][3]], [node[0][3], node[1][3], node[2][3]]);
         }
         for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, place[r][q].to_bits()); } }
         m.w32(list, tex);
@@ -1496,9 +1806,86 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
         }
         LCAP.set(lcap);
     }
+    fist_drawn_log(&drawn);
     (c.r, c.f) = regs;
     m.w32(list, keep_list);
     for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, keep_m[r][q].to_bits()); } }
+}
+
+/// A character's yaw (BAMS; it faces (cos, sin) in x, z) as the Chao yaw
+/// that faces the same way (the Chao faces (sin, cos)).
+pub(crate) fn chao_yaw(player_yaw: u32) -> u32 {
+    0x4000u32.wrapping_sub(player_yaw) & 0xFFFF
+}
+
+/// Debug (SA2_TEST_CAM): a view matrix (Ninja: x right, y up, looking down
+/// -z) at `eye` looking at `at`.
+pub(crate) fn look_at(eye: [f32; 3], at: [f32; 3]) -> [[f32; 4]; 3] {
+    let n = |v: [f32; 3]| { let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-6); [v[0] / l, v[1] / l, v[2] / l] };
+    let cross = |a: [f32; 3], b: [f32; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    let f = n([at[0] - eye[0], at[1] - eye[1], at[2] - eye[2]]);
+    let r = n(cross(f, [0.0, 1.0, 0.0]));
+    let u = cross(r, f);
+    let rows = [r, u, [-f[0], -f[1], -f[2]]];
+    std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { rows[i][j] } else { -(rows[i][0] * eye[0] + rows[i][1] * eye[1] + rows[i][2] * eye[2]) }))
+}
+
+const NJ_SET_CAMERA: u32 = 0x8011_242C;
+
+/// SA2_TEST_CAM=front|side|rear[,distance[,height]] (debug, test only, no game data):
+/// after the game sets its camera (njSetCamera 0x8011242C), the view matrix
+/// is replaced by a look-at on the player's Chao from a fixed place by the
+/// character's heading: front = ahead of it looking back, side = to its
+/// right, rear = behind. The game's own camera work is untouched, so the
+/// stick still steers by the game camera.
+/// unverified: that every draw reads the view from _nj_base_matrix after
+/// njSetCamera (some may cull by the game camera's own place).
+fn test_cam(c: &mut Cpu, m: &mut Mem) {
+    original(c, m, NJ_SET_CAMERA);
+    let Ok(v) = std::env::var("SA2_TEST_CAM") else { return };
+    let Step::Live(chao) = STEP.get() else { return };
+    let cw = m.r32(chao + 0x34);
+    // SA2_TAKEOFF's second Chao, while it is out: the camera follows that one.
+    let other = Some(TAKEOFF.get()).filter(|&t| t != 0 && t != u32::MAX).map(|t| m.r32(t + 0x34)).filter(|&w| w != 0);
+    if let Some(w) = other {
+        let f = |a: u32| f32::from_bits(m.r32(a));
+        let mut it = v.split(',').skip(1);
+        let dist: f32 = it.next().and_then(|d| d.trim().parse().ok()).unwrap_or(9.0);
+        let height: f32 = it.next().and_then(|d| d.trim().parse().ok()).unwrap_or(3.0);
+        let yaw = (m.r32(w + 0x0C) & 0xFFFF) as f32 * std::f32::consts::TAU / 65536.0;
+        // To its right (it faces (sin, cos)); "world" keeps the camera still, looking at where it started.
+        let at = [f(w + 0x14), f(w + 0x18) + height, f(w + 0x1C)];
+        let view = look_at([at[0] + yaw.cos() * dist, at[1] + 0.5, at[2] - yaw.sin() * dist], at);
+        let (base, cur) = (m.r32(NJ_BASE_MATRIX), m.r32(NJ_CURRENT_MATRIX));
+        for a in [base, cur] {
+            for r in 0..3 { for k in 0..4 { m.w32(a + 4 * (4 * r + k) as u32, view[r][k].to_bits()); } }
+        }
+        return;
+    }
+    // In a level: by the hidden character's own yaw (his task work).
+    let rider = if self_drive(m) { 0 } else { RIDER.get() };
+    if cw == 0 || (!self_drive(m) && rider == 0) {
+        return;
+    }
+    // side[,distance[,height above the Chao's spot looked at]] (9 and 3 when not given).
+    let mut it = v.split(',');
+    let side = it.next().unwrap_or("rear");
+    let dist: f32 = it.next().and_then(|d| d.trim().parse().ok()).unwrap_or(9.0);
+    let height: f32 = it.next().and_then(|d| d.trim().parse().ok()).unwrap_or(3.0);
+    let f = |a: u32| f32::from_bits(m.r32(a));
+    let yaw = (m.r32(if rider != 0 { rider } else { cw } + 0x0C) & 0xFFFF) as f32 * std::f32::consts::TAU / 65536.0;
+    let fwd = if rider != 0 || PMOVE_CHAO.get() == chao { [yaw.cos(), 0.0, yaw.sin()] } else { [yaw.sin(), 0.0, yaw.cos()] };
+    let right = [-fwd[2], 0.0, fwd[0]];
+    let d = match side { "front" => fwd, "side" => right, _ => [-fwd[0], 0.0, -fwd[2]] };
+    // In a level the Chao's own task work falls between its pins to him (its own
+    // gravity runs on): his spot is where it is drawn.
+    let spot = if rider != 0 { rider } else { cw };
+    let at = [f(spot + 0x14), f(spot + 0x18) + height, f(spot + 0x1C)];
+    let view = look_at([at[0] + d[0] * dist, at[1] + 0.5, at[2] + d[2] * dist], at);
+    let (base, cur) = (m.r32(NJ_BASE_MATRIX), m.r32(NJ_CURRENT_MATRIX));
+    for a in [base, cur] {
+        for r in 0..3 { for k in 0..4 { m.w32(a + 4 * (4 * r + k) as u32, view[r][k].to_bits()); } }
+    }
 }
 
 /// Place the Chao on the rider right before it draws (after its own exec).
@@ -1511,19 +1898,54 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
     let cw = m.r32(task + 0x34);
     let own = matches!(STEP.get(), Step::Live(ch) if ch == task) && cw != 0 && self_drive(m) && !std::env::var("SA2_CHAO_TILT").is_ok_and(|v| v == "1");
     let keep = (m.r32(cw.wrapping_add(0x08)), m.r32(cw.wrapping_add(0x10)));
+    // The character's exec leaves its own yaw in the shared task work, and
+    // the two do not mean the same: the character goes along (cos, sin) of
+    // it (test copy run clip-B2: yaw 0xA01F while moving along (-1, -1)),
+    // the Chao is drawn facing (sin, cos) (AL_ForwardSpd). Copied as it was,
+    // the Chao faced his way only on one diagonal and was mirrored
+    // elsewhere (up to 180 degrees off). Drawn with its own meaning of the
+    // same heading; the task work keeps his value for his exec.
+    let keep_yaw = m.r32(cw.wrapping_add(0x0C));
+    let turn = own && PMOVE_CHAO.get() == task && player_move_on() && !std::env::var("SA2_CHAO_YAW_RAW").is_ok_and(|v| v == "1");
     if own {
         m.w32(cw + 0x08, 0);
         m.w32(cw + 0x10, 0);
     }
+    // Swimming: drawn where the native swim holds a Chao, just under the
+    // surface, while the hidden character walks the pond's floor.
+    let keep_y = m.r32(cw.wrapping_add(0x18));
+    let swim = SWIM.get().filter(|_| own);
+    if let Some(level) = swim {
+        m.w32(cw + 0x18, (level - SWIM_HEIGHT).to_bits());
+    }
+    if turn {
+        m.w32(cw + 0x0C, chao_yaw(keep_yaw));
+    }
     chao_display_inner(c, m);
+    if swim.is_some() {
+        m.w32(cw + 0x18, keep_y);
+    }
     if own {
         m.w32(cw + 0x08, keep.0);
         m.w32(cw + 0x10, keep.1);
+    }
+    if turn {
+        m.w32(cw + 0x0C, keep_yaw);
     }
 }
 
 fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
     if remote_offscreen(m, c.r[3]) {
+        return;
+    }
+    // SA2_HIDE_CHAO=1 (test only): the player's own Chao and its gear are not
+    // drawn, so the hidden character (SA2_SHOW_SONIC) can be seen alone.
+    if matches!(STEP.get(), Step::Live(ch) if ch == c.r[3]) && std::env::var("SA2_HIDE_CHAO").is_ok_and(|v| v == "1") {
+        return;
+    }
+    // The walker's pilot (own_pilot) draws the player's Chao at the seat:
+    // its task's own display, at the hidden character, stands down.
+    if PILOT_SEAT.get().is_none() && pilot_recent() && matches!(STEP.get(), Step::Live(ch) if ch == c.r[3]) {
         return;
     }
     if idle_hidden(m, c.r[3]) {
@@ -1552,19 +1974,30 @@ fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
     // display, drawing nothing) poses the Chao, so it walks, runs and skates
     // with his motions. SA2_CHAO_RETARGET=1 (debug): also outside self mode;
     // =0: the Chao's own motions.
-    if live && RIDER.get() != 0 && (!chao_world(m) || (self_retarget(m) && self_in_motion()) || std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")) {
+    // The walker's pilot sits on its native rig (no rider skeleton there).
+    // Levels (2026-11-23): the same as the lobby, the Chao's own rig and
+    // motions with the overlay from the hidden character's node turns
+    // (skate.rs, the pause Extras limits). His limb directions copied on the
+    // Chao (level_pose) laid it flat on the board, face down, with his crouch.
+    // SA2_LEVEL_RETARGET=1 (debug): that pose, as before.
+    // Only for riders on Sonic's skeleton (his exec): the overlay's node map is
+    // his and Shadow's. Knuckles's and Rouge's stages keep their own path
+    // (knuckles_rules: the Chao's own motions, mirrored where set).
+    let old_level = !chao_world(m) && (LAST_EXEC.get() != SONIC_EXEC || std::env::var("SA2_LEVEL_RETARGET").is_ok_and(|v| v == "1"));
+    if PILOT_SEAT.get().is_none() && live && RIDER.get() != 0 && (old_level || (self_retarget(m) && self_in_motion()) || std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")) {
         level_pose(m, c.r[3]);
         CHAO_DRAW.set(true);
         CHAO_NODE.set(0);
         let a = rt::sec(m, 60, 1) + CHAO_DISPLAY;
         rel_original(c, m, a, chao_display);
-        if self_drive(m) {
-            // No rider draw carries the gear in self mode: draw it from the
-            // hands and feet this draw recorded.
-            hammer_gloves(c, m);
-            air_shoes(c, m);
-            try_on(c, m);
-        }
+        // The gear from the hands and feet this draw recorded, in every
+        // stage. Before 2026-11-23 a level drew it from inside the hidden
+        // character's display: a frame behind the Chao, and in whatever
+        // colour state his own draw had left (the Air Shoes came out pink
+        // in Rouge's stages).
+        hammer_gloves(c, m);
+        air_shoes(c, m);
+        try_on(c, m);
         return crate::name_tags::finish();
     }
     // ChaoMain queues the model draw past this call (no walker runs inside
@@ -1579,16 +2012,17 @@ fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
         }
         NATIVE_DRAW.set(true);
         CHAO_NODE.set(0);
+        let level = !chao_world(m) && PILOT_SEAT.get().is_none();
+        LEVEL_RIG.set(level);
+        BOARD_PLACE.set(if level { board_place(m) } else { None });
         rel_original(c, m, a, chao_display);
+        LEVEL_RIG.set(false);
+        BOARD_PLACE.set(None);
         NATIVE_DRAW.set(false);
-        // Self mode: no rider display walks, which is where the gear was drawn
-        // (level_capture); draw it here, from the feet and hands this native
-        // draw just recorded.
-        if self_drive(m) {
-            hammer_gloves(c, m);
-            air_shoes(c, m);
-            try_on(c, m);
-        }
+        // The gear from the feet and hands this native draw just recorded.
+        hammer_gloves(c, m);
+        air_shoes(c, m);
+        try_on(c, m);
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 0 {
             let rest = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| r.nodes.len()));
             eprintln!("chao-player native: walked {} node transforms, rest model nodes {rest:?}, hands {:?}", CHAO_NODE.get(), HANDS.with_borrow(|h| h.map(|x| x.map(|v| [v[0][3], v[1][3], v[2][3]]))));
@@ -1603,6 +2037,36 @@ fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
     if ev && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
         eprintln!("chao-player ev: Chao drew {} nodes, posed {}", CHAO_NODE.get(), POSED.with_borrow(|p| p.len()));
     }
+}
+
+thread_local! {
+    /// The player's Chao is drawn in a level on its own rig: the overlay is full on.
+    static LEVEL_RIG: Cell<bool> = const { Cell::new(false) };
+    /// On the board: the Chao's placement (view space) for this draw.
+    static BOARD_PLACE: Cell<Option<[[f32; 4]; 3]>> = const { Cell::new(None) };
+}
+
+/// While the board drew this frame or the last: where the Chao stands on it
+/// (view space). The hidden character's root node gives the facing and the
+/// tilt (the Chao's +z is his -x, as seat()); the spot is the board's centre
+/// at the top of its deck, the board being drawn at BOARD_SCALE about its
+/// centre. shortcut: the deck's top is the board's highest point along his up
+/// axis, so the Chao's feet are not put on his two foot spots; upgrade with
+/// the deck under each foot if they are seen off it.
+fn board_place(m: &Mem) -> Option<[[f32; 4]; 3]> {
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let (bf, tris, local) = BOARD.with_borrow(|b| b.clone())?;
+    let root = SKEL.with_borrow(|s| (s.len() == 62).then(|| s[0]))?;
+    if f > bf + 1 {
+        return None;
+    }
+    // The board's vertices are kept in Chao axes (to_chao: y is his y).
+    let top = tris.iter().map(|t| t[0][1]).fold(f32::MIN, f32::max);
+    let spot = apply(&root, [local[0], local[1] + (top - local[1]) * BOARD_SCALE, local[2]]);
+    let col = |j: usize| { let l = (0..3).map(|i| root[i][j] * root[i][j]).sum::<f32>().sqrt().max(1e-6); [root[0][j] / l, root[1][j] / l, root[2][j] / l] };
+    let (c0, c1, c2) = (col(0), col(1), col(2));
+    let world: [[f32; 4]; 3] = std::array::from_fn(|i| [c2[i], c1[i], -c0[i], spot[i]]);
+    Some(mul34(&mtx(m, m.r32(NJ_BASE_MATRIX)), &world))
 }
 
 /// The emotion ball's anchor follows the head from the previous frame, so on
@@ -1630,6 +2094,76 @@ pub fn own_twp(m: &Mem) -> u32 {
     match STEP.get() { Step::Live(chao) => m.r32(chao + 0x34), _ => 0 }
 }
 
+thread_local! {
+    /// own_pilot is drawing the Chao at this matrix (view space) right now.
+    static PILOT_SEAT: Cell<Option<[[f32; 4]; 3]>> = const { Cell::new(None) };
+    /// The frame own_pilot last drew the Chao in.
+    static PILOT_FRAME: Cell<u64> = const { Cell::new(u64::MAX) };
+    /// own_pilot was called in this run: the walker exec makes the Chao.
+    static PILOT_USED: Cell<bool> = const { Cell::new(false) };
+    static PILOT_SAID: Cell<bool> = const { Cell::new(false) };
+}
+
+thread_local! {
+    /// The character exec that ran last (Sonic's, Knuckles's or the walkers').
+    static LAST_EXEC: Cell<u32> = const { Cell::new(0) };
+    /// The handler another module had on the voice start before ours.
+    static PREV_VOICE: Cell<Option<sa2_recomp::rt::Func>> = const { Cell::new(None) };
+}
+
+/// The player's Chao rest model height in its own model units (the y range
+/// of its vertices), once the Chao is live; for scaling the walker's seat.
+pub(crate) fn chao_rest_height(m: &Mem) -> Option<f32> {
+    let Step::Live(chao) = STEP.get() else { return None };
+    let cw = m.r32(chao + 0x34);
+    let root = if cw == 0 { 0 } else { m.r32(cw + 0x510) };
+    if !(0x8000_0000..0x8C00_0000).contains(&root) {
+        return None;
+    }
+    CHAO_REST.with_borrow_mut(|r| Some(r.get_or_insert_with(|| crate::chao_retarget::read_chao(&|a| m.r32(a), root, [vec![], vec![]])).height()))
+}
+
+/// The pilot was drawn this frame or the last: the Chao task's own display
+/// (at the hidden character) stands down.
+fn pilot_recent() -> bool {
+    sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed).wrapping_sub(PILOT_FRAME.get()) <= 1
+}
+
+/// For the Chao Walker (walker.rs): draw the player's own Chao as the pilot.
+/// `seat`: Ninja's current matrix at the walker's seat node (view space,
+/// camera included), read in the walker's per-node callback. The Chao's own
+/// display draws it right now with that matrix in place of its own placement
+/// (so its size is the matrix's scale; scale 1 = the Chao model's own units,
+/// its rest height is logged once), on its native rig in its current motion.
+/// Returns true only when the Chao drew its nodes in this call. The first
+/// call also lets the walker exec (0x800B3A8C) load and make the Chao.
+/// unverified: not run in a walker stage from this tree (walker.rs calls it
+/// from another branch). Its emotion ball and shadow stay with the Chao
+/// task's own position (the walker's), not the seat.
+pub(crate) fn own_pilot(c: &mut Cpu, m: &mut Mem, seat: &[[f32; 4]; 3]) -> bool {
+    PILOT_USED.set(true);
+    let Step::Live(chao) = STEP.get() else { return false };
+    if RIDER.get() == 0 || m.r32(chao + 0x34) == 0 || !module_linked(m, 60) {
+        return false;
+    }
+    let keep = (c.r, c.f, c.lr);
+    PILOT_SEAT.set(Some(*seat));
+    CHAO_NODE.set(0);
+    c.r[3] = chao;
+    chao_display(c, m);
+    PILOT_SEAT.set(None);
+    (c.r, c.f, c.lr) = keep;
+    let drew = CHAO_NODE.get() > 0;
+    if drew {
+        PILOT_FRAME.set(sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed));
+        if !PILOT_SAID.replace(true) {
+            let h = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| r.height()));
+            eprintln!("chao-player pilot: drawn at the seat ({} nodes), Chao rest model height {h:?} in its own units", CHAO_NODE.get());
+        }
+    }
+    drew
+}
+
 fn pin(m: &mut Mem, chao: u32, data1: u32) {
     let cw = m.r32(chao + 0x34);
     if cw == 0 {
@@ -1650,12 +2184,28 @@ fn pin(m: &mut Mem, chao: u32, data1: u32) {
     for o in (0..12).step_by(4) {
         m.w32(cw + 0x14 + o, m.r32(data1 + 0x14 + o));
     }
+    // The Chao's own fall (MOVE_WORK Velo.y / Acc.y) kept building up on a
+    // body the character places: in self mode it cut a jump short of his
+    // (measured 27 units, not his own apex), in a level it pulled the Chao's
+    // task work down between pins. Cleared here, where the body is placed.
+    // SA2_CHAO_FALL=1 (debug): left as it was.
+    let mw = m.r32(chao + 0x38);
+    if mw != 0 && !std::env::var("SA2_CHAO_FALL").is_ok_and(|v| v == "1") {
+        m.w32(mw + 0x04, 0);
+        m.w32(mw + 0x10, 0);
+    }
     // Upright: only the rider's yaw. Its pitch/roll would tip the Chao while
     // the emotion ball stays world-up above where the head would be.
     m.w32(cw + 0x08, 0);
     // SA2_CHAO_YAW_OFS (BAMS, debug until measured): the Chao's facing vs the rider's.
     let ofs = std::env::var("SA2_CHAO_YAW_OFS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
-    m.w32(cw + 0x0C, m.r32(data1 + 0x0C).wrapping_add(ofs) & 0xFFFF);
+    // The character's yaw goes along (cos, sin), the Chao faces (sin, cos)
+    // (chao_yaw): copied as it was, the Chao faced his way on one diagonal
+    // only (City Escape before the board: 0 to 90 degrees off). In self mode
+    // data1 is the Chao's own task work and chao_display turns it at the draw.
+    let yaw = m.r32(data1 + 0x0C);
+    let yaw = if data1 == cw || std::env::var("SA2_CHAO_YAW_RAW").is_ok_and(|v| v == "1") { yaw } else { chao_yaw(yaw) };
+    m.w32(cw + 0x0C, yaw.wrapping_add(ofs) & 0xFFFF);
     m.w32(cw + 0x10, 0);
 }
 
@@ -1704,7 +2254,15 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     }
     c.rt.set_override(SONIC_EXEC, |c, m| exec(c, m, SONIC_EXEC));
     c.rt.set_override(KNUX_EXEC, |c, m| exec(c, m, KNUX_EXEC));
+    // The walkers' exec: only once walker.rs asks for the pilot (own_pilot).
+    c.rt.set_override(WALKER_EXEC, |c, m| {
+        LAST_EXEC.set(WALKER_EXEC);
+        if PILOT_USED.get() { exec(c, m, WALKER_EXEC) } else { original(c, m, WALKER_EXEC) }
+    });
     c.rt.set_override(DESTROY_TASK, destroy_task);
+    if std::env::var_os("SA2_TEST_CAM").is_some() {
+        c.rt.set_override(NJ_SET_CAMERA, test_cam);
+    }
     c.rt.set_override(SPIN_FLASH_DISP, spin_flash);
     if std::env::var_os("SA2_TRACE_EVDRAW").is_some() {
         c.rt.set_override(DRAW_MOTION, trace_draw_motion);
@@ -1725,6 +2283,16 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(0x8011_DF44, |c, m| ev_draw(c, m, 0x8011_DF44));
     c.rt.set_override(NODE_TRANSFORM, node_transform);
     sa2_recomp::os::add_frame_hook(ev_frame_hook);
+    // walker.rs (SA2_CHAO_WALKER) installs its own handler there first: kept, and
+    // it takes the voice task's calls while a walker is the character (voice).
+    c.rt.set_override(NATIVE_JETS, native_jets);
+    for (at, tag) in [(SONIC_DISP_LATE, "late"), (SONIC_DISP_2C, "2c")] {
+        // Only where asked for: the probe below is not settled yet.
+        if std::env::var("SA2_GAP_HIDE").is_ok_and(|v| v.split(',').any(|x| x == tag)) {
+            c.rt.set_override(at, match tag { "late" => |c: &mut Cpu, m: &mut Mem| gap_disp(c, m, SONIC_DISP_LATE), _ => |c: &mut Cpu, m: &mut Mem| gap_disp(c, m, SONIC_DISP_2C) });
+        }
+    }
+    PREV_VOICE.set(c.rt.overrides.get(&ADX_START_AFS).copied());
     c.rt.set_override(ADX_START_AFS, voice);
     c.rt.set_override(SONIC_DISP, |c, m| display(c, m, SONIC_DISP));
     // SA2_CHAO_KNUX_DISP=0 (debug): leave Knuckles's and Rouge's displays alone.
@@ -1732,6 +2300,44 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
         c.rt.set_override(KNUX_DISP, |c, m| display(c, m, KNUX_DISP));
         c.rt.set_override(ROUGE_DISP, |c, m| display(c, m, ROUGE_DISP));
     }
+}
+
+/// fn_8007BC7C: the character's effect display; for Shadow it draws his Air
+/// Shoes' jets at his own toe and heel nodes while his skate motions play
+/// (gate: model slot 185 loaded, main.dol 0x8007BD2C).
+const NATIVE_JETS: u32 = 0x8007_BC7C;
+
+/// While the player's Chao is out, the hidden Shadow's own jets are not
+/// drawn: they followed his feet (drawn at the Chao's size), not the shoes on
+/// the Chao, so a second set of flames moved about the Chao's feet out of
+/// step with its shoes (seen with the Chao's shoes switched off: flames
+/// still there). The game's own gate is used: slot 185 empty for the call.
+/// SA2_SHOW_SONIC (debug: the character drawn) keeps them, to compare.
+fn native_jets(c: &mut Cpu, m: &mut Mem) {
+    let gate = MODELS + 4 * 185;
+    let keep = m.r32(gate);
+    let hide = matches!(STEP.get(), Step::Live(_)) && std::env::var_os("SA2_SHOW_SONIC").is_none();
+    if hide {
+        m.w32(gate, 0);
+    }
+    original(c, m, NATIVE_JETS);
+    if hide {
+        m.w32(gate, keep);
+    }
+}
+
+/// The character task's other draw functions (task +0x1C and +0x2C, read
+/// from his task in the lobby). SA2_GAP_HIDE=late,2c (debug probe): each is
+/// skipped in Chao World while the player's Chao is not up, to find which
+/// one draws the lone shadow seen on arriving in an area.
+const SONIC_DISP_LATE: u32 = 0x8007_BEB4;
+const SONIC_DISP_2C: u32 = 0x8007_E304;
+
+fn gap_disp(c: &mut Cpu, m: &mut Mem, at: u32) {
+    if chao_world(m) && !matches!(STEP.get(), Step::Live(_)) {
+        return;
+    }
+    original(c, m, at);
 }
 
 /// ADX start from an AFS archive; the voice task calls it at 0x80012760
@@ -1760,6 +2366,11 @@ pub(crate) fn own_chao_twp(m: &Mem) -> u32 {
 fn voice(c: &mut Cpu, m: &mut Mem) {
     // From the start of the run: the drop line plays before the Chao is loaded.
     if c.lr == FROM_VOICE_TASK {
+        // In a walker stage the walker's own handler (its sound in place of
+        // the line) takes the call, when walker.rs installed one.
+        if let (true, Some(prev)) = (LAST_EXEC.get() == WALKER_EXEC, PREV_VOICE.get()) {
+            return prev(c, m);
+        }
         // MMO choice: the player's own voice line is dropped, with no replacement.
         return;
     }
@@ -2002,22 +2613,44 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
     if !CHAO_DRAW.get() {
         let a = rt::sec(m, 60, 1) + AL_NODE_TRANSFORM;
         if NATIVE_DRAW.get() && CHAO_NODE.get() == 0 {
+            // The walker's pilot: the seat matrix in place of the display's
+            // own placement; every node below inherits it.
+            if let Some(seat) = PILOT_SEAT.get().or(BOARD_PLACE.get()) {
+                let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+                for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, seat[r][k].to_bits()); } }
+            }
             CHAO_PLACE.set(mtx(m, m.r32(NJ_CURRENT_MATRIX)));
         }
         rel_original(c, m, a, chao_node);
         // The player's Chao on its native rig: its foot nodes for the boots.
         if NATIVE_DRAW.get() {
             let i = CHAO_NODE.replace(CHAO_NODE.get() + 1);
-            if i == 6 { DRAWN_FOOT.set(c.r[3]); }
-            // The hands as this native draw places them, for the hammer gloves.
-            record_hand(m, i, m.r32(NJ_CURRENT_MATRIX));
+            // Only a real model node: in the Chao's fly and swim motions (130,
+            // 142) the walker's r3 here is not one, and reading it as a model
+            // ran into unmapped memory (the game stopped 15 frames into a jump).
+            if i == 6 { DRAWN_FOOT.set(if plain_object(m, c.r[3]) { c.r[3] } else { 0 }); }
+            let own = mtx(m, m.r32(NJ_CURRENT_MATRIX));
             // Wearing Shadow's shoes and moving: the web hub's skate overlay
             // (skate.rs) on its 8 mapped nodes, from the rider's live pose.
-            if skate_blend(i == 0) > 0.0 && SHADOW_TEX.get().is_some() && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
+            let blend = skate_blend(i == 0);
+            if LEVEL_RIG.get() || (blend > 0.0 && SHADOW_TEX.get().is_some() && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0")) {
                 if let Some(&(_, src, w, cap)) = crate::skate::MAP.iter().find(|e| e.0 == i) {
+                    // The pause Extras switches choose; SA2_SKATE_CAPS (debug) overrides them.
+                    let (w, cap) = match std::env::var("SA2_SKATE_CAPS") {
+                        Ok(mode) => crate::skate::limits(i, w, cap, &mode),
+                        Err(_) => {
+                            let (body, head) = crate::pause_extras::rig_limits();
+                            crate::skate::rig_limits(i, w, cap, body, head)
+                        }
+                    };
                     skate_node(m, i, src, w, cap);
                 }
             }
+            // The hands as this draw places them, for the hammer gloves: after
+            // the skate overlay, or the gloves stay on the Chao's own run arms
+            // while the arm meshes take the skate pose (up to 75 degrees apart).
+            record_hand(m, i, m.r32(NJ_CURRENT_MATRIX));
+            track_log(m, i, &own);
             if let Some(k) = SHOES.iter().position(|s| s.0 == i) {
                 let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
                 FEET.with_borrow_mut(|f| f[k] = Some(cur));
@@ -2045,6 +2678,8 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
         });
         if RIDER.get() == 0 {
             pose_chao(false);
+        } else {
+            level_track_log(m);
         }
     }
     let a = rt::sec(m, 60, 1) + AL_NODE_TRANSFORM;
@@ -2054,9 +2689,12 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
     record_hand(m, i, cur_ptr);
     if MIRROR.get() {
         mirror_node(m, i, cur_ptr);
+        record_foot(m, i, cur_ptr);
         return record_hand(m, i, cur_ptr);
     }
     let Some((r, t)) = POSED.with_borrow(|p| p.get(i).copied()) else {
+        // Its own motion (Knuckles's and Rouge's stages): the feet as drawn, for the shoes.
+        record_foot(m, i, cur_ptr);
         if i == 40 && !SAID_NODE.replace(true) {
             eprintln!("chao-player: node transform past 40 nodes, posed {} (pose not applied)", POSED.with_borrow(|p| p.len()));
         }
@@ -2086,6 +2724,41 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
     }
 }
 
+/// SA2_TRACK_LOG=1 in a level (rider mode), once per Chao draw: the hidden
+/// character's action state and motion, whether his pose is on the Chao
+/// (posed nodes; 0 = the Chao's own motion) and whether it sits on the board,
+/// and the world headings in degrees: his root node (he faces -x), the Chao's
+/// placement (it faces +z; on the board, the seat's), and the board's own x
+/// and z axes less his heading (constant through a turn = the board turns with him).
+fn level_track_log(m: &Mem) {
+    if !std::env::var("SA2_TRACK_LOG").is_ok_and(|v| v == "1") {
+        return;
+    }
+    let deg = |x: f32, z: f32| x.atan2(z).to_degrees();
+    let wrap = |d: f32| (d + 540.0).rem_euclid(360.0) - 180.0;
+    let Some(root) = SKEL.with_borrow(|s| s.first().copied()) else { return };
+    let rider = deg(-root[0][0], -root[2][0]);
+    let seated = POSED_WORLD.get();
+    let chao = if seated {
+        // seat(): the Chao's +z is his root's -x.
+        rider
+    } else {
+        let place = inv_mul(&mtx(m, m.r32(NJ_BASE_MATRIX)), &CHAO_PLACE.get());
+        deg(place[0][2], place[2][2])
+    };
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let board = BOARD_AXES.get().filter(|b| f <= b.0 + 1).map(|(_, x, z)| (wrap(x - rider), wrap(z - rider)));
+    eprintln!(
+        "track-lvl: f{f} state {} motion {:#x} skel {} posed {} seated {seated} heading: rider {rider:.1} chao {chao:.1} diff {:.1} board x/z less rider {board:.1?}",
+        m.r8(RIDER.get()), RIDER_MOTION.get().0, SKEL.with_borrow(|s| s.len()), POSED.with_borrow(|p| p.len()), wrap(rider - chao)
+    );
+}
+
+thread_local! {
+    /// The board's world x and z axis headings (degrees) and the frame it drew in.
+    static BOARD_AXES: Cell<Option<(u64, f32, f32)>> = const { Cell::new(None) };
+}
+
 /// Self mode has no rider display to capture the rider's model from, so
 /// the boots' mount (Shadow's rest foot, node 24) had no rest pose and fell
 /// back to the hub's mirrored numbers (boot sideways, test build 9). Take the
@@ -2107,6 +2780,103 @@ fn ensure_rider_rest(m: &Mem) {
     eprintln!("chao-player: rider rest pose from model {obj:#x} (62 nodes)");
     RIDER_OBJ.set(obj);
     RIDER_REST.set(Some((obj, rr.into_iter().map(|(rot, _)| crate::skate::mul(&inv0, &rot)).collect())));
+}
+
+/// MOTION_CTRL at chaowk +0xAC (research gsne8p-disc/chao/pseudo/motion-engine.md,
+/// decomp motion.h): flag u16 +0, curr_num +4, minfo[0] at +0x18 = {u16
+/// mode; f32 frame +4, start +8, end +0xC, spd +0x10}.
+const CHAO_MOTION_CTRL: u32 = 0xAC;
+thread_local! {
+    /// The rider's last full-skeleton motion draw: (NJS_MOTION, frame).
+    static RIDER_MOTION: Cell<(u32, f32)> = const { Cell::new((0, 0.0)) };
+}
+
+/// Where the Chao's stride frame goes so its cycle phase moves `blend` of
+/// the way (the short way round) to the rider's phase; both phases 0..1.
+pub(crate) fn locked_phase(chao: f32, rider: f32, blend: f32) -> f32 {
+    let err = (rider - chao + 1.5).rem_euclid(1.0) - 0.5;
+    (chao + err * blend).rem_euclid(1.0)
+}
+
+/// The Chao's own walk/run supplies the leg pivots under the feet that take
+/// the rider's rotations: its cycle is kept on the rider's stride, as the hub
+/// does (mmo-play src/shadow-skate.js apply(): run.goToFrame(locked)), or
+/// the feet turn in his rhythm on legs that step in another.
+/// Presentation rule from the hub, not game data: phase 0 of the Chao's
+/// cycle is put on phase 0 of the rider's motion (unverified that both start
+/// on the same foot).
+fn stride_lock(m: &mut Mem, chao: u32) {
+    let b = skate_blend(false);
+    let (cw, obj2) = (m.r32(chao + 0x34), m.r32(P1_OBJ2));
+    if b <= 0.0 || cw == 0 || !(0x8000_0000..0x8C00_0000).contains(&obj2) || std::env::var("SA2_STRIDE_LOCK").is_ok_and(|v| v == "0") {
+        return;
+    }
+    let f = |m: &Mem, a: u32| f32::from_bits(m.r32(a));
+    // The rider's motion draw of the last frame: NJS_MOTION (nbFrame u32 +4)
+    // and the frame it was drawn at.
+    let (mot, nframe) = RIDER_MOTION.get();
+    if !(0x8000_0000..0x8C00_0000).contains(&mot) {
+        return;
+    }
+    let n = m.r32(mot + 4) as f32;
+    let ctrl = cw + CHAO_MOTION_CTRL;
+    // Not while the Chao's motion is blending to another (flag 0x2, link).
+    // shortcut: a rider motion under 8 frames (his 2-frame stand, drawn for the
+    // first frames of a move) has no stride to lock to; upgrade with his
+    // action state if a short stride motion turns up.
+    if n < 8.0 || !nframe.is_finite() || m.r16(ctrl) & 2 != 0 {
+        return;
+    }
+    let (frame, start, end) = (f(m, ctrl + 0x1C), f(m, ctrl + 0x20), f(m, ctrl + 0x24));
+    let len = end - start;
+    if !(len > 0.0) || !frame.is_finite() {
+        return;
+    }
+    let to = start + locked_phase((frame - start) / len, nframe / n, b) * len;
+    m.w32(ctrl + 0x1C, to.to_bits());
+    if std::env::var("SA2_TRACK_LOG").is_ok_and(|v| v == "1") {
+        eprintln!("stride: chao motion {} frame {frame:.2} -> {to:.2} of {start:.0}..{end:.0}, rider frame {nframe:.2} of {n:.0}, blend {b:.2}", m.r32(ctrl + 4));
+    }
+}
+
+thread_local! {
+    static TRACK_LINE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// SA2_TRACK_LOG=1 (debug): one line per drawn frame for the skate-mapped
+/// Chao nodes, in degrees: `node: s (the rider node's turn from its rest,
+/// seen in the Chao's facing) / c (the drawn Chao node's turn from its rest)
+/// / e (between the two) / o (between the drawn node and the Chao's own
+/// motion before the overlay)`, with the blend and the Chao's motion.
+fn track_log(m: &Mem, i: usize, own: &[[f32; 4]; 3]) {
+    if !std::env::var("SA2_TRACK_LOG").is_ok_and(|v| v == "1") {
+        return;
+    }
+    let r3 = |x: &[[f32; 4]; 3]| -> [[f32; 3]; 3] { std::array::from_fn(|a| std::array::from_fn(|b| x[a][b])) };
+    if let Some(&(_, src, ..)) = crate::skate::MAP.iter().find(|e| e.0 == i) {
+        let now = SKEL.with_borrow(|s| (s.len() == 62).then(|| r3(&inv_mul(&s[0], &s[src]))));
+        let rest = RIDER_REST.with_borrow(|r| r.as_ref().and_then(|(_, v)| v.get(src).copied()));
+        let chao_rest = CHAO_REST.with_borrow(|r| r.as_ref().and_then(|r| r.worlds(&[]).get(i).map(|x| x.0)));
+        if let (Some(now), Some(rest), Some(chao_rest)) = (now, rest, chao_rest) {
+            let p = CHAO_PLACE.get();
+            let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
+            let (s, c, e) = crate::skate::track(&now, &rest, &r3(&inv_mul(&p, &cur)), &chao_rest);
+            let o = crate::skate::angle_between(&r3(own), &r3(&cur));
+            TRACK_LINE.with_borrow_mut(|l| l.push_str(&format!(" {i}: s{s:.0} c{c:.0} e{e:.0} o{o:.0}")));
+        }
+    }
+    if i == 14 {
+        let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+        // Headings in the world, degrees: the rider's root node as his display
+        // drew it (he faces -x) and the Chao's placement (it faces +z).
+        let base = mtx(m, m.r32(NJ_BASE_MATRIX));
+        let place = inv_mul(&base, &CHAO_PLACE.get());
+        let chao_yaw = place[0][2].atan2(place[2][2]).to_degrees();
+        let rider_yaw = SKEL.with_borrow(|s| s.first().map(|r| (-r[0][0]).atan2(-r[2][0]).to_degrees()));
+        let diff = rider_yaw.map(|r| (r - chao_yaw + 540.0).rem_euclid(360.0) - 180.0);
+        TRACK_LINE.with_borrow_mut(|l| l.push_str(&format!(" heading: rider {rider_yaw:.1?} chao {chao_yaw:.1} diff {diff:.1?}")));
+        eprintln!("track: f{f} blend {:.2} motion {}{}", skate_blend(false), LAST_MOTION.get(), TRACK_LINE.take());
+    }
 }
 
 /// One skate-mapped node: rotation from skate::desired (Chao model space,
@@ -2149,8 +2919,23 @@ fn skate_node(m: &mut Mem, i: usize, src: usize, w: f32, cap: f32) {
 /// when it slows, over the hub's 0.42 s in and 0.28 s out (smoothstep).
 /// `step`: advance one frame (once per draw, at node 0).
 fn skate_blend(step: bool) -> f32 {
+    if LEVEL_RIG.get() {
+        return 1.0;
+    }
+    // Swimming or in the air in Chao World the Chao plays its own motion: no overlay, no jets.
+    if SWIM.get().is_some() || AIR.get() {
+        SKATE_PROGRESS.set(0.0);
+        return 0.0;
+    }
     if step {
-        let target = if MOVING.get() && LAST_MOTION.get() == 119 { 1.0f32 } else { 0.0 };
+        // While it moves at all (walk 578 or run 119): the hidden character's
+        // skeleton is in its walk, run or skate then, and the Chao's body,
+        // head, arms and feet follow it. (Only from the run on, the Chao's own
+        // walk played for the first half second of every move and followed
+        // nothing: test copy run t1, e up to 100 degrees at blend 0.)
+        // SA2_SKATE_RUN_ONLY=1 (debug): only while it runs, as before.
+        let run_only = std::env::var("SA2_SKATE_RUN_ONLY").is_ok_and(|v| v == "1");
+        let target = if MOVING.get() && (LAST_MOTION.get() == 119 || (!run_only && LAST_MOTION.get() == 578)) { 1.0f32 } else { 0.0 };
         let p = SKATE_PROGRESS.get();
         let dt = if target > p { 1.0 / (0.42 * 60.0) } else { 1.0 / (0.28 * 60.0) };
         SKATE_PROGRESS.set(p + (target - p).clamp(-dt, dt));
@@ -2181,6 +2966,7 @@ const TRY_ON: [(&str, u8, u32, usize, [f32; 7]); 7] = [
     ("sunglasses", b'K', 323, 16, [0.0, -0.5, -0.64, -180.0, -90.0, 0.0, 1.6]),  // KNUCKMDL 161, set in the tuner
     ("necklace", b'K', 337, 1, [0.0, -0.16, 1.8, -155.0, 90.0, -155.0, 1.41]),   // KNUCKMDL 168, set in the tuner
     ("sflame", b'T', 201, 16, TUNE_NONE),                                       // TERIOSMDL 100, on the head as a crown
+    // Sonic's Light Shoes: placed as the Air Shoes are (light_shoe_place), the tuner's line on top.
     ("lshoe0", b'S', 27, 6, TUNE_NONE),                                          // SONICMDL 13 (right)
     ("lshoe1", b'S', 29, 13, TUNE_NONE),                                         // SONICMDL 14 (left)
     ("ring", b'S', 51, 16, TUNE_NONE),                                           // SONICMDL 25 Flame Ring, on the head as a crown
@@ -2221,12 +3007,23 @@ fn try_on(c: &mut Cpu, m: &mut Mem) {
         let (obj, tex) = match file {
             b'K' => (knux_obj(m, slot), KNUX_TEX.get()),
             b'T' => (shadow_obj(m, slot), SHADOW_TEX.get()),
-            _ => (SONIC_MODELS.with_borrow(|s| s.get(&slot).copied()).unwrap_or(0), SONIC_TEX.get()),
+            // Sonic's file loaded by this module, or, when he is the stage's own
+            // character (the load then fills no slot), his models in the game's table.
+            _ => (SONIC_MODELS.with_borrow(|s| if s.is_empty() { Some(model_obj(m, slot)) } else { s.get(&slot).copied() }).unwrap_or(0), SONIC_TEX.get()),
         };
+        // The Light Shoes come from their own shoe file, not a model slot.
+        let obj = if key.starts_with("lshoe") { 0x8000_0000 } else { obj };
         let Some(at) = NODE_MATS.with_borrow(|n| n.get(&node).copied()) else { continue };
         let (Some(tex), true) = (tex.filter(|&t| t != 0), (0x8000_0000..0x8C00_0000).contains(&obj)) else { continue };
         let half: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if i == j { 0.5 } else { 0.0 }));
-        let place = mul34(&at, &half);
+        // The Light Shoes sit on the feet as the Air Shoes do; without that
+        // place (no foot drawn yet) they are not drawn.
+        let (obj, place) = if key.starts_with("lshoe") {
+            let Some((o, p)) = light_shoe_place(c, m, node) else { continue };
+            (o, p)
+        } else {
+            (obj, mul34(&at, &half))
+        };
         let place = mul34(&place, &gear_tune(key).unwrap_or_else(|| tune_matrix(&set)));
         for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, place[r][q].to_bits()); } }
         m.w32(list, tex);
@@ -2238,6 +3035,42 @@ fn try_on(c: &mut Cpu, m: &mut Mem) {
     for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, keep_m[r][q].to_bits()); } }
 }
 
+/// Sonic's Light Shoes on Chao foot `node` (6 or 13), made and drawn the way
+/// the Air Shoes are: one rigid shoe file (his own right heel/toe mesh from
+/// his body model with the Light Shoes item on it, scripts/convert-light-shoes.py
+/// then scripts/convert-hub-shoe-to-ninja.py, read from the site's
+/// /mmo-assets/sonic-light-shoes-right.njsh; SA2_LIGHT_SHOE overrides), through
+/// the same fit (boot_place) at the Air Shoes' set size (BOOT_TUNE), mirrored
+/// in x on node 13. Returns the shoe object and its view-space place; None
+/// without the file. (Before: the item alone, a heel piece with no shoe.)
+fn light_shoe_place(c: &mut Cpu, m: &mut Mem, node: usize) -> Option<(u32, [[f32; 4]; 3])> {
+    let n = SHOES.iter().position(|s| s.0 == node)?;
+    let path = std::env::var("SA2_LIGHT_SHOE").unwrap_or_else(|_| "/mmo-assets/sonic-light-shoes-right.njsh".into());
+    let obj = shoe_file(c, m, &LIGHT_SHOE, &LIGHT_SHOE_VERTS, &path);
+    if obj == 0 {
+        return None;
+    }
+    let verts = LIGHT_SHOE_VERTS.with_borrow(|v| v.clone());
+    let x = [LIGHT_UP[1] * LIGHT_FWD[2] - LIGHT_UP[2] * LIGHT_FWD[1], LIGHT_UP[2] * LIGHT_FWD[0] - LIGHT_UP[0] * LIGHT_FWD[2], LIGHT_UP[0] * LIGHT_FWD[1] - LIGHT_UP[1] * LIGHT_FWD[0]];
+    let place = boot_place(m, n, node, &verts, Some([x, LIGHT_UP, LIGHT_FWD]))?;
+    Some((obj, mul34(&place, &tune_matrix(&BOOT_TUNE))))
+}
+
+/// The Light Shoe file's own up and toe directions, as BOOT_UP / BOOT_FWD are
+/// the Air Shoe file's: up is the export's exportedPropStandingUp for Sonic's
+/// right heel (-0.8284783, -0.5575026, -0.0530512) with x negated (the file
+/// is mirrored back in x); forward is up turned a quarter in the file's xy
+/// plane, which is how the Air Shoes' pair relate.
+/// unverified: that rule for forward on Sonic's shoe (seen on the foot, not measured).
+const LIGHT_UP: [f32; 3] = [0.828_478_3, -0.557_502_6, -0.053_051_2];
+const LIGHT_FWD: [f32; 3] = [-0.558_288_4, -0.829_646_1, 0.0];
+
+thread_local! {
+    static LIGHT_SHOE: Cell<Option<u32>> = const { Cell::new(None) };
+    static LIGHT_SHOE_VERTS: std::cell::RefCell<Vec<[f32; 3]>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+
 thread_local! {
     static SONIC_TEX: Cell<Option<u32>> = const { Cell::new(None) };
     static SONIC_MODELS: std::cell::RefCell<std::collections::BTreeMap<u32, u32>> = Default::default();
@@ -2245,12 +3078,39 @@ thread_local! {
     static NODE_MATS: std::cell::RefCell<std::collections::BTreeMap<usize, [[f32; 4]; 3]>> = Default::default();
 }
 
+/// A Ninja object that can be read as a model: itself, its model's two lists
+/// and its child and sibling links all in RAM (or absent), one level down too.
+fn plain_object(m: &Mem, o: u32) -> bool {
+    let ram = |a: u32| (0x8000_0000..0x8C00_0000).contains(&a);
+    let node = |o: u32| {
+        if !ram(o) {
+            return false;
+        }
+        let (mdl, child, sib) = (m.r32(o + 4), m.r32(o + 0x2C), m.r32(o + 0x30));
+        (mdl == 0 || (ram(mdl) && [m.r32(mdl), m.r32(mdl + 4)].iter().all(|&l| l == 0 || ram(l)))) && [child, sib].iter().all(|&l| l == 0 || ram(l))
+    };
+    node(o) && [m.r32(o + 0x2C), m.r32(o + 0x30)].iter().all(|&l| l == 0 || node(l))
+}
+
 /// Under the hub's shoes the Chao's own foot is not drawn, as the hub hides
 /// the foot meshes its footwear covers (src/scene.js attachOwnerGear): the
 /// foot node's matrix is collapsed to its origin after the shoe's mount
 /// was taken from it. Only the player's own Chao wears the shoes.
+/// A foot node's view-space matrix for the shoes (next shoe draw), then the
+/// Chao's own foot hidden under them.
+fn record_foot(m: &mut Mem, i: usize, cur_ptr: u32) {
+    if let Some(k) = SHOES.iter().position(|s| s.0 == i) {
+        let cur = mtx(m, cur_ptr);
+        FEET.with_borrow_mut(|f| f[k] = Some(cur));
+        hide_foot(m, cur_ptr);
+    }
+}
+
 fn hide_foot(m: &mut Mem, cur_ptr: u32) {
-    if HUB_SHOE.get().is_some_and(|o| o != 0) && !debug_off("shoes") && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
+    let air = HUB_SHOE.get().is_some_and(|o| o != 0) && !debug_off("shoes") && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0");
+    // Also under Sonic's Light Shoes while the tuner shows them.
+    let light = LIGHT_SHOE.get().is_some_and(|o| o != 0) && debug_set("tryon").as_deref() == Some("1") && !(debug_off("lshoe0") && debug_off("lshoe1"));
+    if air || light {
         for r in 0..3 { for k in 0..3 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, 0); } }
     }
 }
@@ -2816,6 +3676,10 @@ fn spin_flash(c: &mut Cpu, m: &mut Mem) {
     if !self_drive(m) || w == 0 || cw == 0 || m.r8(w + 1) != 0 {
         return original(c, m, SPIN_FLASH_DISP);
     }
+    // Chao World: no spin effect either (it goes with the ball).
+    if !std::env::var("SA2_SELF_BALL").is_ok_and(|v| v == "1") {
+        return;
+    }
     let keep: Vec<u32> = (0..4).map(|i| m.r32(w + 4 + 4 * i)).collect();
     let (s, keep_scale) = (BOARD_SCALE, m.r32(w + 0x1C));
     for i in 0..3u32 {
@@ -2951,6 +3815,7 @@ fn drop_stage_loads() {
     SHADOW_MODELS.with_borrow_mut(|e| e.clear());
     BAKED_BOOT.set(None);
     HUB_SHOE.set(None);
+    LIGHT_SHOE.set(None);
     emerald_orbit::forget();
     GLOVE_FIT.set(None);
     SHADOW_MOVES.set(false);
@@ -3054,9 +3919,11 @@ thread_local! {
     static AREA_DONE: Cell<bool> = const { Cell::new(false) };
     static LIVE_STAGE: Cell<u16> = const { Cell::new(u16::MAX) };
     static SELF_LOGGED: Cell<bool> = const { Cell::new(false) };
+    static TASK_LOGGED: Cell<bool> = const { Cell::new(false) };
 }
 
 fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
+    LAST_EXEC.set(addr);
     let task = c.r[3];
     // In Chao World the area is ChaoMain's AL_GetStageNumber (.text 0x27FA0).
     let area = if chao_world(m) && module_linked(m, 60) { call(c, m, rt::sec(m, 60, 1) + 0x27FA0, &[]) as u16 } else { 0 };
@@ -3068,6 +3935,10 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         eprintln!("chao-drive: self mode {me} (stage {}, step {:?})", m.r16(STAGE_NUM), STEP.get());
     }
     let pmove = me && player_move_on();
+    // SA2_TASK_LOG=1 (debug): his task's words, once.
+    if std::env::var("SA2_TASK_LOG").is_ok_and(|v| v == "1") && !TASK_LOGGED.replace(true) {
+        eprintln!("task-log: character task {task:#x} words +0x00..+0x40 {:x?}", (0..0x40).step_by(4).map(|o| m.r32(task + o)).collect::<Vec<_>>());
+    }
     if !me {
         c.r[3] = task;
         // Self mode in Chao World: the character is never seen or heard, also
@@ -3080,9 +3951,13 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         let own = m.r32(task + 0x34);
         if own != 0 && chao_world(m) && std::env::var("SA2_YAW_LOG").is_ok_and(|v| v == "1") {
             let f = |a: u32| f32::from_bits(m.r32(a));
-            eprintln!("yaw: frame {} char {:#06x} native pos ({:.2},{:.2})", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r32(own + 0x0C) & 0xFFFF, f(own + 0x14), f(own + 0x1C));
+            eprintln!("yaw: frame {} char {:#06x} native pos ({:.2},{:.2}) height {:.2} state {} flags {:#x}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r32(own + 0x0C) & 0xFFFF, f(own + 0x14), f(own + 0x1C), f(own + 0x18), m.r8(own), m.r16(own + 4));
         }
     } else if let (true, Step::Live(chao)) = (pmove, STEP.get()) {
+        let pwp = m.r32(P1_OBJ2);
+        if (0x8000_0000..0x8C00_0000).contains(&pwp) {
+            PRE_VY.set(f32::from_bits(m.r32(pwp + 0x68)));
+        }
         player_move(c, m, addr, task, chao);
     }
     // A new stage or Chao World area drops the Chao task:
@@ -3097,6 +3972,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         crate::name_tags::flush();
     }
     crate::kinder_chart::frame(c, m);
+    takeoff_test(c, m);
     info_out(m, area);
     debug_teleport(m, task);
     staff_goto(c, m, task, u32::from(area));
@@ -3124,11 +4000,17 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let stage = m.r16(STAGE_NUM) ^ (area << 8);
     if LIVE_STAGE.replace(stage) != stage {
         RIDER.set(0);
-        if LIVE_STAGE_NUM.replace(m.r16(STAGE_NUM)) != m.r16(STAGE_NUM) {
+        let new_stage = LIVE_STAGE_NUM.replace(m.r16(STAGE_NUM)) != m.r16(STAGE_NUM);
+        if new_stage {
             drop_stage_loads();
         }
-        if let Step::Live(_) = STEP.get() {
+        // A new stage settles for a second before the Chao is made (tick).
+        // An area change inside Chao World does not need it (ChaoMain stays
+        // linked): the second was an empty path on every arrival (mob 2026-11-23).
+        if new_stage && matches!(STEP.get(), Step::Live(_) | Step::Wait(_)) {
             STEP.set(Step::Wait(0));
+        } else if let Step::Live(_) = STEP.get() {
+            STEP.set(Step::Wait(if chao_world(m) { 60 - area_settle() } else { 0 }));
         }
         // The game dropped the remote Chao's tasks too, without freeing their
         // blocks one by one (the remote heap only shrank across a garden ->
@@ -3188,14 +4070,20 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // alm_aruki_ncz (walk), 119 alm_run (run); common-motions.ini.
         // shortcut: walk/run switch at 1.0 / 0.9 units a frame (hysteresis as
         // the hub's 1.05/0.95); not yet scaled to the hub's speed units.
-        if chao_world(m) {
+        let old_level = addr != SONIC_EXEC || std::env::var("SA2_LEVEL_RETARGET").is_ok_and(|v| v == "1");
+        if chao_world(m) || !old_level {
             let d = d2.sqrt();
             let last = LAST_MOTION.get();
-            let want = if d < 0.01 { 0 } else if d >= if last == 119 { 0.9 } else { 1.0 } { 119 } else { 578 };
+            let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+            let on_board = !chao_world(m) && BOARD.with_borrow(|b| b.as_ref().is_some_and(|b| f <= b.0 + 1));
+            // Chao World: swimming or in the air the Chao plays its own motion for it.
+            let own_state = if me { chao_world_state(c, m, task, chao, area) } else { (SWIM.set(None), AIR.set(false)); None };
+            let want = if let Some(mo) = own_state { mo } else if d < 0.01 || on_board { 0 } else if d >= if last == 119 { 0.9 } else { 1.0 } { 119 } else { 578 };
             if want != last {
                 call(c, m, rt::sec(m, 60, 1) + AL_SET_MOTION_LINK, &[chao, want]);
                 LAST_MOTION.set(want);
             }
+            stride_lock(m, chao);
         }
         pin(m, chao, data1);
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
@@ -3205,25 +4093,14 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // the rider's B is its own move, not Pet (action 31). Each frame, as
         // the Chao's behaviours may enable touch again (AL_EnableTouch 0x5AB0).
         call(c, m, rt::sec(m, 60, 1) + AL_DISABLE_NADE, &[chao]);
-        // The Hammer Gloves item in Knuckles's and Rouge's levels: Knuckles's
-        // models are there in his own; Rouge's need KNUCKMDL. KNUCKTEX is
-        // loaded once for the glove's own list.
-        if addr == KNUX_EXEC && KNUX_TEX.get().is_none() && !std::env::var("SA2_HAMMER_GLOVES").is_ok_and(|v| v == "0") {
-            let obj2 = m.r32(P1_OBJ2);
-            let tex = call(c, m, LOAD_TEX, &[0x8017_4F04]);
-            if model_obj(m, 329) == 0 {
-                load_models(c, m, 0x8017_4F10);
-                KNUX_MODELS.set(LAST_LOAD.with_borrow(|l| l.clone()));
-            }
-            eprintln!("chao-player: Hammer Gloves textures {tex:#x} (rider {})", m.r8(obj2 + 1));
-            KNUX_TEX.set(Some(tex).filter(|&t| t != 0));
-        }
-        // Shadow's textures and models for the Dark Chao's ball, once, in
-        // Sonic's levels (playerwk +1 = 0, the byte Sonic's display picks his models by).
-        if addr == SONIC_EXEC && SHADOW_TEX.get().is_none() && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
-            eprintln!("chao-player: rider char {} (shadow tex not loaded yet)", m.r8(m.r32(P1_OBJ2) + 1));
-        }
-        if addr == SONIC_EXEC && (m.r8(m.r32(P1_OBJ2) + 1) == 0 || chao_world(m)) && SHADOW_TEX.get().is_none() && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0")
+        // The Chao's gear (Shadow's and Knuckles's textures and models, for the
+        // Air Shoes, the ball and the Hammer Gloves), once per stage, in every
+        // stage the Chao plays, whoever the hidden character is: each file is
+        // loaded by this module into its own maps (SHADOW_MODELS, KNUX_MODELS),
+        // never read from a model table slot the stage's own character filled.
+        // Before 2026-11-23: Sonic's stages and Chao World only; Shadow's own
+        // stages got no gear at all, Knuckles's and Rouge's the gloves alone.
+        if (addr == SONIC_EXEC || addr == KNUX_EXEC) && SHADOW_TEX.get().is_none() && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0")
             && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= GEAR_LOAD_AT.get() {
             // The gear goes in game heap 1: in heap 0 it took ~1.5 MB of the
             // lobby's 3.93 MB, leaving 0.05 MB (menus thread, build 7 heap log).
@@ -3242,6 +4119,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             eprintln!("chao-player: model slots {}", all.join(" "));
             eprintln!("chao-player: Shadow's textures {tex:#x} ({} entries), models {mdl:#x}", if tex != 0 { m.r32(tex + 4) } else { 0 });
             SHADOW_TEX.set(Some(tex).filter(|&t| t != 0));
+            tex_log(m, "Shadow's", tex);
             if tex == 0 {
                 GEAR_LOAD_AT.set(u64::MAX); // no retry every frame; the next stage tries again
             }
@@ -3258,6 +4136,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             m.w32(heap_var, keep_heap);
             eprintln!("chao-player: Knuckles's textures {ktex:#x}, models {kmdl:#x} (heap {GEAR_HEAP}, was {keep_heap})");
             KNUX_TEX.set(Some(ktex).filter(|&t| t != 0));
+            tex_log(m, "Knuckles's", ktex);
             // SA2_MODEL_DUMP (debug): every loaded model slot with its node and vertex counts.
             if std::env::var_os("SA2_MODEL_DUMP").is_some() {
                 for k in 0..0x428u32 {
@@ -3272,11 +4151,9 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // Physics stays native for Knuckles and Rouge (mob's rules).
         if addr == SONIC_EXEC {
             physics_row(m);
-            if !chao_world(m) {
-                shadow_moves(c, m);
-            }
+            shadow_moves(c, m);
             force_sonic_state(m);
-        } else {
+        } else if addr == KNUX_EXEC {
             knuckles_rules(c, m, chao);
         }
         return;
@@ -3383,12 +4260,404 @@ const MIXED_ACTIONS: u32 = 0x82F0_2000;
 
 thread_local! {
     static SHADOW_MOVES: Cell<bool> = const { Cell::new(false) };
+    static SHADOW_STYLE: Cell<Option<bool>> = const { Cell::new(None) };
 }
 
-/// Off the board in Sonic's levels the owner's Chao moves
-/// like Shadow (physics stays Metal's row). Every state whose Shadow row plays
-/// a different motion number takes Shadow's row (motion, blend, speed; Sonic's
-/// model field kept), from Shadow's own motion file loaded once.
+// ---- Chao World: swimming, the jump's look and flying (mob 2026-11-23) ----
+// The hidden character still moves the body (player_move); these change what
+// the Chao plays and, in flight, his fall and forward speed.
+
+/// Garden water levels by ChaoMain's stage number (AL_CheckWater .text
+/// 0x48964, .rodata 0x9308..0x9310): Neutral, Hero, Dark. No other area has water.
+const WATER_LEVEL: [(u16, f32); 3] = [(1, -2.2), (2, -1.5), (3, -1.0)];
+/// AL_CheckWater: in the water when the level is above the Chao's spot by more than this (.rodata 0x9318).
+const WATER_DEPTH: f32 = 2.0;
+/// The swim behaviour holds the Chao this far below the level (fn_60_482DC, .rodata 0x92CC).
+const SWIM_HEIGHT: f32 = 2.1;
+/// The Chao's swim motion by its Swim skill (fn_60_47A50 and the race's
+/// fn_76_CB54: below ChaoGlobal +310 (300) motion 142, below +312 (2000) 148, else 145).
+const SWIM_MOTIONS: [u32; 3] = [142, 148, 145];
+/// The Chao's motion in the air: 130, what the race plays when a Chao leaves
+/// a ledge and while it flies (ChaoStgRace fn_76_CA0C / fn_76_D1A4).
+/// shortcut: no separate native jump motion was identified; upgrade when one is.
+const AIR_MOTION: u32 = 130;
+/// The race's swim (ChaoStgRace fn_76_C6EC): forward acceleration 0.0027 +
+/// 0.018 s/10000 against a drag of 0.06 of the speed, s = the Swim points
+/// (top speed 0.045 a frame untrained, 0.345 at 9999).
+const SWIM_ACC: f32 = 0.0027;
+
+/// A skill of the player's own Chao as the race reads it: the points in its
+/// own record (task work +0x5C, u16 at +0x38 + 2 x skill; 0 Swim, 1 Fly),
+/// which is what ChaoMain AL_ParameterGetSkill (.text 0x20934) returns in the
+/// race. (In the gardens and the lobby that function returns three times the
+/// points; the race's rules are used here with the race's own input.)
+/// SA2_CHAO_SWIM / SA2_CHAO_FLY=points (test only): that value instead; the
+/// record is not touched.
+fn own_skill(m: &Mem, chao: u32, skill: u32) -> u16 {
+    if let Some(v) = std::env::var(["SA2_CHAO_SWIM", "SA2_CHAO_FLY"][skill as usize & 1]).ok().and_then(|v| v.trim().parse().ok()) {
+        return v;
+    }
+    let rec = m.r32(m.r32(chao + 0x34) + 0x5C);
+    let v = if (0x8000_0000..0x8C00_0000).contains(&rec) { m.r16(rec + 0x38 + 2 * skill) } else { 0 };
+    if !SKILL_SAID.replace(true) {
+        eprintln!("chao-player: the Chao's own record {rec:#x}: Swim {} points (level {}), Fly {} points (level {})", m.r16(rec + 0x38), m.r8(rec + 0x30), m.r16(rec + 0x3A), m.r8(rec + 0x31));
+    }
+    v
+}
+
+/// One frame of the race's swim speed: pushed on, it gains the skill's
+/// acceleration against the drag; let go, only the drag acts.
+pub(crate) fn swim_step(v: f32, pushed: bool, skill: f32) -> f32 {
+    v * 0.94 + if pushed { SWIM_ACC + 0.018 * skill / 10000.0 } else { 0.0 }
+}
+const CHAO_GLOBAL: u32 = 0x2A50; // ChaoMain .data
+
+/// A flag the pad read sees too (the game reads the pad on another thread than its tasks run on).
+struct Flag(std::sync::atomic::AtomicBool);
+impl Flag {
+    const fn new() -> Self { Flag(std::sync::atomic::AtomicBool::new(false)) }
+    fn get(&self) -> bool { self.0.load(std::sync::atomic::Ordering::Relaxed) }
+    fn set(&self, v: bool) { self.0.store(v, std::sync::atomic::Ordering::Relaxed) }
+    fn replace(&self, v: bool) -> bool { self.0.swap(v, std::sync::atomic::Ordering::Relaxed) }
+}
+/// The hidden character is off the ground (Chao World, self mode).
+static AIR: Flag = Flag::new();
+/// Jump was let go since leaving the ground; the fly press is held; that press is still down.
+static AIR_RELEASED: Flag = Flag::new();
+static FLY: Flag = Flag::new();
+static FLY_MASK: Flag = Flag::new();
+
+thread_local! {
+    /// In garden water: the water level.
+    static SWIM: Cell<Option<f32>> = const { Cell::new(None) };
+    /// Flight speed (forward, up) by the race's rule; his own fall per frame, measured while he is in the air.
+    static FLY_V: Cell<Option<(f32, f32)>> = const { Cell::new(None) };
+    static HIS_GRAVITY: Cell<f32> = const { Cell::new(0.0) };
+    static PRE_VY: Cell<f32> = const { Cell::new(0.0) };
+    static FLY_SEEN: Cell<(u8, u16)> = const { Cell::new((0, 0)) };
+    static CLIMB: Cell<(u32, Option<f32>)> = const { Cell::new((0, None)) };
+    static LAST_FLAT: Cell<Option<[f32; 2]>> = const { Cell::new(None) };
+    static SWIM_V: Cell<f32> = const { Cell::new(0.0) };
+    static SKILL_SAID: Cell<bool> = const { Cell::new(false) };
+    static UP_FOR: Cell<u32> = const { Cell::new(0) };
+    static CLIMB_V: Cell<f32> = const { Cell::new(0.0) };
+    static FLY_T: Cell<Option<(u32, u32)>> = const { Cell::new(None) };
+    static FLY_Y: Cell<Option<f32>> = const { Cell::new(None) };
+    static CLIMB_WIN: Cell<(u32, [f32; 2], f32, bool)> = const { Cell::new((0, [0.0; 2], 0.0, false)) };
+}
+
+/// Pushed against a pool wall: frames before the lift starts, the flat
+/// headway a frame under which the body counts as stopped, the lift a frame
+/// (as a part of the swim speed), and how far above the water it may go.
+const CLIMB_AFTER: u32 = 8;
+const CLIMB_FREE: u32 = 20;
+const CLIMB_WINDOW: u32 = 8;
+const FALL_FRAMES: u32 = 8;
+const CLIMB_STUCK: f32 = 0.5; // of the swim speed
+const CLIMB_RATE: f32 = 0.3;
+const CLIMB_TOP: f32 = 6.0;
+
+/// One frame of the way out of a walled pool. Before the lift: (frames
+/// stopped at a wall, None). Lifting: (frames of headway in a row, the height
+/// the body is held at or above). It starts only in the water, after
+/// CLIMB_AFTER stopped frames; each stopped frame lifts a step, and with
+/// headway the height is held (a slanted wall lets him on a little at each
+/// height). It ends when the stick is let go, after CLIMB_FREE frames of
+/// headway (over the bank), or at CLIMB_TOP over the water.
+pub(crate) fn climb_step(was: (u32, Option<f32>), level: Option<f32>, swimming: bool, pushed: bool, stopped: bool, y: f32) -> (u32, Option<f32>) {
+    let Some(level) = level else { return (0, None) };
+    if !pushed {
+        return (0, None);
+    }
+    match was.1 {
+        None if !(swimming && stopped) => (0, None),
+        None if was.0 + 1 < CLIMB_AFTER => (was.0 + 1, None),
+        None => (0, Some(y + CLIMB_RATE)),
+        Some(to) => {
+            let (free, to) = if stopped { (0, to + CLIMB_RATE) } else { (was.0 + 1, to) };
+            if free >= CLIMB_FREE || to > level + CLIMB_TOP { (0, None) } else { (free, Some(to)) }
+        }
+    }
+}
+
+pub(crate) fn water_level(area: u16) -> Option<f32> {
+    WATER_LEVEL.iter().find(|w| w.0 == area).map(|w| w.1)
+}
+
+pub(crate) fn in_water(y: f32, level: f32) -> bool {
+    level > y + WATER_DEPTH
+}
+
+pub(crate) fn swim_motion(skill: u32, low: u32, mid: u32) -> u32 {
+    SWIM_MOTIONS[if skill < low { 0 } else if skill < mid { 1 } else { 2 }]
+}
+
+/// The garden reads a skill as three times its points and lets a Chao fly at
+/// 400 (ChaoMain fn_60_4BC10): 134 points.
+const GARDEN_FLY_POINTS: u16 = 134;
+const GARDEN_FLY_TOP: f32 = 100.0;
+
+/// Which flight the second press starts. mob 2026-11-24: the garden's
+/// take-off for every Chao, held level after its climb for the lift time.
+/// SA2_FLY_MODE=race: the race's glide for everyone; =gate: the take-off only
+/// from GARDEN_FLY_POINTS, the glide under that; =garden: the take-off with
+/// the game's own sink (no level hold).
+pub(crate) fn garden_flier(points: u16) -> bool {
+    match std::env::var("SA2_FLY_MODE").as_deref() {
+        Ok("race") => false,
+        Ok("gate") => points >= GARDEN_FLY_POINTS,
+        _ => true,
+    }
+}
+
+/// The best Fly a Chao can reach by the game's rules (S grade, level 99, three reincarnations).
+const BEST_POINTS: f32 = 3266.0;
+
+/// MMO rule (mob 2026-11-24), not the game's: the strong-lift time of the player's take-off grows with its Fly
+/// points, 300 frames at 0 to 600 at BEST_POINTS (the game draws 300..600 at random for a garden Chao).
+/// SA2_FLY_LIFT=frames (test only): that time instead, to film the hand-over to the glide.
+pub(crate) fn lift_frames(points: f32) -> u32 {
+    if let Some(n) = std::env::var("SA2_FLY_LIFT").ok().and_then(|v| v.trim().parse().ok()) {
+        return n;
+    }
+    (300.0 + 300.0 * points.clamp(0.0, BEST_POINTS) / BEST_POINTS) as u32
+}
+
+/// One frame of the garden's flight (ChaoMain fn_60_3D978): it starts at 0.4
+/// forward and 0.35 up; forward gains 0.05 against a drag of 0.1 (0.5 a
+/// frame); the lift cancels 0.95 of the Chao's gravity `g` while its timer
+/// runs and 0.92 after. (The garden Chao does not steer; the player's does.)
+pub(crate) fn garden_fly_step(v: Option<(f32, f32)>, timer_runs: bool, g: f32) -> (f32, f32) {
+    let Some(v) = v else { return (0.4, 0.35) };
+    (v.0 * 0.9 + 0.05, v.1 - g * (1.0 - if timer_runs { 0.95 } else { 0.92 }))
+}
+
+/// One frame of the race's flight (ChaoStgRace fn_76_C500): forward
+/// acceleration 0.018 + 0.067 s/10000, sink 0.01 + 0.005 (10000 - s)/10000,
+/// drag 0.1 on the forward speed and 0.05 on the vertical; s = the Fly skill.
+pub(crate) fn fly_step(v: (f32, f32), skill: f32) -> (f32, f32) {
+    let s = skill.clamp(0.0, 10000.0);
+    let (acc, sink) = (0.018 + 0.067 * s / 10000.0, 0.01 + 0.005 * (10000.0 - s) / 10000.0);
+    (v.0 * 0.9 + acc, v.1 * 0.95 - sink)
+}
+
+const PAD_BUTTON_A: u16 = 0x0100;
+
+/// Controller 1 as the game is to read it. In the air in Chao World the
+/// second press of jump starts the Chao's flight and is held back from the
+/// game, so the character's own second-press move (homing attack) never
+/// fires; letting go ends the flight. The held-back press stays held back
+/// after landing until it is let go (it would be a new jump).
+pub(crate) fn pad_filter(mut p: sa2_asset_tools::input::PadStatus) -> sa2_asset_tools::input::PadStatus {
+    let a = p.button & PAD_BUTTON_A != 0;
+    if !a {
+        FLY.set(false);
+        FLY_MASK.set(false);
+        if AIR.get() {
+            AIR_RELEASED.set(true);
+        }
+    } else if AIR.get() && AIR_RELEASED.get() {
+        if !FLY.replace(true) && std::env::var("SA2_FLY_LOG").is_ok_and(|v| v == "1") {
+            eprintln!("fly: second press in the air: held back from the game, flight on");
+        }
+        FLY_MASK.set(true);
+    }
+    if !AIR.get() {
+        AIR_RELEASED.set(false);
+        FLY.set(false);
+    }
+    if FLY_MASK.get() {
+        p.button &= !PAD_BUTTON_A;
+    }
+    p
+}
+
+/// Chao World, self mode, after the hidden character moved the body: is the
+/// Chao swimming or in the air, and the motion it plays then (None: the usual
+/// stand / walk / run). In flight his speed is set by the race's rule.
+fn chao_world_state(_c: &mut Cpu, m: &mut Mem, task: u32, chao: u32, area: u16) -> Option<u32> {
+    let (own, cw, pwp) = (m.r32(task + 0x34), m.r32(chao + 0x34), m.r32(P1_OBJ2));
+    if own == 0 || cw == 0 {
+        (SWIM.set(None), AIR.set(false));
+        return None;
+    }
+    let f = |m: &Mem, a: u32| f32::from_bits(m.r32(a));
+    let level = water_level(area).filter(|&l| in_water(f(m, cw + 0x18), l));
+    // Swimming goes at the Chao's own Swim skill, by the race's rule
+    // (swim_step): what the character moved this frame is cut to that speed,
+    // back along the way he came, and his own speed is set to it.
+    let now = [f(m, cw + 0x14), f(m, cw + 0x1C)];
+    let was = LAST_FLAT.replace(Some(now)).unwrap_or(now);
+    let moved = ((now[0] - was[0]).powi(2) + (now[1] - was[1]).powi(2)).sqrt();
+    let pushed = { let s = crate::pad::port0().stick; i32::from(s[0]).pow(2) + i32::from(s[1]).pow(2) > 30 * 30 };
+    let swim_v = if level.is_some() {
+        let v = swim_step(SWIM_V.get(), pushed, f32::from(own_skill(m, chao, 0)));
+        if moved > v && moved > 0.0 {
+            let k = v / moved;
+            let to = [was[0] + (now[0] - was[0]) * k, was[1] + (now[1] - was[1]) * k];
+            m.w32(cw + 0x14, to[0].to_bits());
+            m.w32(cw + 0x1C, to[1].to_bits());
+            LAST_FLAT.set(Some(to));
+        }
+        if (0x8000_0000..0x8C00_0000).contains(&pwp) && f(m, pwp + 0x64) > v {
+            m.w32(pwp + 0x64, v.to_bits());
+        }
+        if std::env::var("SA2_FLY_LOG").is_ok_and(|v| v == "1") {
+            eprintln!("swim: f{} skill {} speed {v:.4} (he moved {moved:.4}) motion {}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), own_skill(m, chao, 0), swim_motion(u32::from(own_skill(m, chao, 0)), 300, 2000));
+        }
+        v
+    } else {
+        0.0
+    };
+    SWIM_V.set(swim_v);
+    // Out of a walled pool (the Hero garden): the hidden character walks the
+    // pool floor and its wall stopped him, so the Chao could only jump out.
+    // Pushed against a wall while swimming, the body is lifted up the wall
+    // until it passes over the bank.
+    // MMO glue, not the game: a garden Chao has no such wall to pass (its own
+    // collision is not the character collision used here).
+    // Stopped = no headway the way he faces (his yaw goes along (cos, sin)):
+    // sliding along the wall does not count as getting on.
+    let yaw = (m.r32(cw + 0x0C) & 0xFFFF) as f32 * std::f32::consts::TAU / 65536.0;
+    let headway = (now[0] - was[0]) * yaw.cos() + (now[1] - was[1]) * yaw.sin();
+    // (Lifted above the water he no longer swims: the speed he swam at still sets what counts as headway.)
+    if level.is_some() {
+        CLIMB_V.set(swim_v.max(SWIM_ACC));
+    }
+    // Judged over CLIMB_WINDOW frames: too little headway in sum, or too little
+    // ground covered (an untrained swimmer is so slow that at a wall his
+    // heading flips from frame to frame and single frames show headway).
+    let here = LAST_FLAT.get().unwrap_or(now);
+    let (n, from, sum, mut stopped) = CLIMB_WIN.get();
+    let (n, sum) = (n + 1, sum + headway);
+    if n >= CLIMB_WINDOW {
+        let need = CLIMB_STUCK * CLIMB_V.get() * CLIMB_WINDOW as f32;
+        stopped = sum < need || ((here[0] - from[0]).powi(2) + (here[1] - from[1]).powi(2)).sqrt() < need;
+        CLIMB_WIN.set((0, here, 0.0, stopped));
+    } else {
+        CLIMB_WIN.set((n, from, sum, stopped));
+    }
+    let climb = climb_step(CLIMB.get(), water_level(area), level.is_some(), pushed, stopped, f(m, cw + 0x18));
+    if climb.1.is_some() != CLIMB.get().1.is_some() {
+        eprintln!("chao-player: {} (height {:.2}, at {:.1} {:.1})", if climb.1.is_some() { "at a pool wall: up the bank" } else { "off the pool wall" }, f(m, cw + 0x18), f(m, cw + 0x14), f(m, cw + 0x1C));
+    }
+    CLIMB.set(climb);
+    if let Some(y) = climb.1.filter(|&to| to > f(m, cw + 0x18)) {
+        m.w32(cw + 0x18, y.to_bits());
+        if (0x8000_0000..0x8C00_0000).contains(&pwp) {
+            m.w32(pwp + 0x68, 0);
+        }
+    }
+    let climbing = climb.1.is_some();
+    if SWIM.replace(level).is_some() != level.is_some() {
+        eprintln!("chao-player: {} (area {area}, height {:.2}, at {:.1} {:.1})", if level.is_some() { "into the water: swimming" } else { "out of the water" }, f(m, cw + 0x18), f(m, cw + 0x14), f(m, cw + 0x1C));
+    }
+    // His status flags (task work +4): bit 0 on the ground (0x1 standing, 0x400 in a jump, seen in the lobby).
+    // In the air: his jump (state 6) at once; any other time off the ground
+    // only after FALL_FRAMES, as uneven ground (the Neutral garden) drops him
+    // for a few frames at a time, which is not a fall to play the air motion for.
+    let up = level.is_none() && !climbing && m.r16(own + 4) & 1 == 0 && m.r8(own) != 0;
+    let up_for = if up { UP_FOR.get() + 1 } else { 0 };
+    UP_FOR.set(up_for);
+    let air = up && (m.r8(own) == 6 || AIR.get() || up_for >= FALL_FRAMES);
+    if std::env::var("SA2_FLY_LOG").is_ok_and(|v| v == "1") && FLY_SEEN.replace((m.r8(own), m.r16(own + 4))) != (m.r8(own), m.r16(own + 4)) {
+        eprintln!("fly: his state {} flags {:#x} (pad A {}, fly {})", m.r8(own), m.r16(own + 4), crate::pad::port0().button & PAD_BUTTON_A != 0, FLY.get());
+    }
+    if AIR.replace(air) != air && std::env::var("SA2_FLY_LOG").is_ok_and(|v| v == "1") {
+        eprintln!("fly: {} (his state {}, flags {:#x})", if air { "in the air" } else { "landed" }, m.r8(own), m.r16(own + 4));
+    }
+    let speed = |m: &Mem| (0x8000_0000..0x8C00_0000).contains(&pwp).then(|| (f(m, pwp + 0x64), f(m, pwp + 0x68)));
+    if air && !FLY.get() {
+        // His own fall per frame, for the flight to cancel.
+        if let Some((_, vy)) = speed(m) {
+            let g = PRE_VY.get() - vy;
+            if (0.0..1.0).contains(&g) {
+                HIS_GRAVITY.set(g);
+            }
+            if std::env::var("SA2_FLY_LOG").is_ok_and(|v| v == "1") {
+                eprintln!("air: f{} height {:.2} his speed ({:.3}, {:.3}, {:.3}) before his step up {:.3}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), f(m, cw + 0x18), f(m, pwp + 0x64), vy, f(m, pwp + 0x6C), PRE_VY.get());
+            }
+        }
+    }
+    if air && FLY.get() {
+        if let Some(now) = speed(m) {
+            let skill = f32::from(own_skill(m, chao, 1));
+            let v = if garden_flier(skill as u16) {
+                // The garden's take-off (garden_fly_step), its timer drawn as the game draws it.
+                // One take-off for each time in the air: letting go and pressing
+                // again goes on from his speed, with no second kick and the same timer.
+                let again = FLY_T.get().is_some();
+                let (n, timer) = match FLY_T.get() {
+                    Some((n, t)) => (n + 1, t),
+                    None => (0, lift_frames(skill)),
+                };
+                FLY_T.set(Some((n, timer)));
+                let mw = m.r32(chao + 0x38);
+                let g = if mw != 0 { -f(m, mw + 0x48) } else { 0.055 };
+                // mob 2026-11-24: when the strong lift ends the flight goes
+                // straight on as the race's glide by the same Fly points (the
+                // garden's own weaker lift, 0.92, is not used for the player).
+                let from = FLY_V.get().or(again.then_some(now));
+                let v = if n < timer { garden_fly_step(from, true, g) } else { fly_step(from.unwrap_or(now), skill) };
+                // MMO rule (mob 2026-11-24), not the game's: at the top of the kick's climb the height is held
+                // level until the lift time is up, so Fly counts from flat ground. SA2_FLY_MODE=garden: the game's own sink.
+                let v = if n < timer && v.1 < 0.0 && !std::env::var("SA2_FLY_MODE").is_ok_and(|m| m == "garden") { (v.0, 0.0) } else { v };
+                if f(m, cw + 0x18) > GARDEN_FLY_TOP {
+                    m.w32(cw + 0x18, GARDEN_FLY_TOP.to_bits());
+                }
+                v
+            } else {
+                fly_step(FLY_V.get().unwrap_or(now), skill)
+            };
+            FLY_V.set(Some(v));
+            // His next step takes his own fall off before it moves: given back
+            // here, and what his step still got wrong last frame (his fall is
+            // not the same every frame) is made up, so the height follows the
+            // flight's own speed exactly (the take-off climbed 15 units where
+            // the garden Chao climbs 22).
+            let y = f(m, cw + 0x18);
+            let miss = FLY_Y.get().map_or(0.0, |want| (want - y).clamp(-0.5, 0.5));
+            FLY_Y.set(Some(y + miss + v.1));
+            m.w32(pwp + 0x64, v.0.to_bits());
+            m.w32(pwp + 0x68, (v.1 + miss + HIS_GRAVITY.get()).to_bits());
+            // (The Chao's own fall is cleared in pin, so only the race's sink acts.)
+            if std::env::var("SA2_FLY_LOG").is_ok_and(|v| v == "1") {
+                eprintln!("fly: f{} skill {skill} speed forward {:.3} up {:.3} (his fall {:.3}) height {:.2} yaw {:#06x} at ({:.1}, {:.1}) lift {:?}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), v.0, v.1, HIS_GRAVITY.get(), f(m, cw + 0x18), m.r32(cw + 0x0C) & 0xFFFF, f(m, cw + 0x14), f(m, cw + 0x1C), FLY_T.get());
+            }
+        }
+    } else {
+        FLY_V.set(None);
+        FLY_Y.set(None);
+    }
+    if !air {
+        FLY_T.set(None);
+    }
+    if level.is_some() || climbing {
+        let g = rt::sec(m, 60, 5) + CHAO_GLOBAL;
+        return Some(swim_motion(u32::from(own_skill(m, chao, 0)), u32::from(m.r16(g + 310)), u32::from(m.r16(g + 312))));
+    }
+    // SA2_AIR_MOTION=n (debug): another Chao motion in the air.
+    air.then(|| std::env::var("SA2_AIR_MOTION").ok().and_then(|v| v.parse().ok()).unwrap_or(AIR_MOTION))
+}
+
+/// The Chao's movement follows the shoes it wears (mob 2026-11-23), in Chao
+/// World and off the board in Sonic's levels, where the hidden character is
+/// Sonic: with Shadow's Air Shoes shown it moves like Shadow (skate), with
+/// only Sonic's Light Shoes or no shoes it runs like Sonic. Both pairs on:
+/// the Air Shoes count. Switched live, by the action table his exec reads.
+/// SA2_LOBBY_CHAR=sonic|shadow (debug) forces one.
+fn shadow_style() -> bool {
+    match std::env::var("SA2_LOBBY_CHAR").as_deref() {
+        Ok("sonic") => false,
+        Ok("shadow") => true,
+        _ => !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") && !debug_off("shoes"),
+    }
+}
+
+/// Moving like Shadow (physics stays Metal's row): every state whose Shadow
+/// row plays a different motion number takes Shadow's row (motion, blend,
+/// speed; Sonic's model field kept), from Shadow's own motion file loaded
+/// once, into the gear's heap (Chao World's own heap has no room).
 fn shadow_moves(c: &mut Cpu, m: &mut Mem) {
     let obj2 = m.r32(P1_OBJ2);
     if !(0x8000_0000..0x8C00_0000).contains(&obj2) || m.r8(obj2 + 1) != 0 || std::env::var("SA2_SHADOW_MOVES").is_ok_and(|v| v == "0") {
@@ -3399,7 +4668,11 @@ fn shadow_moves(c: &mut Cpu, m: &mut Mem) {
         let need: Vec<u32> = rows.iter().map(|&i| u32::from(m.r16(SHADOW_ACTIONS + 0x10 * i))).collect();
         // Keep every motion Sonic already has; take only Shadow's own ones.
         let keep: Vec<u32> = (0..0x960).step_by(4).map(|o| m.r32(MOTIONS + o)).collect();
+        let heap_var = c.r[13].wrapping_sub(SY_HEAP_SDA);
+        let keep_heap = m.r32(heap_var);
+        m.w32(heap_var, GEAR_HEAP);
         let mtn = call(c, m, LOAD_MTN, &[SHADOW_MTN_NAME]);
+        m.w32(heap_var, keep_heap);
         for (k, o) in (0..0x960u32).step_by(4).enumerate() {
             if !need.contains(&(o / 8)) {
                 m.w32(MOTIONS + o, keep[k]);
@@ -3419,7 +4692,11 @@ fn shadow_moves(c: &mut Cpu, m: &mut Mem) {
     }
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
     let board = BOARD.with_borrow(|b| b.as_ref().is_some_and(|b| f <= b.0 + 2));
-    m.w32(obj2 + OBJ2_PLACTPTR, if board { SONIC_ACTIONS } else { MIXED_ACTIONS });
+    let shadow = shadow_style();
+    if SHADOW_STYLE.replace(Some(shadow)) != Some(shadow) {
+        eprintln!("chao-player: the Chao moves like {} (Air Shoes shown: {shadow})", if shadow { "Shadow" } else { "Sonic" });
+    }
+    m.w32(obj2 + OBJ2_PLACTPTR, if board || !shadow { SONIC_ACTIONS } else { MIXED_ACTIONS });
 }
 
 /// SA2_FORCE_FROM=frame (debug): forced states start at this frame, so the
@@ -3438,6 +4715,7 @@ const P1_OBJ2: u32 = 0x801E_7728;
 /// Row = the character id byte obj2+3 (0x8004F838 multiplies it by 0x84);
 /// Metal Sonic's loader 0x80086BA4 stores 0xC there (Sonic's 0x800874C0: 0).
 const METAL_ROW: u32 = 12;
+const ROW_JUMP_SPEED: u32 = 0x18;
 
 fn physics_row(m: &mut Mem) {
     let obj2 = m.r32(P1_OBJ2);
@@ -3461,13 +4739,27 @@ fn physics_row(m: &mut Mem) {
         r.clone().unwrap_or_default()
     });
     let metal = if chao_world(m) { crate::chao_speed::row(m, INFO, &own, &metal) } else { metal };
+    // mob 2026-11-23: every Chao jumps as Sonic does; only mob's own Chao has
+    // Metal Sonic's jump. The jump is the row's jump speed (+0x18: Sonic 1.66,
+    // Metal Sonic 2.52; the hold time +0x00 and hold lift +0x38 are the same in
+    // both rows). The client is told nothing about whose account it is, so
+    // Metal's jump is behind SA2_CHAO_JUMP=metal (test only) until it is.
+    let metal_jump = std::env::var("SA2_CHAO_JUMP").is_ok_and(|v| v.trim() == "metal");
     for (i, o) in (0..0x84).step_by(4).enumerate() {
-        m.w32(obj2 + 0xC0 + o, if board { own[i] } else { metal[i] });
+        let his = board || (o == ROW_JUMP_SPEED && !metal_jump && own.len() > i);
+        m.w32(obj2 + 0xC0 + o, if his { own[i] } else { metal[i] });
     }
 }
 
 thread_local! {
     static SONIC_ROW: std::cell::RefCell<Option<Vec<u32>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Frames an area change inside Chao World waits before the Chao is made again.
+const AREA_SETTLE: u32 = 3;
+/// SA2_AREA_WAIT=frames (debug) sets it.
+fn area_settle() -> u32 {
+    std::env::var("SA2_AREA_WAIT").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(AREA_SETTLE).min(60)
 }
 
 /// The ChaoMain load/create steps, driven once a frame from Sonic's exec in a
@@ -3527,7 +4819,7 @@ fn tick(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) {
         no_chao();
     }
     if next != STEP.get() && !matches!(next, Step::Wait(_)) {
-        eprintln!("chao-player: {next:x?}");
+        eprintln!("chao-player: {next:x?} (frame {})", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed));
     }
     STEP.set(next);
 }
@@ -3643,8 +4935,9 @@ fn destroy_task(c: &mut Cpu, m: &mut Mem) {
     let t = c.r[3];
     if let Step::Live(chao) = STEP.get() {
         if t == chao {
-            eprintln!("chao-player: the game destroyed the player's Chao task {t:#x}; making it again");
-            STEP.set(Step::Wait(0));
+            eprintln!("chao-player: the game destroyed the player's Chao task {t:#x} at frame {}; making it again", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed));
+            // Chao World (an area change): made again after AREA_SETTLE frames, not a second.
+            STEP.set(Step::Wait(if chao_world(m) { 60 - area_settle() } else { 0 }));
             RIDER.set(0);
         }
     }
@@ -3779,6 +5072,146 @@ fn create_at(c: &mut Cpu, m: &mut Mem, pos: [u32; 3], param: u32) -> Step {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn garden_water_and_swim_motion_as_the_game_decides() {
+        use super::{in_water, swim_motion, water_level};
+        assert_eq!(water_level(1), Some(-2.2), "Neutral garden");
+        assert_eq!(water_level(7), None, "the lobby has no water");
+        assert!(in_water(-4.3, -2.2) && !in_water(-4.1, -2.2), "two below the level");
+        assert_eq!([swim_motion(0, 300, 2000), swim_motion(300, 300, 2000), swim_motion(2000, 300, 2000)], [142, 148, 145]);
+    }
+
+    #[test]
+    fn flight_settles_at_the_races_speeds() {
+        // Drag against a steady push: forward acceleration / 0.1, sink step / 0.05.
+        let mut v = (0.0f32, 1.0f32);
+        for _ in 0..600 { v = super::fly_step(v, 0.0); }
+        assert!((v.0 - 0.18).abs() < 1e-3 && (v.1 + 0.3).abs() < 1e-3, "{v:?}");
+        let mut w = (0.0f32, 0.0f32);
+        for _ in 0..600 { w = super::fly_step(w, 10000.0); }
+        assert!(w.0 > v.0 && w.1 > v.1, "a better flier is faster and sinks less: {w:?}");
+    }
+
+    #[test]
+    fn garden_flight_climbs_then_comes_down_as_measured_in_the_garden() {
+        // Chao gravity 0.055: the game's own flight rose to 21.7 units in 1.8 s from flat ground.
+        let (mut v, mut y, mut top, mut n) = (super::garden_fly_step(None, true, 0.055), 0.0f32, 0.0f32, 0);
+        while y >= 0.0 && n < 2000 {
+            y += v.1;
+            top = top.max(y);
+            v = super::garden_fly_step(Some(v), true, 0.055);
+            n += 1;
+        }
+        assert!((top - 22.0).abs() < 1.0 && (240..300).contains(&n), "top {top} after {n} frames");
+        assert!((v.0 - 0.5).abs() < 1e-3);
+        // after the timer it comes down faster
+        assert!(super::garden_fly_step(Some((0.5, 0.0)), false, 0.055).1 < super::garden_fly_step(Some((0.5, 0.0)), true, 0.055).1);
+        assert!(super::garden_flier(0));
+        assert_eq!([0.0, 1633.0, 3266.0, 9999.0].map(super::lift_frames), [300, 450, 600, 600]);
+    }
+
+    #[test]
+    fn swim_speed_settles_at_the_races_speed_for_the_skill() {
+        let top = |skill: f32| (0..400).fold(0.0, |v, _| swim_step(v, true, skill));
+        assert!((top(0.0) - 0.045).abs() < 1e-4, "{}", top(0.0));
+        assert!((top(9999.0) - 0.345).abs() < 1e-3, "{}", top(9999.0));
+        // let go: it dies away
+        assert!((0..200).fold(0.345, |v, _| swim_step(v, false, 9999.0)) < 1e-4);
+        // the motion by the same points: under 300, under 2000, above
+        assert_eq!([0, 299, 300, 1999, 2000, 9999].map(|s| swim_motion(s, 300, 2000)), [142, 142, 148, 148, 145, 145]);
+    }
+
+    #[test]
+    fn stopped_at_a_pool_wall_the_body_is_lifted_over_the_bank() {
+        // Hero garden numbers: floor -6.5, water -1.5, bank 0.
+        let w = Some(-1.5);
+        // swimming freely, or stopped without pushing: nothing
+        assert_eq!(climb_step((0, None), w, true, true, false, -6.5), (0, None));
+        assert_eq!(climb_step((5, None), w, true, false, true, -6.5), (0, None));
+        // stopped at the wall: waits, then rises a step a frame, on above the water
+        let (mut s, mut y) = ((0, None), -6.5f32);
+        for _ in 0..CLIMB_AFTER + 24 {
+            s = climb_step(s, w, in_water(y, -1.5), true, true, y);
+            y = s.1.map_or(y, |to| to.max(y));
+        }
+        assert!(y > 0.0 && y <= -1.5 + CLIMB_TOP, "{y}");
+        // headway: the height is held, and after CLIMB_FREE frames of it the lift ends
+        let held = s.1;
+        s = climb_step(s, w, false, true, false, y);
+        assert_eq!(s, (1, held));
+        for _ in 1..CLIMB_FREE { s = climb_step(s, w, false, true, false, y); }
+        assert_eq!(s, (0, None));
+        // never starts out of the water, or where there is none
+        assert_eq!(climb_step((CLIMB_AFTER, None), w, false, true, true, 0.0), (0, None));
+        assert_eq!(climb_step((CLIMB_AFTER, None), None, true, true, true, 0.0), (0, None));
+        // held at the top without getting over, or the stick let go: ends
+        assert_eq!(climb_step((0, Some(-1.5 + CLIMB_TOP)), w, false, true, true, 4.5), (0, None));
+        assert_eq!(climb_step((0, Some(0.0)), w, false, false, true, 0.0), (0, None));
+    }
+
+    #[test]
+    fn second_jump_press_in_the_air_is_the_flight() {
+        use super::{pad_filter, AIR, FLY, PAD_BUTTON_A};
+        let pad = |a: bool| { let mut p = sa2_asset_tools::input::PadStatus::default(); if a { p.button = PAD_BUTTON_A; } p };
+        AIR.set(false);
+        assert_eq!(pad_filter(pad(true)).button, PAD_BUTTON_A, "the jump press reaches the game");
+        AIR.set(true);
+        assert_eq!(pad_filter(pad(true)).button, PAD_BUTTON_A, "still the same press");
+        assert_eq!(pad_filter(pad(false)).button, 0);
+        assert_eq!(pad_filter(pad(true)).button, 0, "the second press is held back");
+        assert!(FLY.get());
+        AIR.set(false);
+        assert_eq!(pad_filter(pad(true)).button, 0, "held through the landing: not a new jump");
+        assert!(!FLY.get());
+        assert_eq!(pad_filter(pad(false)).button, 0);
+        assert_eq!(pad_filter(pad(true)).button, PAD_BUTTON_A, "a new press on the ground jumps");
+    }
+
+    #[test]
+    fn fist_two_is_fist_ones_mirror() {
+        use super::{mirror_fist, mul34, tune_matrix, tune_values};
+        // Two unlike fits, as the two arms give (each its own rest frame and size).
+        let d1 = mul34(&tune_matrix(&[-1.2, 0.8, 0.3, 20.0, -35.0, 80.0, 0.4]), &tune_matrix(&[0.1, 0.0, 0.2, 5.0, 0.0, 0.0, 1.0]));
+        let d2 = tune_matrix(&[1.3, 0.7, 0.25, -15.0, 40.0, -95.0, 0.45]);
+        let t1 = tune_matrix(&[0.3, 1.26, -2.2, -60.0, 10.0, 0.0, 1.35]);
+        let t2 = mirror_fist(&d1, &t1, &d2);
+        let (p1, p2) = (mul34(&d1, &t1), mul34(&d2, &t2));
+        // A plate vertex g on fist 1 and its twin (x, y, -z) on fist 2 land on mirrored spots.
+        for g in [[0.0f32, 0.0, 0.0], [1.0, 2.0, 3.0], [-0.5, 0.25, -4.0]] {
+            let a = super::apply(&p1, g);
+            let b = super::apply(&p2, [g[0], g[1], -g[2]]);
+            assert!((a[0] + b[0]).abs() < 1e-4 && (a[1] - b[1]).abs() < 1e-4 && (a[2] - b[2]).abs() < 1e-4, "{a:?} {b:?}");
+        }
+        // The mirror is a plain tuner line (turn and one scale): written out and read back, it is the same matrix.
+        let back = tune_matrix(&tune_values(&t2));
+        for i in 0..3 { for j in 0..4 { assert!((back[i][j] - t2[i][j]).abs() < 1e-4, "{i} {j}: {} {}", back[i][j], t2[i][j]); } }
+    }
+
+    #[test]
+    fn chao_yaw_faces_the_way_the_character_goes() {
+        for a in [0u32, 0x1234, 0x4000, 0xA01F, 0xFFFF] {
+            let t = |b: u32| b as f32 * std::f32::consts::TAU / 65536.0;
+            let (p, c) = (t(a), t(super::chao_yaw(a)));
+            assert!((p.cos() - c.sin()).abs() < 1e-3 && (p.sin() - c.cos()).abs() < 1e-3, "{a:#x}");
+        }
+    }
+    #[test]
+    fn look_at_puts_the_target_ahead_on_minus_z() {
+        let v = super::look_at([0.0, 0.0, 10.0], [0.0, 0.0, 0.0]);
+        let p = |q: [f32; 3]| -> [f32; 3] { std::array::from_fn(|i| v[i][0] * q[0] + v[i][1] * q[1] + v[i][2] * q[2] + v[i][3]) };
+        let near = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-4);
+        assert!(near(p([0.0, 0.0, 0.0]), [0.0, 0.0, -10.0]));
+        assert!(near(p([1.0, 2.0, 0.0]), [1.0, 2.0, -10.0])); // x right, y up
+    }
+    #[test]
+    fn stride_lock_takes_the_short_way_round() {
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        assert!(near(super::locked_phase(0.2, 0.6, 1.0), 0.6));
+        assert!(near(super::locked_phase(0.2, 0.6, 0.0), 0.2));
+        // 0.9 -> 0.1 goes forward through the wrap, not back through 0.5.
+        assert!(near(super::locked_phase(0.9, 0.1, 0.25), 0.95));
+        assert!(near(super::locked_phase(0.1, 0.9, 0.25), 0.05));
+    }
     #[test]
     fn shoe_strips_keeps_only_strips_inside_the_set() {
         // material (type 16, 2 shorts), UV strip chunk (type 65): strip A
@@ -4319,6 +5752,67 @@ fn free_to_heap(c: &mut Cpu, m: &mut Mem) {
         return;
     }
     original(c, m, OS_FREE_TO_HEAP);
+}
+
+/// ChaoMain's garden flight behaviour (fn_60_3D978) and AL_SetBehavior.
+const ALBHV_FLY: u32 = 0x3_D978;
+const AL_SET_BEHAVIOR: u32 = 0x7C4;
+const INFO2: u32 = 0x82F0_2000;
+const POS2: u32 = 0x82F0_0300;
+
+thread_local! {
+    static TAKEOFF: Cell<u32> = const { Cell::new(0) };
+}
+
+/// SA2_TAKEOFF=frame[,Fly points[,height]] (test only): to film the garden's
+/// own flight. At that frame a second, ordinary garden Chao (the player's
+/// record copied, its Fly points set in the copy only) is made beside the
+/// player's Chao, `height` above the ground, and put into the game's own
+/// flight behaviour with AL_SetBehavior: forced, the game itself starts it
+/// only when a walking Chao with Fly 400 or more (three times its points)
+/// comes to a drop, four times in ten. Its own AI runs (it is not the
+/// player's Chao and not a remote one), and SA2_TEST_CAM follows it.
+/// One line a frame while it flies. Nothing of it is saved or sent.
+fn takeoff_test(c: &mut Cpu, m: &mut Mem) {
+    let Some((at, pts, height)) = std::env::var("SA2_TAKEOFF").ok().and_then(|v| {
+        let mut it = v.split(',').map(|x| x.trim().parse::<f32>().ok());
+        Some((it.next()?? as u64, it.next().flatten().unwrap_or(1000.0) as u16, it.next().flatten().unwrap_or(0.0)))
+    }) else { return };
+    let (Step::Live(own), true) = (STEP.get(), chao_world(m) && module_linked(m, 60)) else { return };
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let s1 = rt::sec(m, 60, 1);
+    let g = |m: &Mem, a: u32| f32::from_bits(m.r32(a));
+    if TAKEOFF.get() == 0 && f >= at {
+        let cw = m.r32(own + 0x34);
+        let Some(heap) = remote_heap(c, m) else { return };
+        let rec: Vec<u8> = (0..0x800).map(|o| m.r8(INFO + o)).collect();
+        m.load(INFO2, &rec);
+        m.w16(INFO2 + 0x3A, pts);
+        for (i, d) in [8.0, height, 8.0].into_iter().enumerate() {
+            m.w32(POS2 + 4 * i as u32, (g(m, cw + 0x14 + 4 * i as u32) + d).to_bits());
+        }
+        let cur = c.r[13].wrapping_sub(SY_HEAP_SDA);
+        let old = m.r32(cur);
+        m.w32(cur, heap);
+        let t = call(c, m, s1 + 0x3148C, &[INFO2, 0, 0, POS2, 0]);
+        m.w32(cur, old);
+        if t == 0 {
+            TAKEOFF.set(u32::MAX);
+            return eprintln!("takeoff: no second Chao");
+        }
+        EXTRA_TASKS.with_borrow_mut(|x| x.insert(t));
+        call(c, m, s1 + AL_SET_BEHAVIOR, &[t, s1 + ALBHV_FLY]);
+        TAKEOFF.set(t);
+        eprintln!("takeoff: f{f} second Chao {t:#x} with Fly {pts} points, forced into the garden flight (fn_60_3D978)");
+    }
+    let t = TAKEOFF.get();
+    if t != 0 && t != u32::MAX {
+        let (tw, mw) = (m.r32(t + 0x34), m.r32(t + 0x38));
+        if tw != 0 && mw != 0 && f % 5 == 0 {
+            eprintln!("takeoff: f{f} at ({:.2}, {:.2}, {:.2}) speed ({:.3}, {:.3}, {:.3}) gravity {:.4} ground flag {} behaviour step {} timer {} motion flags {:#x}",
+                g(m, tw + 0x14), g(m, tw + 0x18), g(m, tw + 0x1C), g(m, mw), g(m, mw + 4), g(m, mw + 8), g(m, mw + 0x48), m.r16(mw + 0x40) & 0x400 != 0, m.r16(tw + 438), m.r32(tw + 448), m.r16(mw + 0x40));
+        }
+    }
 }
 
 /// A Chao of its own kind (CreateChaoExtra type 1, as the Chao Select

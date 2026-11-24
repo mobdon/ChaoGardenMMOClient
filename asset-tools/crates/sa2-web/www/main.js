@@ -812,7 +812,9 @@ function gearTuner() {
   const vals = Object.fromEntries(Object.keys(pieces).map((p) => [p, { dx: 0, dy: 0, dz: 0, rx: 0, ry: 0, rz: 0, scale: 1 }]));
   // The fists' set place (sa2-boot chao_player.rs FIST_SET): the panel starts from it.
   Object.assign(vals.fist0, { dx: 0.3, dy: 1.26, dz: -2.2, rx: -60, ry: 10, rz: 0, scale: 1.35 });
-  Object.assign(vals.fist1, { dx: 0.3, dy: 1.26, dz: 1.8, rx: 60, ry: -10, rz: 0, scale: 1.35 });
+  // Fist 2: fist 1's reflection across the Chao, written out (FIST_SET[1]). While "Link fists"
+  // is on the game draws fist 2 as the reflection of fist 1's sliders and these are not used.
+  Object.assign(vals.fist1, { dx: 0.137, dy: 1.368, dz: 1.873, rx: 53.84, ry: -14.64, rz: 0.72, scale: 1.32 });
   // The other set places (chao_player.rs TRY_ON, BOOT_TUNE).
   vals.boot0.scale = vals.boot1.scale = 0.75;
   Object.assign(vals.sunglasses, { dx: 0, dy: -0.5, dz: -0.64, rx: -180, ry: -90, rz: 0, scale: 1.6 });
@@ -840,20 +842,20 @@ function gearTuner() {
     n.onchange = () => set(n.value);
     row.append(k, r, n);
     box.append(row);
-    return () => { r.value = n.value = vals[pick.value][k]; };
+    return () => { r.value = n.value = vals[pick.value][k]; r.disabled = n.disabled = pick.value === 'fist1' && sets.link === '1'; };
   });
   pick.onchange = () => rows.forEach((f) => f());
   // Debug toggles and the sound mute list: "set key value" lines in the same file.
-  const sets = { fists: '1', shoes: '1', jets: '1', tryon: '1', sunglasses: '1', necklace: '1', sflame: '1', lshoe0: '1', lshoe1: '1', ring: '1', bracelet: '1', selog: '0', mute: '', tp: '' };
+  const sets = { fists: '1', shoes: '1', jets: '1', tryon: '1', sunglasses: '1', necklace: '1', sflame: '1', lshoe0: '1', lshoe1: '1', ring: '1', bracelet: '1', selog: '0', link: '1', mute: '', tp: '' };
   const setText = () => Object.entries(sets).map(([k, v]) => `set ${k} ${v}`).join('\n') + '\n';
   const fx = document.createElement('div');
   fx.style.cssText = 'margin-top:6px;display:flex;flex-wrap:wrap;gap:6px';
   // One switch per try-on piece too (chao_player.rs TRY_ON skips a piece set to 0).
-  for (const k of ['fists', 'shoes', 'jets', 'tryon', 'sunglasses', 'necklace', 'sflame', 'lshoe0', 'lshoe1', 'ring', 'bracelet', 'selog']) {
+  for (const k of ['fists', 'shoes', 'jets', 'tryon', 'sunglasses', 'necklace', 'sflame', 'lshoe0', 'lshoe1', 'ring', 'bracelet', 'selog', 'link']) {
     const cb = Object.assign(document.createElement('input'), { type: 'checkbox', checked: sets[k] === '1' });
-    cb.onchange = () => { sets[k] = cb.checked ? '1' : '0'; send(); };
+    cb.onchange = () => { sets[k] = cb.checked ? '1' : '0'; send(); rows.forEach((f) => f()); };
     const l = document.createElement('label');
-    l.append(cb, k === 'selog' ? 'sound log' : pieces[k] || k);
+    l.append(cb, k === 'selog' ? 'sound log' : k === 'link' ? 'Link fists' : pieces[k] || k);
     fx.append(l);
   }
   const mute = Object.assign(document.createElement('input'), { placeholder: 'mute ids, e.g. 2003,601c', style: 'width:100%;margin-top:4px' });
@@ -890,7 +892,8 @@ function gearTuner() {
   ov.append(stat, lv, gr, pt, story, apply, said);
   box.append(ov);
   const copy = Object.assign(document.createElement('button'), { textContent: 'Copy values', style: 'margin-top:6px;width:100%' });
-  copy.onclick = () => navigator.clipboard?.writeText(text()).catch(() => {});
+  // With the link flag: linked, fist 2's line is its set reflection, for reference only.
+  copy.onclick = () => navigator.clipboard?.writeText(text() + `link ${sets.link}\n`).catch(() => {});
   // Keys typed into the panel stay away from the game's controls.
   box.addEventListener('keydown', (ev) => ev.stopPropagation());
   box.append(copy);
@@ -905,6 +908,20 @@ function gearTuner() {
   document.body.append(box);
   rows.forEach((f) => f());
   send();
+  return box;
+}
+// The dev menu's button: opens the Gear tuner (made on the first click) and closes it again.
+function gearButton(open) {
+  const b = Object.assign(document.createElement('button'), { textContent: 'Gear', tabIndex: -1,
+    style: 'position:fixed;right:8px;top:8px;z-index:100;font:12px sans-serif;opacity:.75' });
+  let box = null;
+  b.onclick = () => {
+    if (box) box.hidden = !box.hidden;
+    else { box = gearTuner(); box.style.top = '36px'; }
+    b.blur(); // the game's keys do not press the button
+  };
+  document.body.append(b);
+  if (open) b.onclick();
 }
 
 // Hold the card while the game runs: renew its lease (10 minutes on the
@@ -973,7 +990,9 @@ async function start() {
   // The game reads its files always (empty until a panel writes them): a
   // dev account's panel opens once the room says it is an admin.
   e.SA2_GEAR_TUNE = '/mmo/gear-tune'; e.SA2_INFO_OUT = '/mmo/info-out';
-  if (q.get('geartune') === '1' && !tunerShown) { tunerShown = true; gearTuner(); }
+  // The Gear tuner (dev menu) is there in every stage as a small closed "Gear" button;
+  // ?geartune=1 starts it opened. Nothing is sent to the game until it is first opened.
+  if (!tunerShown) { tunerShown = true; gearButton(q.get('geartune') === '1'); }
   if (/^\d+$/.test(q.get('area') || '')) e.SA2_CHAO_AREA = q.get('area');
   // ?stage=60&combat=1: Big Foot's arena as the combat area (sa2_boot::combat).
   if (q.get('combat') === '1') e.SA2_COMBAT = '1';
@@ -1035,7 +1054,17 @@ const EXTRAS_ROWS = [
   ['menuTheme', THEMES], ['voiceMode', ['hold', 'open']], ['chat', [true, false]],
   ['volume', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]], ['music', [true, false]], ['fps', [60, 120, 165]],
 ];
+// Rows 9 and 10 (the player's own Chao rig: limit body lean, limit head turn; 0 on, 1 off)
+// are kept in this browser only, not on the server.
+const RIG_ROWS = { 9: 'sa2-limit-body-lean', 10: 'sa2-limit-head-turn' };
+const rigOff = {};
+for (const [row, key] of Object.entries(RIG_ROWS)) { try { rigOff[row] = localStorage.getItem(key) === '1'; } catch {} }
 function extrasChanged(row, choice) {
+  if (RIG_ROWS[row]) {
+    rigOff[row] = choice === 1;
+    try { localStorage.setItem(RIG_ROWS[row], String(choice)); } catch {}
+    return;
+  }
   const [key, choices] = EXTRAS_ROWS[row] || [];
   if (key && choice < choices.length) mmoSaveSettings({ [key]: choices[choice] });
 }
@@ -1045,7 +1074,7 @@ function writeExtras() {
   pad[12] = bit(settingsLoaded, 0) | bit(s.sound === 'mono', 1) | bit(s.voiceLanguage === 'japanese', 2)
     | bit(s.vibration === false, 3) | bit(s.music === false, 4) | bit(s.chat === false, 5) | bit(s.voiceMode === 'open', 6);
   pad[13] = Number.isInteger(s.volume) ? s.volume : 10;
-  pad[14] = Math.max(0, [60, 120, 165].indexOf(s.fps));
+  pad[14] = Math.max(0, [60, 120, 165].indexOf(s.fps)) | bit(rigOff[9], 6) | bit(rigOff[10], 7);
   pad[15] = Math.max(0, THEMES.indexOf(s.menuTheme));
 }
 
