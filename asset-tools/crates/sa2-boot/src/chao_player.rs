@@ -4455,7 +4455,8 @@ fn collision_fit(m: &mut Mem, chao: u32) {
             Some(o) => o.1,
             None => { let o = [0x14, 0x18, 0x1C].map(|a| m.r32(his_body + a)); FULL_BODY.set(Some((his_body, o))); o }
         };
-        let shape = match (body, fit) { (Some(b), Some(_)) if !use_full => b.1, _ => own };
+        // SA2_BODY_FULL=1 (debug): his own body hit shape with the Chao-sized land collision, to tell what each does.
+        let shape = match (body, fit) { (Some(b), Some(_)) if !use_full && !std::env::var("SA2_BODY_FULL").is_ok_and(|v| v == "1") => b.1, _ => own };
         for (a, v) in [0x14, 0x18, 0x1C].into_iter().zip(shape) { m.w32(his_body + a, v); }
     }
     if SIZE_SAID.replace(obj2) != obj2 {
