@@ -108,6 +108,71 @@ pub(super) fn punch_lock(m: &mut Mem, chao: u32, state: u16) {
     m.w32(info + 4, to.to_bits());
 }
 
+/// His states in which his whole body turns right round in his skeleton, his
+/// own heading staying as it was: punch 3 (111, the uppercut).
+pub(super) fn spins(state: u16) -> bool {
+    state == 111
+}
+
+thread_local! {
+    pub(super) static SPIN: Cell<bool> = const { Cell::new(false) };
+}
+
+/// MMO rule (mob 2026-11-24, on the punch 3 clip: "chao doesnt fully spin
+/// around", "knuck is facing the other way"): in his spin attack the Chao's
+/// body row (node 1, which every other part hangs from) takes his body's
+/// whole turn, with no cap and whatever the pause Extras' BODY LIMIT says, so
+/// the Chao faces the way he faces on every frame of it.
+pub(super) fn spin_limits(node: usize, w: f32, cap: f32) -> (f32, f32) {
+    if node == 1 && SPIN.get() && LAST_EXEC.get() == KNUX_EXEC { (1.0, 180.0) } else { (w, cap) }
+}
+
+/// The Chao's motion under the overlay in his stages when his state is not
+/// his walk, jog or run (those go by his state, as on Sonic's gait): the one
+/// it had, and its stand after six frames on one spot. Picked by the ground
+/// covered a frame it changed between its walk and run at the top of every
+/// jump and every few frames against a wall (test copy 2026-11-24).
+pub(super) fn under_motion(still_frames: u32, last: u32) -> u32 {
+    if still_frames >= 6 { 0 } else { last }
+}
+
+/// The Air Shoes' jets in his stages: none. In the game they belong to
+/// Shadow's skate motions only (mob 2026-11-24); his stages have no skate yet.
+pub(super) fn jets() -> bool {
+    LAST_EXEC.get() != KNUX_EXEC
+}
+
+/// The Chao stands on his spot with its own body collision on (ChaoMain's
+/// collision entries 0 and 2): he pushed against it every frame (his push
+/// state 19 on open ground, test copy 2026-11-24 knux/x4: 190 frames of it
+/// holding one direction from the start), could not walk a straight line and
+/// had it between him and a wall. ChaoMain AL_DisableTouch (.text 0x5A60 =
+/// CCL_Disable(task, 0) and (task, 2)) each frame, as AL_DisableNade is: only
+/// his own body is there for the game. SA2_KNUX_TOUCH=1 (debug): left on.
+pub(super) fn no_touch(c: &mut Cpu, m: &mut Mem, chao: u32) {
+    if !std::env::var("SA2_KNUX_TOUCH").is_ok_and(|v| v == "1") {
+        call(c, m, rt::sec(m, 60, 1) + 0x5A60, &[chao]);
+    }
+}
+
+/// The player's after-image (main.dol display 0x80052620, exec 0x800525AC;
+/// task work +0x40: player number +0x30, fade +0x34, the model +0x38, its
+/// motion +0x3C and frame +0x44, texture list +0x40): a copy of the
+/// character's body left behind in his drill dive (state 115; found by the
+/// draw's return address 0x800526CC, SA2_TRACE_EVDRAW). His body is not drawn
+/// while the Chao stands in for him, so neither is its copy.
+/// SA2_SHOW_SONIC (debug: the character drawn) keeps it.
+pub(super) const AFTER_IMAGE_DISP: u32 = 0x8005_2620;
+
+pub(super) fn after_image(c: &mut Cpu, m: &mut Mem) {
+    let w = m.r32(c.r[3].wrapping_add(0x40));
+    let his = (0x8000_0000..0x8C00_0000).contains(&w) && m.r8(w + 0x30) == 0;
+    if his && matches!(STEP.get(), Step::Live(_)) && std::env::var_os("SA2_SHOW_SONIC").is_none() {
+        return;
+    }
+    original(c, m, AFTER_IMAGE_DISP);
+}
+
 /// The game's SetPlayerChar(player, character) (main.dol 0x8001DDC0), called
 /// by the Stage Select's start code and by start_stage.rs.
 pub(super) const SET_PLAYER_CHAR: u32 = 0x8001_DDC0;
@@ -195,6 +260,19 @@ pub(super) fn log(m: &Mem, chao: u32, state: u16) {
         LAST_MOTION.get(), f(ctrl + 0x1C), f(ctrl + 0x20), f(ctrl + 0x24), m.r16(ctrl) & 2 != 0, f(ctrl + 0x34), f(ctrl + 0x38), f(ctrl + 0x3C), ch[0], ch[1], OVERLAY.get(), SKEL.with_borrow(|s| s.len()));
 }
 
+/// The Ninja draw state words the game's displays set and restore around
+/// their draws (main.dol 0x8002B2D8..0x8002B35C: r13 -0x71D8 the 3D control
+/// flags, -0x71DC / -0x71E0 the constant attribute and / or masks).
+/// SA2_STATE_LOG=1 (debug): as the player's Chao's display finds them, every
+/// two seconds.
+pub(super) fn draw_state_log(c: &Cpu, m: &Mem) {
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    if f % 120 == 0 && std::env::var_os("SA2_STATE_LOG").is_some() {
+        let g = |o: u32| m.r32(c.r[13].wrapping_sub(o));
+        eprintln!("chao-state: f{f} control3d {:#x} attr and {:#x} or {:#x} saved {:#x} {:#x} {:#x} r13 {:#x}", g(0x71D8), g(0x71DC), g(0x71E0), g(0x7970), g(0x7968), g(0x796C), c.r[13]);
+    }
+}
+
 thread_local! {
     /// His root node's height over his own position at the last draw (world units).
     static SINK: Cell<f32> = const { Cell::new(0.0) };
@@ -254,6 +332,20 @@ mod tests {
         assert_eq!(link_frames(0.0625), 16);
         assert_eq!(link_frames(0.0), 1);
         assert_eq!(link_frames(f32::NAN), 1);
+    }
+    #[test]
+    fn an_arm_pairs_with_the_other_arm_not_the_other_shoulder() {
+        // root 0; shoulders 1 and 3 with arms 2 and 4 resting on the same spots; a midline node 5.
+        let pos = [[0.0, 0.0, 0.0], [0.5, 2.0, 0.1], [0.5, 2.0, 0.1], [-0.5, 2.0, 0.1], [-0.5, 2.0, 0.1], [0.0, 3.0, 0.0]];
+        let parent = [None, Some(0), Some(1), Some(0), Some(3), Some(0)];
+        assert_eq!(super::super::partners_of(&pos, &parent), vec![0, 3, 4, 1, 2, 5]);
+    }
+    #[test]
+    fn the_under_motion_holds_until_six_still_frames() {
+        assert_eq!(under_motion(0, 119), 119);
+        assert_eq!(under_motion(5, 578), 578);
+        assert_eq!(under_motion(6, 119), 0);
+        assert!(spins(111) && !spins(109) && !spins(110) && !spins(0));
     }
     #[test]
     fn only_the_dig_modes_sink() {
