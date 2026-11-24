@@ -38,7 +38,7 @@ const sh = {
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
-  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32 + 8 + 128 + 8 + 8 + 8 + 1024 + 4 + 32 + 8 + 256 + 4 + 2048 + 8 + 64 + 72 + 520 + 520), // the MMO files (worker.js, MMO)
+  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32 + 8 + 128 + 8 + 8 + 8 + 1024 + 4 + 32 + 8 + 256 + 4 + 2048 + 8 + 64 + 72 + 520 + 520 + 8 + 2048), // the MMO files (worker.js, MMO)
   // The RAM pages the decoder read for its last frame: [0] word count, then bits (decode.js, worker.js /dev/gxpages).
   pages: new SharedArrayBuffer(4 + 65536),
 };
@@ -303,7 +303,7 @@ function joinRoom(token, zone) {
       }
       // Dev (admin) accounts always get the dev menu (gear tuner, debug toggles, info).
       if (self?.admin && !tunerShown) { tunerShown = true; gearTuner(); }
-      showCard(self); overlay?.snapshot(m); othersIn(m, token); residentsIn(m); tagNames(m); breedSnapshot(m);
+      showCard(self); overlay?.snapshot(m); othersIn(m, token); residentsIn(m); tagNames(m); breedSnapshot(m); invFeed(m);
     }
     if (m.type === 'event') { overlay?.event(m); breedEvent(m); queueEvent(m); if (m.kind === 'staff-goto') staffGoto(m); }
     if (m.kind === 'chat') chatLine(m); else if (m.kind === 'voice') voicePlay(m);
@@ -328,7 +328,7 @@ function staffGoto(m) {
 // Garden resident with no pose as "id idle"); Chao
 // records go to and from the server by version. The server routes may not
 // exist yet: failures stay quiet.
-const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472, SKILLS: 156476, INFO: 156508, INFO_MAX: 256, OWN: 156772, GOTO: 158824, GOTO_MAX: 64, PVP: 158896, PVP_MAX: 72, RES_OUT: 158968, RES_IN: 159488, RES_MAX: 512 };
+const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472, SKILLS: 156476, INFO: 156508, INFO_MAX: 256, OWN: 156772, GOTO: 158824, GOTO_MAX: 64, PVP: 158896, PVP_MAX: 72, RES_OUT: 158968, RES_IN: 159488, RES_MAX: 512, INV: 160008, INV_MAX: 2048 };
 const mmoBytes = new Uint8Array(sh.mmo);
 globalThis.sa2Mmo = sh.mmo; // for checks from the console
 const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
@@ -389,6 +389,17 @@ function breedSnapshot(m) {
   // The Heart Fruit is the server's sa2-fruit:10 (its inventory key).
   breed.hearts = m.care?.inventory ? String(m.care.inventory['sa2-fruit:10'] || 0) : '';
   breedFeed();
+}
+// The chart's inventory page (sa2-boot kinder_chart.rs, green tab): /mmo/inv-in is a
+// "name<tab>count" line per item the server says the player carries. The names are
+// the client's own (src/garden-care.js); without that module the server's ids show.
+let itemLabel = null;
+import('/src/garden-care.js').then((m) => { itemLabel = m.careItemLabel; }).catch(() => {});
+function invFeed(m) {
+  const rows = Object.entries(m.care?.inventory || {}).filter(([, n]) => n > 0).map(([id, n]) => `${itemLabel?.(id, m.care.catalog) || id}\t${n}`);
+  const text = new TextEncoder().encode(rows.join('\n') + '\n').subarray(0, MMO.INV_MAX);
+  mmoBytes.set(text, MMO.INV + 8);
+  Atomics.store(mmoHead(MMO.INV), 1, text.length);
 }
 function breedEvent(m) {
   // The card box says so with a sound (sa2-boot card_box.rs): a count in the name slot's spare byte.
@@ -1003,7 +1014,7 @@ async function start() {
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
   if (token) { e.SA2_OWN_RECORD_IN = '/mmo/own-record'; if (await ownRecord(token).catch(() => {}) === 'hatch') e.SA2_HATCH_EGG = '1'; e.SA2_GARDENS = gardens; if (emeralds) e.SA2_EMERALDS = '1'; }
-  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RESIDENT_OUT: '/mmo/resident-out', SA2_RESIDENT_IN: '/mmo/resident-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_PVP_IN: '/mmo/pvp-in', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_RINGS_IN: '/mmo/rings-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_STORY_IN: '/mmo/story-in', SA2_STORY_OUT: '/mmo/story-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick', SA2_SKILLS_IN: '/mmo/skills-in', SA2_GOTO_IN: '/mmo/goto-in' });
+  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RESIDENT_OUT: '/mmo/resident-out', SA2_RESIDENT_IN: '/mmo/resident-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_PVP_IN: '/mmo/pvp-in', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_RINGS_IN: '/mmo/rings-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_INV_IN: '/mmo/inv-in', SA2_STORY_IN: '/mmo/story-in', SA2_STORY_OUT: '/mmo/story-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick', SA2_SKILLS_IN: '/mmo/skills-in', SA2_GOTO_IN: '/mmo/goto-in' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
   if (token) cardChao(token), storyLoad(token);
