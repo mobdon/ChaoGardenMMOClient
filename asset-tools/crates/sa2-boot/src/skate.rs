@@ -109,8 +109,11 @@ pub fn foot_target(his_now: [f32; 3], his_rest: [f32; 3], chao_rest: [f32; 3], l
 /// The pitch (radians, about the Chao's side axis x; it faces +z) of the
 /// rider's foot turn from its rest, eased so it never passes `cap`
 /// (cap * tanh(pitch / cap)): the toe up or down along the way he goes,
-/// without the turn to the side or the roll.
+/// without the turn to the side or the roll; 0 for a cap of 0.
 pub fn foot_pitch(now: &M3, rest: &M3, cap: f32) -> f32 {
+    if cap <= 0.0 {
+        return 0.0;
+    }
     let d = mm(&mm(&A, &mm(&unit(now), &tr(&unit(rest)))), &tr(&A));
     // Where the turn takes the forward axis: a pitch of t about x gives (0, -sin t, cos t).
     let pitch = (-d[1][2]).atan2(d[2][2]);
@@ -238,6 +241,9 @@ mod tests {
         let kick: M3 = [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]];
         let p = foot_pitch(&kick, &id, 35f32.to_radians()).to_degrees().abs();
         assert!(p < 35.0 && p > 30.0, "{p}");
+        // A cap of 0 (SA2_FOOT_PITCH=0) is exactly 0, never 0/0.
+        assert_eq!(foot_pitch(&id, &id, 0.0), 0.0, "rest, no cap");
+        assert_eq!(foot_pitch(&kick, &id, 0.0), 0.0, "pitched, no cap");
     }
     #[test]
     fn foot_back_is_ten_to_twenty_five_degrees_behind_only() {
