@@ -486,9 +486,7 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
                 // confirm cancels; it lands on OK. Confirm on a listed Chao chooses
                 // it (+0x44) and puts the cursor on OK; the picker reads the same
                 // press there, so one press picks it (seen in a run, 2026-11-24).
-                if row == 2 && ROW.get() < 2 {
-                    column = 4;
-                }
+                column = land(ROW.get(), column, row);
                 let on = cursor_slot(column, row).filter(|&i| m.r32(cm_bss + SIDE_1 + i * 4) != 0);
                 if let (Some(i), true) = (on, m.r32(m.r32(PAD) + 0x10) & CONFIRM != 0) {
                     m.w32(picker + 0x44, i + 1);
@@ -533,6 +531,12 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
         PHASE_LEAVE_WAIT if picker != 0 && crate::guest_call(c, m, cm_text + PICKER_BUSY, &[]) != 0 && WAITED.replace(WAITED.get() + 1) < LEAVE_WAIT => {}
         _ => rel_original(c, m, text + DROP_OFF, drop_off),
     }
+}
+
+/// The cursor's column: a step down from the Chao (rows 0, 1) onto the buttons
+/// (row 2) lands on OK (4), not on the game's Back (3), where confirm cancels.
+fn land(row_was: u32, column: u32, row: u32) -> u32 {
+    if row == 2 && row_was < 2 { 4 } else { column }
 }
 
 /// Side 1's table lists `card` (the rest empty); true when it did not already.
@@ -609,6 +613,15 @@ mod tests {
         assert!(in_reach([3.0, 1.0, 0.0], [0.0, 0.0, 0.0]));
         assert!(!in_reach([4.0, 0.0, 0.0], [0.0, 0.0, 0.0]));
         assert!(!in_reach([0.0, 5.0, 0.0], [0.0, 0.0, 0.0])); // a floor above
+    }
+
+    #[test]
+    fn down_from_the_chao_lands_on_ok() {
+        assert_eq!(super::land(0, 3, 2), 4);
+        assert_eq!(super::land(1, 3, 2), 4);
+        // Already on the buttons: left to Back stays Back.
+        assert_eq!(super::land(2, 3, 2), 3);
+        assert_eq!(super::land(0, 5, 1), 5);
     }
 
     #[test]

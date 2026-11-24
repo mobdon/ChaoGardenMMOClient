@@ -200,13 +200,20 @@ const MENU_END: u32 = 0x8006_42C8;
 /// The advertiseD screen dispatcher the override was set at (0 = not linked).
 static MENU_AT: Global<u32> = global!(0);
 
+/// The menu ends for Chao World on this screen: any but the Stage Select, once
+/// the way to the Stage Select is done (`pending`: the menu's first screens
+/// run until start_stage has set the Stage Select).
+fn leaves_menu(screen: u32, pending: bool) -> bool {
+    screen != SCREEN_STAGE_SELECT && !pending
+}
+
 /// The menu's screen dispatcher. Any screen but the Stage Select (its back
 /// goes to the main menu, screen 7 after the menu's init) ends the menu for
 /// Chao World instead, the way the Stage Select's own Chao World entry does
 /// (advertiseD .text 0x10404..0x104F0, then fn_91_30818's 0x30948).
 fn menu_screens(c: &mut Cpu, m: &mut Mem) {
     let screen = module_section(m, ADVERTISE, 6).map_or(SCREEN_STAGE_SELECT, |bss| m.r32(bss + MENU_SCREEN));
-    if screen == SCREEN_STAGE_SELECT || TO_STAGE_SELECT.get() {
+    if !leaves_menu(screen, TO_STAGE_SELECT.get()) {
         return crate::chao_player::rel_original(c, m, MENU_AT.get(), menu_screens);
     }
     eprintln!("start-stage: menu screen {screen} is not the Stage Select; back to Chao World");
@@ -1306,6 +1313,15 @@ fn stage_select_table(rel: &[u8]) -> Option<Vec<(i32, i32)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_stage_select_is_ever_run_from_the_games_menu() {
+        // Back on the Stage Select leads to screen 1, the menu's init to 7, a fresh menu to 0.
+        assert!([0, 1, 2, 4, 7, 20].iter().all(|&s| leaves_menu(s, false)));
+        assert!(!leaves_menu(SCREEN_STAGE_SELECT, false));
+        // On the way in from the lobby exit the menu's first screens run.
+        assert!(!leaves_menu(7, true));
+    }
 
     /// Synthetic REL (test input only, not game data): module 7, section 1
     /// code with one relocation at 0x10246 to section 2 + 8, and two rows.

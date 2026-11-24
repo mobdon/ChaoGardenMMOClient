@@ -4629,6 +4629,10 @@ const LOBBY_MODULE: u32 = 65;
 const LOBBY_EXIT_EXEC: u32 = 0x58C;
 const HIT_PLAYER: u32 = 0x8000_5F88;
 const LEAVE_CHAO_WORLD: u32 = 0x2_7DA0;
+/// The exit trigger's radius plus the player's width (as tiny_transporter's PLAYER_R).
+const EXIT_REACH: f32 = 1.8 + 2.0;
+/// The exit's second ball (ChaoStgLobby .data +0x128A0) plus the player's width.
+const EXIT_REARM: f32 = 14.3 + 2.0;
 
 fn lobby_exit_hook(c: &mut Cpu, m: &mut Mem) {
     let at = if chao_world(m) && module_linked(m, LOBBY_MODULE) { rt::sec(m, LOBBY_MODULE, 1) + LOBBY_EXIT_EXEC } else { 0 };
@@ -4642,8 +4646,27 @@ fn lobby_exit_exec(c: &mut Cpu, m: &mut Mem) {
     let twp = m.r32(task + 0x34);
     // SA2_EXIT_AT=frame (debug): the exit counts as walked into from that frame on.
     let debug = std::env::var("SA2_EXIT_AT").ok().and_then(|v| v.trim().parse::<u64>().ok()).is_some_and(|f| sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= f);
-    if twp != 0 && m.r8(twp) == 1 && m.r16(twp + 4) & 0x100 == 0 && (debug || call(c, m, HIT_PLAYER, &[task, 0]) != 0) {
-        eprintln!("chao-player: lobby exit -> the game's Stage Select");
+    // MMO glue: the game's own hit did not fire for the Chao standing in the
+    // trigger (headless run, 2026-11-24; mob: the centre was hard to hit), so
+    // the Chao within reach of the trigger's ball counts too: the ball's radius
+    // (1.8, ChaoStgLobby .data +0x12870) and the player's width, measured flat
+    // (the platform under it is solid, so the Chao there is on top of it).
+    let own = own_twp(m);
+    let pos = |t: u32| [0x14, 0x18, 0x1C].map(|o| f32::from_bits(m.r32(t + o)));
+    let reach = twp != 0 && own != 0 && exit_reach(pos(own), pos(twp));
+    // The exit is made switched off (flag 0x100) and the game switches it on once
+    // the player is out of its second ball (radius 14.3): back from the Stage
+    // Select the player stands on it. That test is the game's own hit too, so it
+    // is asked of the Chao's place; with no Chao yet the exit stays off. (Headless
+    // run: without this the Chao, put back on the exit, left again at once.)
+    if twp != 0 && m.r8(twp) == 1 && m.r16(twp + 4) & 0x100 != 0 {
+        if own != 0 && !exit_near(pos(own), pos(twp)) {
+            m.w16(twp + 4, m.r16(twp + 4) & !0x100);
+        }
+        return;
+    }
+    if twp != 0 && m.r8(twp) == 1 && m.r16(twp + 4) & 0x100 == 0 && (debug || reach || call(c, m, HIT_PLAYER, &[task, 0]) != 0) {
+        eprintln!("chao-player: lobby exit -> the game's Stage Select (by {})", if debug { "debug" } else if reach { "reach" } else { "the game's own hit" });
         m.w16(twp + 4, m.r16(twp + 4) | 0x100);
         m.w8(twp, 6);
         crate::start_stage::to_stage_select();
@@ -4721,6 +4744,21 @@ fn game_moved(last: Option<(u32, u32, [u32; 6])>, own: u32, cw: u32, now: [u32; 
     last.is_some_and(|(o, w, was)| o == own && w == cw && was != now)
 }
 
+/// A change of place too long for one frame's push by a solid object: the game placing the player.
+fn far_step(was: [u32; 6], now: [u32; 6]) -> bool {
+    (3..6).any(|i| (f32::from_bits(now[i]) - f32::from_bits(was[i])).abs() > 3.0)
+}
+
+/// The Chao at `chao` is within reach of the lobby exit's trigger at `exit` (flat distance).
+fn exit_reach(chao: [f32; 3], exit: [f32; 3]) -> bool {
+    (chao[0] - exit[0]).hypot(chao[2] - exit[2]) <= EXIT_REACH
+}
+
+/// The Chao at `chao` has not left the lobby exit at `exit` yet (its second ball, flat).
+fn exit_near(chao: [f32; 3], exit: [f32; 3]) -> bool {
+    (chao[0] - exit[0]).hypot(chao[2] - exit[2]) <= EXIT_REARM
+}
+
 /// The game places the player by writing playertwp[0], the hidden character's own task work
 /// (the Kindergarten's entrance: on the path outside, then at the room's start; ChaoStgKinder
 /// through playertwp). In self mode the Chao's task work is the one that moves and the
@@ -4735,7 +4773,12 @@ fn game_placed(m: &mut Mem, task: u32, chao: u32) {
     let now = placed(m, own);
     if game_moved(TWP_MIRROR.get(), own, cw, now) {
         let f = |v: u32| f32::from_bits(v);
-        eprintln!("chao-player: the game placed the player at ({:.2},{:.2},{:.2}) yaw {:#x}; the Chao goes there", f(now[3]), f(now[4]), f(now[5]), now[1] & 0xFFFF);
+        // A solid object's push (the lobby's exit teleporter: its platform holds the Chao up
+        // every frame) comes the same way and is taken the same way, but not logged each time.
+        let was = TWP_MIRROR.get().map_or(now, |(_, _, was)| was);
+        if far_step(was, now) || std::env::var("SA2_PUSH_LOG").is_ok_and(|v| v == "1") {
+            eprintln!("chao-player: the game placed the player at ({:.2},{:.2},{:.2}) yaw {:#x}; the Chao goes there", f(now[3]), f(now[4]), f(now[5]), now[1] & 0xFFFF);
+        }
         for (i, v) in now.into_iter().enumerate() {
             m.w32(cw + 0x08 + 4 * i as u32, v);
         }
@@ -6116,6 +6159,27 @@ mod tests {
         // Lobby, the three gardens and the kindergarten are walked in.
         assert!([0, 1, 2, 3, 6].iter().all(|&a| !super::menu_area(a)));
         assert!([4, 5, 9, 10, 11].iter().all(|&a| super::menu_area(a)));
+    }
+
+    #[test]
+    fn the_lobby_exit_takes_the_chao_on_its_platform_at_any_height() {
+        // The trigger ball is 4 up in the middle; the Chao stands 2.5 up on the platform.
+        assert!(super::exit_reach([3.0, 2.5, 2.0], [0.0, 0.0, 0.0]));
+        assert!(super::exit_reach([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]));
+        assert!(!super::exit_reach([4.0, 2.5, 0.0], [0.0, 0.0, 0.0]));
+        // Put back on the exit after the Stage Select: off until the Chao has walked away.
+        assert!(super::exit_near([0.0, 2.5, 0.0], [0.0, 0.0, 0.0]));
+        assert!(super::exit_near([12.0, 0.0, 10.0], [0.0, 0.0, 0.0]));
+        assert!(!super::exit_near([80.0, 0.0, 80.0], [0.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn a_push_is_not_logged_as_a_placement() {
+        let at = |x: f32, y: f32, z: f32| [0, 0, 0, x.to_bits(), y.to_bits(), z.to_bits()];
+        assert!(!super::far_step(at(1.0, 0.0, 1.0), at(1.0, 1.49, 1.0)));
+        assert!(super::far_step(at(1.0, 0.0, 1.0), at(40.0, 0.0, 1.0)));
+        // Both are taken over by the Chao: the mirror no longer matches.
+        assert!(super::game_moved(Some((1, 2, at(1.0, 0.0, 1.0))), 1, 2, at(1.0, 1.49, 1.0)));
     }
 
     #[test]
