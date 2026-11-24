@@ -302,7 +302,7 @@ pub(super) fn log(m: &Mem, chao: u32, state: u16) {
     let (mot, his) = RIDER_MOTION.get();
     let n = if (0x8000_0000..0x8C00_0000).contains(&mot) { m.r32(mot + 4) } else { 0 };
     // His nodes in his root's space: he faces -x. Hands 40 and 59, pelvis 1.
-    let (hands, pelvis) = SKEL.with_borrow(|s| if s.len() == 62 {
+    let (hands, pelvis) = SKEL.with_borrow(|s| if (s.len() == 62 && crate::chao_player::skel_site("k1")) {
         let r = |k: usize| inv_mul(&s[0], &s[k]);
         ([-r(40)[0][3], -r(59)[0][3]], r(1)[1][3])
     } else { ([f32::NAN; 2], f32::NAN) });
@@ -313,6 +313,13 @@ pub(super) fn log(m: &Mem, chao: u32, state: u16) {
     if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
         // Collision info (collision work +0xC: centre +8, sizes a b c +0x14) of his task and of the Chao's.
         let info = |twp: u32| { let cwp = m.r32(twp.wrapping_add(0x2C)); if (0x8000_0000..0x8C00_0000).contains(&cwp) { let i = m.r32(cwp + 0xC); if (0x8000_0000..0x8C00_0000).contains(&i) { return format!("n {} form {} push {} centre [{:.2} {:.2} {:.2}] size [{:.2} {:.2} {:.2}] flags {:#x}", m.r16(cwp + 2), m.r8(i + 1), m.r8(i + 2), f(i + 8), f(i + 0xC), f(i + 0x10), f(i + 0x14), f(i + 0x18), f(i + 0x1C), m.r16(cwp + 4)); } } "none".to_string() };
+        // Every entry of a collision table (0x30 bytes each: kind, form, push, damage, attr, centre, sizes a b c, angles).
+        let table = |twp: u32| { let cwp = m.r32(twp.wrapping_add(0x2C)); let mut out = String::new(); if (0x8000_0000..0x8C00_0000).contains(&cwp) { let i = m.r32(cwp + 0xC); let n = m.r16(cwp + 0xA).min(6); if (0x8000_0000..0x8C00_0000).contains(&i) { for k in 0..u32::from(n.max(1)) { let e = i + 0x30 * k; out += &format!(" [{k}: kind {} form {} push {:#x} attr {:#x} centre {:.2} {:.2} {:.2} size {:.2} {:.2} {:.2}]", m.r8(e), m.r8(e + 1), m.r8(e + 2), m.r32(e + 4), f(e + 8), f(e + 0xC), f(e + 0x10), f(e + 0x14), f(e + 0x18), f(e + 0x1C)); } } out += &format!(" (work words {:#x} {:#x} {:#x} {:#x})", m.r32(cwp), m.r32(cwp + 4), m.r32(cwp + 8), m.r32(cwp + 0xC)); } out };
+        let his_task_twp = m.r32(m.r32(0x801E_7768));
+        let mw = m.r32(chao + 0x38);
+        let mwf: Vec<String> = (0..0x30u32).map(|k| format!("{:.3}", f(mw + 4 * k))).collect();
+        eprintln!("knux-size2: his table{} | Chao's table{} | his physics radius {:.3} height {:.3} weight {:.3} camera y {:.3} centre height {:.3} | Chao move work floats {}", table(m.r32(0x801E_7768)), table(cw), f(obj2 + 0x130), f(obj2 + 0x134), f(obj2 + 0x138), f(obj2 + 0x13C), f(obj2 + 0x140), mwf.join(" "));
+        let _ = his_task_twp;
         eprintln!("knux-size: his collision {} | Chao's {} | his player work +0x134 {:.3} +0x138 {:.3} +0x13c {:.3} +0x140 {:.3}", info(data1), info(cw), f(obj2 + 0x134), f(obj2 + 0x138), f(obj2 + 0x13C), f(obj2 + 0x140));
     }
     eprintln!("knux: f{} state {state} mode {} his motion len {n} frame {his:.2} y {:.2} pelvis {pelvis:.2} sink {:.2} his hands fwd {:.2} {:.2} | chao motion {} frame {:.2} of {:.0}..{:.0} link {} next {:.2} of {:.0}..{:.0} hands fwd {:.2} {:.2} overlay {:.2} skel {}",
@@ -391,7 +398,7 @@ pub(super) fn digging(mode: u8) -> bool {
 /// own position (SKEL is in world space; both numbers are the game's).
 pub(super) fn at_root(m: &mut Mem) {
     let data1 = RIDER.get();
-    let Some(root) = SKEL.with_borrow(|s| (s.len() == 62).then(|| s[0])) else { return };
+    let Some(root) = SKEL.with_borrow(|s| ((s.len() == 62 && crate::chao_player::skel_site("k2"))).then(|| s[0])) else { return };
     if data1 == 0 || LAST_EXEC.get() != KNUX_EXEC {
         return;
     }
