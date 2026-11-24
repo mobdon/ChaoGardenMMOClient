@@ -808,7 +808,7 @@ function showCard(player) {
 let tunerShown = false;
 function gearTuner() {
   const pieces = { fist0: 'Fist 1', fist1: 'Fist 2', boot0: 'Shoe 1', boot1: 'Shoe 2', sunglasses: 'Sunglasses', necklace: 'Air Necklace', sflame: 'Flame Ring (Shadow)', lshoe0: 'Light Shoe 1', lshoe1: 'Light Shoe 2', ring: 'Flame Ring (Sonic)', bracelet: 'Bounce Bracelet' };
-  const keys = [['dx', -6, 6, 0.02], ['dy', -6, 6, 0.02], ['dz', -6, 6, 0.02], ['rx', -180, 180, 1], ['ry', -180, 180, 1], ['rz', -180, 180, 1], ['scale', 0.2, 3, 0.01]];
+  const keys = [['dx', -4, 4, 0.02], ['dy', -4, 4, 0.02], ['dz', -4, 4, 0.02], ['rx', -180, 180, 1], ['ry', -180, 180, 1], ['rz', -180, 180, 1], ['scale', 0.2, 3, 0.01]];
   const vals = Object.fromEntries(Object.keys(pieces).map((p) => [p, { dx: 0, dy: 0, dz: 0, rx: 0, ry: 0, rz: 0, scale: 1 }]));
   // The fists' set place (sa2-boot chao_player.rs FIST_SET): the panel starts from it.
   Object.assign(vals.fist0, { dx: 0.3, dy: 1.26, dz: -2.2, rx: -60, ry: 10, rz: 0, scale: 1.35 });
