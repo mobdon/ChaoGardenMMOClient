@@ -136,11 +136,13 @@ pub(super) fn set_char(c: &mut Cpu, m: &mut Mem) {
 /// Walked for the Chao his body draws nothing, but these did: the claws hung
 /// at his own hidden hands, as large as he is, over the Chao (test copy
 /// 2026-11-24, knux/r3-side, r5-side). Not drawn while the Chao stands in
-/// for him. SA2_SHOW_SONIC (debug: the character drawn) keeps them.
+/// for him. SA2_SHOW_SONIC (debug: the character drawn in his own place)
+/// keeps them; SA2_SHOW_SONIC=ahead,side (he is drawn moved aside) does not:
+/// the items are not moved with him and hung at the Chao (knux/w-front).
 const ITEM_DRAWS: [u32; 5] = [0x8009_A1AC, 0x8009_A1E8, 0x8009_A20C, 0x8009_A23C, 0x8009_A260];
 
 pub(super) fn item_draw(lr: u32) -> bool {
-    ITEM_DRAWS.contains(&lr) && std::env::var_os("SA2_SHOW_SONIC").is_none()
+    ITEM_DRAWS.contains(&lr) && std::env::var("SA2_SHOW_SONIC").map_or(true, |v| v.contains(','))
 }
 
 /// SA2_KNUX_UPGRADES=hex (test): OR into his upgrade bits (obj2 +0x24, the
