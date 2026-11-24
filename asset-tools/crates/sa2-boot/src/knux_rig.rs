@@ -657,7 +657,12 @@ pub(super) fn wall_frame(root: &[[f32; 4]; 3]) -> [[f32; 4]; 3] {
 /// in a stage (SA2_CHAO_DRAWLOG: made every frame, no shadow on the ground): only this pass
 /// draws shadows there. 0x855C draws only while the float at [task +0x3C] +0x30 is under the
 /// ChaoMain table value at .data 0x2A50 +0x7C: it reads 0 for the call.
-/// unverified: what that float is (it is compared like a distance from the camera).
+/// Measured 2026-11-24 (knux-shadow log, Wild Canyon): the float is the distance to the camera (49 to 73
+/// against the limit 110), the places are right and the seven draws are made, and still nothing
+/// shows: the draw they use, main.dol 0x8011E23C, is an empty function in this game (it returns 0),
+/// and the Chao's task has no shadow display of its own (task +0x2C is 0; his is 0x8009ADFC).
+/// So the Chao has no drop shadow of its own to switch on. Open: its model through the
+/// character shadow draw 0x8011E214, or his own shadow at the Chao's size (mob to choose).
 /// SA2_SHOW_SONIC (debug: he is drawn) and SA2_KNUX_LATE=1 keep his own.
 pub(super) const SHADOW_DISP: u32 = 0x8009_ADFC;
 const CHAO_SHADOW: u32 = 0x855C;
@@ -671,6 +676,16 @@ pub(super) fn shadow_disp(c: &mut Cpu, m: &mut Mem) {
     let w = m.r32(chao + 0x3C);
     let far = (0x8000_0000..0x8C00_0000).contains(&w).then(|| m.r32(w + 0x30));
     if far.is_some() { m.w32(w + 0x30, 0); }
+    if std::env::var("SA2_KNUX_LOG").is_ok_and(|v| v == "1") && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
+        let fl = |a: u32| f32::from_bits(m.r32(a));
+        let (cw, his) = (m.r32(chao + 0x34), m.r32(keep[3] + 0x34));
+        let cur = m.r32(NJ_CURRENT_MATRIX);
+        eprintln!("knux-shadow-task: chao task {chao:#x} words +0x10.. {:x?} | his task {:#x} words {:x?} | ChaoMain text {:#x}", (0x10..0x34).step_by(4).map(|o| m.r32(chao + o)).collect::<Vec<_>>(), keep[3], (0x10..0x34).step_by(4).map(|o| m.r32(keep[3] + o)).collect::<Vec<_>>(), rt::sec(m, 60, 1));
+        eprintln!("knux-shadow: chao places body [{:.1} {:.1} {:.1}] b0 [{:.1} {:.1} {:.1}] his place [{:.1} {:.1} {:.1}] far {:?} area {} limit {:.1} cur row0 [{:.3} {:.3} {:.3} {:.1}] row2 [{:.3} {:.3} {:.3} {:.1}]",
+            fl(cw + 0x5CC), fl(cw + 0x5D0), fl(cw + 0x5D4), fl(cw + 0x5C0), fl(cw + 0x5C4), fl(cw + 0x5C8), fl(his + 0x14), fl(his + 0x18), fl(his + 0x1C),
+            far.map(f32::from_bits), m.r32(rt::sec(m, 60, 5) + 0x972EC), fl(rt::sec(m, 60, 5) + 0x2A50 + 0x7C),
+            fl(cur), fl(cur + 4), fl(cur + 8), fl(cur + 12), fl(cur + 32), fl(cur + 36), fl(cur + 40), fl(cur + 44));
+    }
     call(c, m, rt::sec(m, 60, 1) + CHAO_SHADOW, &[chao]);
     if let Some(v) = far { m.w32(w + 0x30, v); }
     c.r = keep;
