@@ -4744,6 +4744,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         if new_stage {
             drop_stage_loads();
         }
+        SHADOW_RELOAD.set(true);
         // A new stage settles for a second before the Chao is made (tick).
         // An area change inside Chao World does not need it (ChaoMain stays
         // linked): the second was an empty path on every arrival (mob 2026-11-23).
@@ -5024,6 +5025,10 @@ const MIXED_ACTIONS: u32 = 0x82F0_2000;
 
 thread_local! {
     static SHADOW_MOVES: Cell<bool> = const { Cell::new(false) };
+    /// The motion table entries shadow_moves put in (number, entry), and
+    /// whether this area may still load them again.
+    static SHADOW_SLOTS: std::cell::RefCell<Vec<(u32, [u32; 2])>> = const { std::cell::RefCell::new(Vec::new()) };
+    static SHADOW_RELOAD: Cell<bool> = const { Cell::new(false) };
     static SHADOW_STYLE: Cell<Option<bool>> = const { Cell::new(None) };
 }
 
@@ -5427,6 +5432,17 @@ fn shadow_moves(c: &mut Cpu, m: &mut Mem) {
     if !(0x8000_0000..0x8C00_0000).contains(&obj2) || m.r8(obj2 + 1) != 0 || std::env::var("SA2_SHADOW_MOVES").is_ok_and(|v| v == "0") {
         return;
     }
+    // An area change makes the character again and with it the motion table:
+    // Shadow's entries are gone from it then (mob 2026-11-24: no skate in the
+    // garden after the lobby). Loaded again, once an area.
+    if SHADOW_MOVES.get() && SHADOW_RELOAD.get() {
+        let gone: Vec<(u32, [u32; 2])> = SHADOW_SLOTS.with_borrow(|s| s.iter().filter(|(k, e)| [m.r32(MOTIONS + 8 * k), m.r32(MOTIONS + 8 * k + 4)] != *e).map(|&(k, _)| (k, [m.r32(MOTIONS + 8 * k), m.r32(MOTIONS + 8 * k + 4)])).collect());
+        if !gone.is_empty() {
+            SHADOW_RELOAD.set(false);
+            SHADOW_MOVES.set(false);
+            eprintln!("chao-player: Shadow's motions left the table after the area change ({gone:x?}); loading them again; heap {GEAR_HEAP} free {} KB", os_heap_free(m, GEAR_HEAP) / 1024);
+        }
+    }
     if !SHADOW_MOVES.replace(true) {
         let rows: Vec<u32> = (0..ACTION_ROWS).filter(|&i| m.r16(SONIC_ACTIONS + 0x10 * i) != m.r16(SHADOW_ACTIONS + 0x10 * i)).collect();
         let need: Vec<u32> = rows.iter().map(|&i| u32::from(m.r16(SHADOW_ACTIONS + 0x10 * i))).collect();
@@ -5452,7 +5468,8 @@ fn shadow_moves(c: &mut Cpu, m: &mut Mem) {
                 m.w32(d + o, m.r32(s + o));
             }
         }
-        eprintln!("chao-player: Shadow's motions {mtn:#x}; states {rows:?} -> motions {need:?}");
+        SHADOW_SLOTS.set(need.iter().map(|&k| (k, [m.r32(MOTIONS + 8 * k), m.r32(MOTIONS + 8 * k + 4)])).collect());
+        eprintln!("chao-player: Shadow's motions {mtn:#x}; states {rows:?} -> motions {need:?}; heap {GEAR_HEAP} free {} KB", os_heap_free(m, GEAR_HEAP) / 1024);
     }
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
     let board = BOARD.with_borrow(|b| b.as_ref().is_some_and(|b| f <= b.0 + 2));
@@ -5751,6 +5768,9 @@ fn hook(c: &mut Cpu, m: &mut Mem) {
     c.rt.set_override(s1 + CHAO_DISPLAY, chao_display);
     c.rt.set_override(s1 + CHAO_EXEC, chao_exec);
     c.rt.set_override(s1 + AL_IS_ON_SCREEN3, on_screen3);
+    c.rt.set_override(s1 + GBA_EGG, gba_egg);
+    c.rt.set_override(s1 + CREATE_EGG, create_egg);
+    c.rt.set_override(s1 + AL_SET_CHAO_ON_THE_GARDEN, garden_chao);
     c.rt.set_override(s1 + AL_NODE_TRANSFORM, chao_node);
     if std::env::var_os("SA2_MOTION_LOG").is_some() {
         c.rt.set_override(s1 + AL_SET_MOTION_LINK, motion_log);
@@ -6696,6 +6716,80 @@ const REMOTE_VIEW_MARGIN: f32 = 8.0;
 /// players' Chao by a wide view cone, and the game's other Chao keep the test.
 const AL_IS_ON_SCREEN3: u32 = 0x1_A590;
 
+/// ChaoMain fn_60_E550 (.text 0xE550): the garden transporter's update
+/// (0x2F0CC, at 0x2F954) asks it whether one of the four GBA ports has sent an
+/// egg (port work at *(.bss 0x1D368) + port * 0x1084, flag +0x34; the answer
+/// is the egg's colour, -1 = none) and then lays that egg in front of the
+/// machine (CreateEgg at 0x2F99C / 0x2F9BC). The MMO has no GBA: the machine is
+/// the Tiny Chao Garden menu (tiny_transporter.rs), and an egg only comes
+/// from the server (start_stage lay_egg_with). mob 2026-11-24: an egg stood
+/// by the machine on arriving in the garden. The answer is always "none".
+const GBA_EGG: u32 = 0xE550;
+const CREATE_EGG: u32 = 0x8F20;
+
+fn gba_egg(c: &mut Cpu, m: &mut Mem) {
+    let work = m.r32(rt::sec(m, 60, 6) + 0x1_D368);
+    if (0x8000_0000..0x8C00_0000).contains(&work) {
+        for port in 0..4 {
+            if m.r32(work + port * 0x1084 + 0x34) != 0 {
+                eprintln!("chao-player: the transporter had an egg from GBA port {port} (colour {}); not laid", m.r32(work + port * 0x1084 + 0x8C) as i32);
+                m.w32(work + port * 0x1084 + 0x34, 0);
+            }
+        }
+    }
+    c.r[3] = u32::MAX;
+}
+
+/// ChaoMain AL_SetChaoOnTheGarden (.text 0x27C8): on arriving in a garden
+/// it makes every Chao and egg of the save's garden slots that belong there
+/// (CreateChaoExtra, which hands an egg slot to CreateEgg at 0x3151C).
+const AL_SET_CHAO_ON_THE_GARDEN: u32 = 0x27C8;
+
+thread_local! {
+    static GARDEN_SET: Cell<bool> = const { Cell::new(false) };
+}
+
+fn garden_chao(c: &mut Cpu, m: &mut Mem) {
+    GARDEN_SET.set(true);
+    let a = rt::sec(m, 60, 1) + AL_SET_CHAO_ON_THE_GARDEN;
+    rel_original(c, m, a, garden_chao);
+    GARDEN_SET.set(false);
+}
+
+/// Every egg the game makes, with who asked. MMO rule (mob 2026-11-24: "the
+/// eggs should have never spawned"): a garden does not put out the eggs of
+/// the save's slots on arrival. A new game save starts with two eggs in the
+/// garden, and a card that did not load is such a save. The slot itself is
+/// left as it is on the card. The MMO's own eggs come from the server and are
+/// laid in the lobby (start_stage lay_egg_with), which is not this path.
+/// SA2_GARDEN_EGGS=1 (debug): the game's own way.
+fn create_egg(c: &mut Cpu, m: &mut Mem) {
+    let s1 = rt::sec(m, 60, 1);
+    if GARDEN_SET.get() && !std::env::var("SA2_GARDEN_EGGS").is_ok_and(|v| v == "1") {
+        eprintln!("chao-player: the garden's save slot {:#x} holds an egg; not put out", c.r[4]);
+        c.r[3] = 0;
+        return;
+    }
+    eprintln!("chao-player: CreateEgg called from ChaoMain .text {:#x} (gene {:#x}, slot {:#x})", c.lr.wrapping_sub(s1), c.r[3], c.r[4]);
+    rel_original(c, m, s1 + CREATE_EGG, create_egg);
+}
+
+/// A Chao the game's 640x480 test put off screen, inside a view cone wider
+/// than any canvas (the cone remote_offscreen uses).
+fn in_wide_view(m: &Mem, task: u32) -> bool {
+    let cw = m.r32(task + 0x34);
+    if !(0x8000_0000..0x8C00_0000).contains(&cw) {
+        return false;
+    }
+    let base = mtx(m, m.r32(NJ_BASE_MATRIX));
+    let p = [0x14, 0x18, 0x1C].map(|o| f32::from_bits(m.r32(cw + o)));
+    let v: [f32; 3] = std::array::from_fn(|i| (0..3).map(|k| base[i][k] * p[k]).sum::<f32>() + base[i][3]);
+    // In front = the side of the camera the player's own Chao is on (as remote_offscreen); -z without one.
+    let front = match STEP.get() { Step::Live(own) if m.r32(own + 0x34) != 0 => { let o = [0x14, 0x18, 0x1C].map(|k| f32::from_bits(m.r32(m.r32(own + 0x34) + k))); ((0..3).map(|k| base[2][k] * o[k]).sum::<f32>() + base[2][3]).signum() } _ => -1.0 };
+    let depth = v[2] * front;
+    depth > -REMOTE_VIEW_MARGIN && v[0].abs() <= REMOTE_VIEW_SLOPE * depth.max(0.0) + REMOTE_VIEW_MARGIN && v[1].abs() <= REMOTE_VIEW_SLOPE * depth.max(0.0) + REMOTE_VIEW_MARGIN
+}
+
 fn on_screen3(c: &mut Cpu, m: &mut Mem) {
     let t = c.r[3];
     let ours = matches!(STEP.get(), Step::Live(ch) if ch == t) || REMOTE.with_borrow(|r| r.values().any(|e| e.task != 0 && e.task == t))
@@ -6705,7 +6799,10 @@ fn on_screen3(c: &mut Cpu, m: &mut Mem) {
     let a = rt::sec(m, 60, 1) + AL_IS_ON_SCREEN3;
     // The original still runs: it also stores the camera distance the draw uses.
     rel_original(c, m, a, on_screen3);
-    if ours {
+    // The game's own Chao (the garden's, the residents) too: on a wide canvas
+    // they vanished at the 4:3 picture's edge, well inside the view (mob
+    // 2026-11-24: a Chao gone at the left edge with only its ball showing).
+    if ours || (c.r[3] == 0 && in_wide_view(m, t)) {
         c.r[3] = 1;
     }
 }
