@@ -773,6 +773,7 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32, which: &[usize]) {
         // Unverified beyond that: the meaning of +0x84.
         m.w8(param + 0x438, 1);
         m.w8(param + 0x84, 0xFF);
+        perfect_stats(m, param);
         for i in (0..0x34).step_by(4) {
             m.w32(elem + i, 0);
         }
@@ -818,7 +819,7 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32, which: &[usize]) {
     }
 }
 
-/// The residents never age or die (mob 2026-11-22), every frame. Their types
+/// The residents never age, evolve or die (mob 2026-11-22), every frame. Their types
 /// (0x17..0x19) are already outside the game's own life loss (AL_CalcParameter
 /// 0x2149C: the LifeMax decay only for types under 0x14, as for Chaos Chao;
 /// `old` still counts up) and evolution (0x1531C: a child, type 2, only). But the death
@@ -841,6 +842,23 @@ fn hold_residents(m: &mut Mem) {
         m.w16(param + 0x88, 0);
         m.w16(param + 0x8A, life);
         m.w16(param + 0x8C, life);
+        // Never evolving (mob 2026-11-24): growth (+0xC0, see GUIDE) at 0, far
+        // from the value 0x1531C starts the cocoon at, whatever the type.
+        m.w32(param + 0xC0, 0);
+        perfect_stats(m, param);
+    }
+}
+
+/// A resident's stats are the best the game's own rules give (mob 2026-11-24:
+/// "perfect"), so the garden's AI picks its able motions (the run by Run,
+/// 0x19F10; the top swim; flight): for Swim, Fly, Run, Power, Stamina, Luck
+/// and Intelligence, grade S (Abl +0x28 = 5), level 99 (Lev +0x30) and 3266
+/// points (Skill +0x38; chao_player's BEST_POINTS). Offsets: al_chao_info.h.
+fn perfect_stats(m: &mut Mem, param: u32) {
+    for i in 0..7 {
+        m.w8(param + 0x28 + i, 5);
+        m.w8(param + 0x30 + i, 99);
+        m.w16(param + 0x38 + 2 * i, 3266);
     }
 }
 
