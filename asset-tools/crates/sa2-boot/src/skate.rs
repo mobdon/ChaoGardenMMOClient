@@ -122,6 +122,20 @@ pub fn foot_pitch(now: &M3, rest: &M3, cap: f32) -> f32 {
     cap * (pitch / cap).tanh()
 }
 
+/// The side turn (radians, about the Chao's up axis y) of the rider's foot
+/// turn from its rest, read from where the turn takes the side axis (it
+/// holds when the foot is pitched steeply), eased so it never passes `cap`
+/// (cap * tanh(turn / cap)); 0 for a cap of 0. The ankle's small twist.
+pub fn foot_twist(now: &M3, rest: &M3, cap: f32) -> f32 {
+    if cap <= 0.0 {
+        return 0.0;
+    }
+    let d = mm(&mm(&A, &mm(&unit(now), &tr(&unit(rest)))), &tr(&A));
+    // A turn of t about y takes the side axis x to (cos t, 0, -sin t).
+    let turn = (-d[2][0]).atan2(d[0][0]);
+    cap * (turn / cap).tanh()
+}
+
 /// The trailing foot's extra swing back, in degrees (owner's rule: 10 to 25
 /// while it stays on the Chao). `behind`: how far the rider's foot is behind
 /// its rest place, as a share of his full back reach (under 0: ahead). 0.4 of
@@ -240,5 +254,23 @@ mod tests {
         assert!((foot_back(0.15, 25.0) - 12.25).abs() < 0.01, "just behind: 10 and a little");
         assert!((foot_back(1.0, 25.0) - 25.0).abs() < 1e-4 && (foot_back(2.0, 25.0) - 25.0).abs() < 1e-4, "full reach");
         assert!(foot_back(0.02, 25.0) < 1.0, "eased in");
+    }
+    #[test]
+    fn foot_twist_is_the_side_turn_only_and_small() {
+        let id: M3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let cap = 6f32.to_radians();
+        assert_eq!(foot_twist(&id, &id, cap), 0.0, "rest");
+        // The rider turns his foot 3 degrees about his up axis: nearly all of it comes through.
+        let (s, c) = 3f32.to_radians().sin_cos();
+        let about_y: M3 = [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]];
+        let t = foot_twist(&about_y, &id, cap).to_degrees().abs();
+        assert!(t > 2.6 && t <= 3.0, "{t}");
+        // 40 degrees to the side stays under the cap; a pure pitch gives none; a cap of 0 turns it off.
+        let (s, c) = 40f32.to_radians().sin_cos();
+        let wide: M3 = [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]];
+        assert!(foot_twist(&wide, &id, cap).to_degrees().abs() < 6.0);
+        let pitch: M3 = [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]];
+        assert!(foot_twist(&pitch, &id, cap).abs() < 1e-5);
+        assert_eq!(foot_twist(&wide, &id, 0.0), 0.0);
     }
 }
