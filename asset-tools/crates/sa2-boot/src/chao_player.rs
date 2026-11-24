@@ -1812,12 +1812,13 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
         // Fist 2: fist 1's reflection (also in the panel while "Link fists"
         // is on: `set link 1`); unlinked, the panel's own fist 2 line.
         let t1 = gear_tune("fist0").unwrap_or_else(|| tune_matrix(&FIST_SET[0]));
-        let linked = debug_set("link").as_deref() != Some("0");
+        // Unlinked unless the panel links them (mob's saved setting: link 0).
+        let linked = debug_set("link").as_deref() == Some("1");
         let set = if k == 0 {
             t1
         } else {
-            let own = if linked { None } else { gear_tune("fist1") };
-            own.or_else(|| fist2_mirror(m, &fit, &t1)).unwrap_or_else(|| tune_matrix(&FIST_SET[1]))
+            let own = if linked { fist2_mirror(m, &fit, &t1) } else { gear_tune("fist1") };
+            own.unwrap_or_else(|| tune_matrix(&FIST_SET[1]))
         };
         let place = mul34(&place, &set);
         drawn[k] = Some(place);
@@ -3543,18 +3544,23 @@ thread_local! {
 /// Sonic's items need SONICMDL/SONICTEX, loaded once into heap 1 here.
 /// (panel key, file, model slot, Chao node: 1 body, 16 head, 3/10 arms, 6/13 feet)
 const TRY_ON: [(&str, u8, u32, usize, [f32; 7]); 7] = [
-    ("sunglasses", b'K', 323, 16, [0.0, -0.5, -0.64, -180.0, -90.0, 0.0, 1.6]),  // KNUCKMDL 161, set in the tuner
-    ("necklace", b'K', 337, 1, [0.0, -0.16, 1.8, -155.0, 90.0, -155.0, 1.41]),   // KNUCKMDL 168, set in the tuner
-    ("sflame", b'T', 201, 16, TUNE_NONE),                                       // TERIOSMDL 100, on the head as a crown
+    ("sunglasses", b'K', 323, 16, [0.0, -0.35, -0.38, 0.0, -90.0, -180.0, 1.5]),  // KNUCKMDL 161, set in the tuner
+    ("necklace", b'K', 337, 1, [0.0, -0.26, 1.5, 0.0, 90.0, 0.0, 1.35]),   // KNUCKMDL 168, set in the tuner
+    ("sflame", b'T', 201, 16, CROWN_TUNE),                                     // TERIOSMDL 100, on the head as a crown
     // Sonic's Light Shoes: placed as the Air Shoes are (light_shoe_place), the tuner's line on top.
     ("lshoe0", b'S', 27, 6, TUNE_NONE),                                          // SONICMDL 13 (right)
     ("lshoe1", b'S', 29, 13, TUNE_NONE),                                         // SONICMDL 14 (left)
-    ("ring", b'S', 51, 16, TUNE_NONE),                                           // SONICMDL 25 Flame Ring, on the head as a crown
-    ("bracelet", b'S', 53, 3, [0.58, -0.76, -0.12, 171.0, 88.0, 0.0, 1.46]),     // SONICMDL 26, set in the tuner
+    ("ring", b'S', 51, 16, CROWN_TUNE),                                         // SONICMDL 25 Flame Ring, on the head as a crown
+    ("bracelet", b'S', 53, 3, [0.78, -0.68, -0.06, 170.0, 90.0, 0.0, 1.09]),     // SONICMDL 26, set in the tuner
 ];
 const TUNE_NONE: [f32; 7] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
-/// The hub shoes' set size from the tuner (0.75 of the fit).
-const BOOT_TUNE: [f32; 7] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.75];
+/// How far the Flame Ring crown sits above the head node (tuner dy, the head's
+/// own up): mob asked for 0.5 to 1 higher, this is the top of it. Change this one number
+/// (and the panel's start value in sa2-web/www/main.js) to move both rings.
+const CROWN_UP: f32 = 1.0;
+const CROWN_TUNE: [f32; 7] = [0.0, CROWN_UP, 0.0, 0.0, 0.0, 0.0, 1.0];
+/// The hub shoes' set size from the tuner (the fit as it is).
+const BOOT_TUNE: [f32; 7] = TUNE_NONE;
 
 fn try_on(c: &mut Cpu, m: &mut Mem) {
     emerald_orbit::draw(c, m);
