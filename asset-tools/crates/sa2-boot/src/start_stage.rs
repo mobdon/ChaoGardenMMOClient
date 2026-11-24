@@ -191,6 +191,44 @@ const STAGE_SELECT_SETUP: u32 = 0x2BB38;
 const GO_TO_MENU: u32 = 0x5B;
 static MENU_SEEN: Global<(u32, u32, u32)> = global!((u32::MAX, u32::MAX, u32::MAX));
 
+/// advertiseD .text fn_91_30818: runs the current menu screen's exec; a
+/// non-zero answer from it ends the menu (it returns 1, and the menu's caller
+/// goes on to the next global mode the screen set).
+const MENU_SCREENS: u32 = 0x3_0818;
+/// main.dol: called by fn_91_30818 as the menu ends, while game state +0x64 is under 4.
+const MENU_END: u32 = 0x8006_42C8;
+/// The advertiseD screen dispatcher the override was set at (0 = not linked).
+static MENU_AT: Global<u32> = global!(0);
+
+/// The menu's screen dispatcher. Any screen but the Stage Select (its back
+/// goes to the main menu, screen 7 after the menu's init) ends the menu for
+/// Chao World instead, the way the Stage Select's own Chao World entry does
+/// (advertiseD .text 0x10404..0x104F0, then fn_91_30818's 0x30948).
+fn menu_screens(c: &mut Cpu, m: &mut Mem) {
+    let screen = module_section(m, ADVERTISE, 6).map_or(SCREEN_STAGE_SELECT, |bss| m.r32(bss + MENU_SCREEN));
+    if screen == SCREEN_STAGE_SELECT || TO_STAGE_SELECT.get() {
+        return crate::chao_player::rel_original(c, m, MENU_AT.get(), menu_screens);
+    }
+    eprintln!("start-stage: menu screen {screen} is not the Stage Select; back to Chao World");
+    if SHOWN.get().is_none() {
+        SHOWN.set(Some(u32::MAX));
+    }
+    crate::chao_player::unlink_copies(c, m);
+    guest_call(c, m, SET_STAGE_NUM, &[u32::from(CHAO_WORLD)]);
+    guest_call(c, m, SET_PLAYER_CHAR, &[0, rider()]);
+    m.w8(GAME + 0x20, 0);
+    m.w8(GAME + 0x1E, 0);
+    m.w8(GAME, 0);
+    m.w32(NEXT_GLOBAL_MODE, MD_ACTION_INIT);
+    // With +0x5B still set the menu's caller (main.dol 0x800D3538) runs the menu
+    // again by way of the boot logos instead of taking the next mode (seen in a run).
+    m.w8(GAME + GO_TO_MENU, 0);
+    if (m.r16(GAME + 0x64) as i16) < 4 {
+        guest_call(c, m, MENU_END, &[]);
+    }
+    c.r[3] = 1;
+}
+
 pub(crate) fn to_stage_select() {
     TO_STAGE_SELECT.set(true);
 }
@@ -347,6 +385,24 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
     }
     if TO_STAGE_SELECT.get() {
         stage_select_frame(c, m);
+    }
+    // MMO glue: the player never reaches the game's main menu (mob, 2026-11-24).
+    // Set once the menu module is fully linked (its .bss is there): set while it
+    // was still loading, the game stopped on its way to the menu (headless run).
+    // Taken off when the module goes: ChaoMain loads at the same address later.
+    let screens = match (module_section(m, ADVERTISE, 1), module_section(m, ADVERTISE, 6)) {
+        (Some(text), Some(_)) if STARTED.get() => text + MENU_SCREENS,
+        _ => 0,
+    };
+    let was = MENU_AT.replace(screens);
+    if was != screens {
+        if was != 0 {
+            c.rt.overrides.remove(&was);
+            c.rt.modules_changed();
+        }
+        if screens != 0 {
+            c.rt.set_override(screens, menu_screens);
+        }
     }
     if mode == MD_LEFT_STAGE && STARTED.get() && TO_STAGE_SELECT.get() {
         // The game's own way on from here is its title and menus. advertiseD's
