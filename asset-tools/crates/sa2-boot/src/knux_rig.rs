@@ -172,8 +172,12 @@ thread_local! {
     static RUN_BLOCKS: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
     /// The Chao is drawn from Shadow's skate this frame.
     static SKATING: Cell<bool> = const { Cell::new(false) };
+    /// This frame's overlay skeleton is the run look's (log).
+    static RUN_SHOWN: Cell<bool> = const { Cell::new(false) };
     /// The run look's motion frame, his frame and motion at the last step, his last step, and the game frame.
     static RUN_PHASE: Cell<(f32, f32, u32, f32, u64)> = const { Cell::new((0.0, 0.0, 0, 0.0, 0)) };
+    /// The last run state the look was read for and the last game frame he was in a run state.
+    static RUN_HELD: Cell<(u16, u64)> = const { Cell::new((0, 0)) };
     static RUN_SAID: Cell<u8> = const { Cell::new(0) };
 }
 
@@ -271,16 +275,23 @@ pub(super) fn run_style(c: &mut Cpu, m: &mut Mem) {
 /// about 2.6 a frame in Wild Canyon) turned Shadow's 31-frame skate over five times a
 /// second, which read as running (mob, playing: "it didnt skate while run anyway").
 pub(super) fn run_source(m: &Mem, his_motion: u32, his_frame: f32) -> Option<(u32, u32, f32)> {
+    let r = run_source_inner(m, his_motion, his_frame);
+    RUN_SHOWN.set(r.is_some());
+    r
+}
+
+fn run_source_inner(m: &Mem, his_motion: u32, his_frame: f32) -> Option<(u32, u32, f32)> {
     SKATING.set(false);
     let obj2 = m.r32(P1_OBJ2);
     let (skate, sonic, body) = RUN_TABLES.get()?;
     if !(0x8000_0000..0x8C00_0000).contains(&obj2) || !(0x8000_0000..0x8C00_0000).contains(&his_motion) {
         return None;
     }
-    let state = m.r16(obj2 + OBJ2_ACTION);
-    if !runs(state) {
-        return None;
-    }
+    let his_state = m.r16(obj2 + OBJ2_ACTION);
+    let now = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    // Dropped (a walk, a stop, a jump, or a jog past the hold): a later jog does not pick the look up again.
+    let Some(state) = held_run(his_state, RUN_HELD.get(), now) else { RUN_HELD.set((0, 0)); return None };
+    RUN_HELD.set((state, if runs(his_state) { now } else { RUN_HELD.get().1 }));
     let shadow = shadow_style();
     let k = if shadow { skate } else { sonic }[usize::from(state - 8)];
     let motion = if k == 0 { 0 } else { m.r32(MOTIONS + 8 * k + 4) };
@@ -288,9 +299,8 @@ pub(super) fn run_source(m: &Mem, his_motion: u32, his_frame: f32) -> Option<(u3
         return None;
     }
     let (n_his, n) = (m.r32(his_motion + 4) as f32, m.r32(motion + 4) as f32);
-    let speed = |table: u32| f32::from_bits(m.r32(table + 0x10 * u32::from(state) + 0xC));
-    let ratio = speed(if shadow { SHADOW_ACTIONS } else { SONIC_ACTIONS }) / speed(m.r32(obj2 + OBJ2_PLACTPTR));
-    let now = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let speed = |table: u32, st: u16| f32::from_bits(m.r32(table + 0x10 * u32::from(st) + 0xC));
+    let ratio = speed(if shadow { SHADOW_ACTIONS } else { SONIC_ACTIONS }, state) / speed(m.r32(obj2 + OBJ2_PLACTPTR), his_state);
     let (mut phase, last_his, last_motion, mut step, at) = RUN_PHASE.get();
     if now != at {
         // His step: the frame's change on the same motion (wrapped at its end); across his
@@ -309,6 +319,17 @@ pub(super) fn run_source(m: &Mem, his_motion: u32, his_frame: f32) -> Option<(u3
         eprintln!("chao-player knux: in his run the Chao takes {} (Air Shoes shown: {shadow}; motion {k}, {n} frames, his {n_his})", if shadow { "Shadow's skate" } else { "Sonic's run" });
     }
     Some((body, motion, frame))
+}
+
+/// Frames the run look stays after he drops from a run state to his jog (state 7). At the
+/// edge of running speed and on slopes he goes run, jog, run every 5 to 10 frames (free run
+/// in Wild Canyon, knux/rn-a: jog stretches of 5, 5, 5, 10 frames between runs), and the
+/// Chao went skate, jog, skate with him. MMO glue, not a game value.
+const RUN_HOLD: u64 = 20;
+
+/// The run state the look is read for: his own, or the last one while he jogs within RUN_HOLD.
+pub(super) fn held_run(his_state: u16, held: (u16, u64), now: u64) -> Option<u16> {
+    if runs(his_state) { Some(his_state) } else if his_state == 7 && runs(held.0) && now.saturating_sub(held.1) <= RUN_HOLD { Some(held.0) } else { None }
 }
 
 /// The other motion's frame one game frame on: his step times the row speed ratio.
@@ -501,6 +522,7 @@ pub(super) fn log(m: &Mem, chao: u32, state: u16) {
     if on_wall(m.r8(data1)) && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 20 == 0 {
         SKEL.with_borrow(|s| if s.len() == 62 { let r = s[0]; eprintln!("knux-root: f{} mode {} root x [{:.2} {:.2} {:.2}] y [{:.2} {:.2} {:.2}] z [{:.2} {:.2} {:.2}] at [{:.2} {:.2} {:.2}] his place [{:.2} {:.2} {:.2}] his turn {:#x} {:#x} {:#x}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r8(data1), r[0][0], r[1][0], r[2][0], r[0][1], r[1][1], r[2][1], r[0][2], r[1][2], r[2][2], r[0][3], r[1][3], r[2][3], f(data1 + 0x14), f(data1 + 0x18), f(data1 + 0x1C), m.r32(data1 + 8), m.r32(data1 + 0xC), m.r32(data1 + 0x10)); });
     }
+    eprintln!("knux-look: f{} state {state} look {}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), if RUN_SHOWN.get() { if SKATING.get() { "skate" } else { "sonic" } } else { "own" });
     eprintln!("knux: f{} state {state} mode {} his motion len {n} frame {his:.2} y {:.2} pelvis {pelvis:.2} sink {:.2} wallsink {:.2} his hands fwd {:.2} {:.2} | chao motion {} frame {:.2} of {:.0}..{:.0} link {} next {:.2} of {:.0}..{:.0} hands fwd {:.2} {:.2} overlay {:.2} skel {}",
         sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r8(data1), f(data1 + 0x18), SINK.get(), WALL_SINK.get(), hands[0], hands[1],
         LAST_MOTION.get(), f(ctrl + 0x1C), f(ctrl + 0x20), f(ctrl + 0x24), m.r16(ctrl) & 2 != 0, f(ctrl + 0x34), f(ctrl + 0x38), f(ctrl + 0x3C), ch[0], ch[1], OVERLAY.get(), SKEL.with_borrow(|s| s.len()));
@@ -780,6 +802,12 @@ mod tests {
         assert!((run_step(0.0, 2.6, 0.12 / 0.8, 31.0) - 0.39).abs() < 1e-5);
         assert!((run_step(30.9, 2.6, 0.12 / 0.8, 31.0) - 0.29).abs() < 1e-4);
         assert_eq!(run_step(5.0, 1.0, f32::NAN, 31.0), 0.0);
+        // The look stays through a short jog after a run, not after a long one or from a walk.
+        assert_eq!(held_run(8, (0, 0), 100), Some(8));
+        assert_eq!(held_run(7, (9, 95), 100), Some(9));
+        assert_eq!(held_run(7, (9, 70), 100), None);
+        assert_eq!(held_run(6, (9, 99), 100), None);
+        assert_eq!(held_run(7, (0, 99), 100), None);
     }
     #[test]
     fn on_a_wall_the_chao_is_upright_with_its_belly_to_the_rock() {
