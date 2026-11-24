@@ -44,7 +44,15 @@
 //!   the slot chosen on side 0 and 1 (1-based; OK needs both);
 //! - picker state at .bss +0x50C8C: 2 cancelled, 4 confirmed; the screen
 //!   answers 4 with 2 to close it; 0x52BAC is 0 once its panels are gone;
-//! - Chao records: .bss +0x3D08 + side * 0x60, three pages of 8 pointers.
+//! - Chao records: .bss +0x3D08 + side * 0x60, three pages of 8 pointers. The
+//!   picker fills them from the save once it is up, so the list is put back
+//!   each frame; picker +0x30 + side * 0xC is that side's page (1-based) and
+//!   +4 its "make the panel's Chao again" flag (panel update 0x55398, which
+//!   makes a Chao per listed record with CreateChaoExtra);
+//! - panel sprites: ChaoMain .data +0x38E840 (27 the header word, 29 and 30
+//!   the card slot letters A and B, drawn over the word's right half).
+//! Seen in a run (2026-11-24, on 721304eb): the listed Chao stands in the
+//! panel and in the stats window, confirm on it picks it, the sheet is sent.
 
 //!
 //! The machine in the gardens (ChaoMain .text 0x2EE08 makes it, a set object;
@@ -120,6 +128,10 @@ const SIDE_1: u32 = RECORDS + 0x60;
 /// The Move screen's place for side 1's panel (ChaoMain .rodata: 480, 272).
 const PANEL_X: u32 = 0x99A0;
 const PANEL_Y: u32 = 0x999C;
+/// Picker work: side 1's "make the panel's Chao again" flag (+0x30 + side * 0xC + 4).
+const REMAKE_1: u32 = 0x40;
+/// ChaoMain .data: the panel's sprite table (31 entries of ENTRY bytes).
+const PANEL_SPRITES: u32 = 0x38_E840;
 const MOVE_MODE: u32 = 4;
 const CANCELLED: u32 = 2;
 const CONFIRMED: u32 = 4;
@@ -144,6 +156,8 @@ static SHOWN: Global<u32> = global!(0);
 static CHOSEN: Global<u32> = global!(0);
 /// The picker values last logged (debug).
 static SEEN: Global<[u32; 9]> = global!([0; 9]);
+/// The picker's cursor row as last left (0, 1 Chao; 2 buttons).
+static ROW: Global<u32> = global!(0);
 /// ChaoMain .bss: the word its 0xDB60 answers with; 0 forces the picker's cursor to Back.
 const INPUT_FLAG: u32 = 0x1D358;
 /// ChaoMain .text: sets that word to 1.
@@ -152,6 +166,7 @@ const INPUT_ON: u32 = 0xDB50;
 static FLAG_WAS: Global<u32> = global!(0);
 /// The game's pad work pointer; +0x10 is the pressed buttons (confirm 0x4, cancel 0x402).
 const PAD: u32 = 0x801E_55D8;
+const CONFIRM: u32 = 0x4;
 static HELD_AT: Global<u32> = global!(0);
 /// ChaoMain's (.text + MACHINE_EXEC, .bss + MACHINE_TASK) this frame (0 = not linked).
 static MACHINE: Global<(u32, u32)> = global!((0, 0));
@@ -403,15 +418,24 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
             if card.is_empty() && crate::chao_player::own_record(m).is_some() {
                 card.push(SELF);
             }
-            for i in 0..24 {
-                let info = card.get(i as usize).and_then(|&id| if id == SELF { crate::chao_player::own_record(m) } else { crate::chao_cache::info_addr(id) });
-                m.w32(cm_bss + SIDE_1 + i * 4, info.unwrap_or(0));
+            list(m, cm_bss, &card);
+            // MMO glue: the panel's header is the word sprite with the card slot's
+            // letter drawn 32 right of its middle. The GameCube's word is "Slot";
+            // Steam's file says "MemoryCard" there and the letter lands on its "r".
+            // The letters (sprites 29, 30) are hidden; with the GameCube's file the
+            // header then reads "Slot".
+            if let Some(cm_data) = module_section(m, CHAOMAIN, 5) {
+                for letter in [29, 30] {
+                    m.wf32(cm_data + PANEL_SPRITES + letter * ENTRY + 4, 0.0);
+                    m.wf32(cm_data + PANEL_SPRITES + letter * ENTRY + 8, 0.0);
+                }
             }
             c.f[1].ps0 = m.rf32(cm_ro + PANEL_X);
             c.f[2].ps0 = m.rf32(cm_ro + PANEL_Y);
             crate::guest_call(c, m, cm_text + GARDEN_PANEL, &[MOVE_MODE, 1]);
             WAITED.set(0);
             CHOSEN.set(0);
+            ROW.set(0);
             c.rt.set_override(cm_text + HELD, held);
             HELD_AT.set(cm_text + HELD);
             let first = m.r32(cm_bss + SIDE_1);
@@ -449,7 +473,28 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
             // Their records stay cached while they are on show.
             CARD.with_borrow(|c| c.iter().filter(|&&id| id != SELF).for_each(|&id| crate::chao_cache::set_online(id, true)));
             if picker != 0 {
-                let (column, row) = one_side(m.r32(picker + 0x28), m.r32(picker + 0x2C));
+                // The picker fills its table from the save once it is up (build
+                // 721304eb: slot 0 read 0 again when the picker's state left 0, so
+                // no Chao stood in the panel and the stats window was empty). The
+                // list is put back, and the panel told to make its Chao again.
+                if CARD.with_borrow(|card| list(m, cm_bss, card)) {
+                    m.w32(picker + REMAKE_1, 1);
+                    eprintln!("tiny-transporter: the list was put back in the picker's table");
+                }
+                let (mut column, mut row) = one_side(m.r32(picker + 0x28), m.r32(picker + 0x2C));
+                // MMO glue: the game's step down from the Chao lands on Back, where
+                // confirm cancels; it lands on OK. Confirm on a listed Chao chooses
+                // it (+0x44) and puts the cursor on OK; the picker reads the same
+                // press there, so one press picks it (seen in a run, 2026-11-24).
+                if row == 2 && ROW.get() < 2 {
+                    column = 4;
+                }
+                let on = cursor_slot(column, row).filter(|&i| m.r32(cm_bss + SIDE_1 + i * 4) != 0);
+                if let (Some(i), true) = (on, m.r32(m.r32(PAD) + 0x10) & CONFIRM != 0) {
+                    m.w32(picker + 0x44, i + 1);
+                    (column, row) = (4, 2);
+                }
+                ROW.set(row);
                 m.w32(picker + 0x28, column);
                 m.w32(picker + 0x2C, row);
                 // MMO glue: OK needs a chosen Chao (+0x44, 1-based). With none
@@ -488,6 +533,18 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
         PHASE_LEAVE_WAIT if picker != 0 && crate::guest_call(c, m, cm_text + PICKER_BUSY, &[]) != 0 && WAITED.replace(WAITED.get() + 1) < LEAVE_WAIT => {}
         _ => rel_original(c, m, text + DROP_OFF, drop_off),
     }
+}
+
+/// Side 1's table lists `card` (the rest empty); true when it did not already.
+fn list(m: &mut Mem, cm_bss: u32, card: &[u64]) -> bool {
+    let mut changed = false;
+    for i in 0..24 {
+        let info = card.get(i as usize).and_then(|&id| if id == SELF { crate::chao_player::own_record(m) } else { crate::chao_cache::info_addr(id) }).unwrap_or(0);
+        let at = cm_bss + SIDE_1 + i * 4;
+        changed |= m.r32(at) != info;
+        m.w32(at, info);
+    }
+    changed
 }
 
 /// The cursor stays on side 1: a step onto side 0's Chao lands on OK.
