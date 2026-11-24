@@ -3413,9 +3413,9 @@ const TRY_ON: [(&str, u8, u32, usize, [f32; 7]); 7] = [
 ];
 const TUNE_NONE: [f32; 7] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
 /// How far the Flame Ring crown sits above the head node (tuner dy, the head's
-/// own up): mob asked for 0.5 to 1 higher, this is the middle. Change this one number
+/// own up): mob asked for 0.5 to 1 higher, this is the top of it. Change this one number
 /// (and the panel's start value in sa2-web/www/main.js) to move both rings.
-const CROWN_UP: f32 = 0.75;
+const CROWN_UP: f32 = 1.0;
 const CROWN_TUNE: [f32; 7] = [0.0, CROWN_UP, 0.0, 0.0, 0.0, 0.0, 1.0];
 /// The hub shoes' set size from the tuner (the fit as it is).
 const BOOT_TUNE: [f32; 7] = TUNE_NONE;
