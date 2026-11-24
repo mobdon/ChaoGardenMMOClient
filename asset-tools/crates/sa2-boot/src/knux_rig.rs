@@ -493,6 +493,54 @@ pub(super) fn late_body(lr: u32) -> bool {
     matches!(lr, 0x8009_B358 | 0x8009_B38C) && matches!(STEP.get(), Step::Live(_)) && std::env::var("SA2_KNUX_LATE").is_ok_and(|v| v == "0")
 }
 
+thread_local! {
+    /// The Chao's two eye nodes and its root as this draw placed them (view space), for hit_log.
+    static HIT_NODES: Cell<[[f32; 3]; 3]> = const { Cell::new([[0.0; 3]; 3]) };
+}
+
+/// SA2_HIT_LOG=1 (debug): keeps where the Chao's root (node 0) and eyes (18, 21) are drawn.
+pub(super) fn hit_node(m: &Mem, i: usize) {
+    let k = match i { 0 => 0, 18 => 1, 21 => 2, _ => return };
+    if std::env::var_os("SA2_HIT_LOG").is_none() { return; }
+    let x = mtx(m, m.r32(NJ_CURRENT_MATRIX));
+    let mut n = HIT_NODES.get();
+    n[k] = [x[0][3], x[1][3], x[2][3]];
+    HIT_NODES.set(n);
+}
+
+/// SA2_HIT_LOG=1 (debug): a line a frame with, in view space, the Chao's root and eyes
+/// and the hidden character's collision: his feet, the world's up, his land collision
+/// (radius, height, centre height) and the shapes of his collision table (centre, three
+/// sizes). test-build-inbox knux/hitdraw.py draws them over a still (the eyes give the
+/// picture's scale). For every hidden character, in every stage.
+pub(super) fn hit_log(m: &Mem, chao: u32) {
+    if std::env::var_os("SA2_HIT_LOG").is_none() { return; }
+    let (obj2, twp) = (m.r32(P1_OBJ2), m.r32(0x801E_7768));
+    if !(0x8000_0000..0x8C00_0000).contains(&obj2) || !(0x8000_0000..0x8C00_0000).contains(&twp) { return; }
+    let base = mtx(m, m.r32(NJ_BASE_MATRIX));
+    let f = |a: u32| f32::from_bits(m.r32(a));
+    let view = |p: [f32; 3]| -> [f32; 3] { std::array::from_fn(|r| (0..3).map(|k| base[r][k] * p[k]).sum::<f32>() + base[r][3]) };
+    let feet = view([f(twp + 0x14), f(twp + 0x18), f(twp + 0x1C)]);
+    let up = [base[0][1], base[1][1], base[2][1]];
+    let cwp = m.r32(twp + 0x2C);
+    let mut shapes = String::new();
+    if (0x8000_0000..0x8C00_0000).contains(&cwp) {
+        let info = m.r32(cwp + 0xC);
+        if (0x8000_0000..0x8C00_0000).contains(&info) {
+            for k in 0..5u32 {
+                let e = info + 0x30 * k;
+                let c = view([f(e + 8), f(e + 0xC), f(e + 0x10)]);
+                shapes += &format!(" shape{k} form {} on {} at {:.3} {:.3} {:.3} size {:.3} {:.3} {:.3}", m.r8(e + 1), u8::from(f(e + 8) != 0.0 || f(e + 0x10) != 0.0), c[0], c[1], c[2], f(e + 0x14), f(e + 0x18), f(e + 0x1C));
+            }
+        }
+    }
+    let n = HIT_NODES.get();
+    let _ = chao;
+    eprintln!("hit: f{} root {:.3} {:.3} {:.3} eyes {:.3} {:.3} {:.3} / {:.3} {:.3} {:.3} feet {:.3} {:.3} {:.3} up {:.4} {:.4} {:.4} land {:.3} {:.3} {:.3}{shapes}",
+        sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), n[0][0], n[0][1], n[0][2], n[1][0], n[1][1], n[1][2], n[2][0], n[2][1], n[2][2],
+        feet[0], feet[1], feet[2], up[0], up[1], up[2], f(obj2 + 0x130), f(obj2 + 0x134), f(obj2 + 0x140));
+}
+
 /// The Ninja draw state words the game's displays set and restore around
 /// their draws (main.dol 0x8002B2D8..0x8002B35C: r13 -0x71D8 the 3D control
 /// flags, -0x71DC / -0x71E0 the constant attribute and / or masks).
