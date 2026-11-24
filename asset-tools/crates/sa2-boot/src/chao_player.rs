@@ -351,6 +351,23 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
             return;
         }
         RIDER_OBJ.set(obj);
+        // Knuckles's run states: the overlay's skeleton is Shadow's body walked with Shadow's
+        // skate or Sonic's run (knux_rig::run_style), under the same placement, drawing nothing.
+        if LAST_EXEC.get() == KNUX_EXEC && addr == DRAW_MOTION {
+            if let Some((body, motion, frame)) = knux_rig::run_source(m, mot, f1.ps0 as f32) {
+                (c.r, c.f[1]) = (regs, f1);
+                (c.r[3], c.r[4]) = (body, motion);
+                c.f[1].ps0 = f64::from(frame);
+                NODES.with_borrow_mut(|n| n.clear());
+                CAPTURE.set(true);
+                original(c, m, addr);
+                CAPTURE.set(false);
+                if NODES.with_borrow(|n| n.len()) == 62 {
+                    SKEL.set(NODES.with_borrow(|n| n.clone()));
+                    RIDER_OBJ.set(body);
+                }
+            }
+        }
     } else if n > 0 && SELF_CAP.get() {
         // Self mode (Chao World): no spin ball; the Chao stays and plays its
         // own motion in the air (mob 2026-11-23: the ball only in Sonic's and
@@ -4401,6 +4418,7 @@ thread_local! {
 /// (frames stopped right after the new Chao's first draw).
 /// Unverified: which allocations the stage change frees; this drops all of them.
 fn drop_stage_loads() {
+    knux_rig::RUN_TABLES.set(None);
     FULL_SIZE.set(None);
     RIDER_REST.set(None);
     RIDER_OBJ.set(0);
@@ -4683,7 +4701,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             // bump) is not a stop: the gait holds for 6 frames.
             let still = if d >= 0.01 { 0 } else { STILL.get().saturating_add(1) };
             STILL.set(still);
-            let gait = (me && own_state.is_none() && (d >= 0.01 || (GAIT.get().is_some() && still < 6)) && (addr == KNUX_EXEC || !shadow_style())).then(|| gait(u32::from(m.r16(m.r32(P1_OBJ2).wrapping_add(OBJ2_ACTION))))).flatten();
+            let gait = ((me || addr == KNUX_EXEC) && own_state.is_none() && (d >= 0.01 || (GAIT.get().is_some() && still < 6)) && (addr == KNUX_EXEC || !shadow_style())).then(|| gait(u32::from(m.r16(m.r32(P1_OBJ2).wrapping_add(OBJ2_ACTION))))).flatten();
             GAIT.set(gait);
             let want = if let Some(mo) = own_state { mo } else if addr == KNUX_EXEC && OWN_MOTION.get() { last } else if let Some(g) = gait.filter(|_| !on_board) { g.motion() } else if addr == KNUX_EXEC { knux_rig::under_motion(still, last) } else if d < 0.01 || on_board { 0 } else if d >= if last == 119 { 0.9 } else { 1.0 } { 119 } else { 578 };
             if want != last {
@@ -4780,6 +4798,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             force_sonic_state(m);
         } else if addr == KNUX_EXEC {
             knuckles_rules(c, m, chao);
+            knux_rig::run_style(c, m);
         }
         return;
     }
