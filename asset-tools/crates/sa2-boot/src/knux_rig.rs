@@ -108,10 +108,11 @@ pub(super) fn punch_lock(m: &mut Mem, chao: u32, state: u16) {
     m.w32(info + 4, to.to_bits());
 }
 
-/// His states in which his whole body turns right round in his skeleton, his
-/// own heading staying as it was: punch 3 (111, the uppercut).
+/// His states in which his whole body turns right round or over in his
+/// skeleton, his own heading staying as it was: punch 3 (111, the uppercut)
+/// and the drill claw (115 the dive, head down; 116 its end).
 pub(super) fn spins(state: u16) -> bool {
-    state == 111
+    matches!(state, 111 | 115 | 116)
 }
 
 thread_local! {
@@ -124,7 +125,10 @@ thread_local! {
 /// whole turn, with no cap and whatever the pause Extras' BODY LIMIT says, so
 /// the Chao faces the way he faces on every frame of it.
 pub(super) fn spin_limits(node: usize, w: f32, cap: f32) -> (f32, f32) {
-    if node == 1 && SPIN.get() && LAST_EXEC.get() == KNUX_EXEC { (1.0, 180.0) } else { (w, cap) }
+    // The head (14: eyes, mouth and what it wears hang from it) and the arms and
+    // hands (3, 4, 10, 11) as well: mob on the drill dive, "head doesnt rotate
+    // nor do eyes or hand".
+    if matches!(node, 1 | 14 | 3 | 4 | 10 | 11) && SPIN.get() && LAST_EXEC.get() == KNUX_EXEC { (1.0, 180.0) } else { (w, cap) }
 }
 
 /// The Chao's motion under the overlay in his stages when his state is not
@@ -152,6 +156,13 @@ pub(super) fn jets() -> bool {
 pub(super) fn no_touch(c: &mut Cpu, m: &mut Mem, chao: u32) {
     if !std::env::var("SA2_KNUX_TOUCH").is_ok_and(|v| v == "1") {
         call(c, m, rt::sec(m, 60, 1) + 0x5A60, &[chao]);
+        // Its third entry (a sphere of 15 units, entry 1) stayed on and kept his collision's
+        // hit flag set (collision work +4 bit 0x10, logged 0x8011 on every frame of a glide):
+        // with that flag his wall checks stop before looking for a wall, so he never grabbed
+        // one. The Chao's exec enters its collision only while its task work +0xA0 has bit 8
+        // (as player_move clears it in Chao World): cleared, none of the Chao is solid.
+        let cw = m.r32(chao + 0x34);
+        if cw != 0 { m.w32(cw + 0xA0, m.r32(cw + 0xA0) & !8); }
     }
 }
 
@@ -167,10 +178,54 @@ pub(super) const AFTER_IMAGE_DISP: u32 = 0x8005_2620;
 pub(super) fn after_image(c: &mut Cpu, m: &mut Mem) {
     let w = m.r32(c.r[3].wrapping_add(0x40));
     let his = (0x8000_0000..0x8C00_0000).contains(&w) && m.r8(w + 0x30) == 0;
-    if his && matches!(STEP.get(), Step::Live(_)) && std::env::var_os("SA2_SHOW_SONIC").is_none() {
+    if his && matches!(STEP.get(), Step::Live(_)) && std::env::var("SA2_SHOW_SONIC").map_or(true, |v| v.contains(',')) {
         return;
     }
     original(c, m, AFTER_IMAGE_DISP);
+}
+
+/// His wall checks (task work, move work, player work): in the glide
+/// (main.dol 0x800936AC, from his exec at 0x8009FF18) and in the jump
+/// (0x8009348C, from his action code at 0x8009C3F8). Result 2 = a wall he
+/// grabs (0x80090C80 then starts the climb: mode 69, animation 106), 3 = a
+/// surface flagged 0x2002 (no grab), 1 = a no-climb surface or his collision
+/// touching an object, 0 = nothing ahead.
+/// SA2_KNUX_LOG=1 (debug): each non-zero result with his collision's hit flag
+/// (collision work +4 bit 0x10) and the kind of what it touches (+0).
+pub(super) const GLIDE_WALL: u32 = 0x8009_36AC;
+pub(super) const JUMP_WALL: u32 = 0x8009_348C;
+
+pub(super) fn wall_check(c: &mut Cpu, m: &mut Mem, at: u32) {
+    let twp = c.r[3];
+    original(c, m, at);
+    if c.r[3] != 0 && std::env::var("SA2_KNUX_LOG").is_ok_and(|v| v == "1") {
+        let cwp = m.r32(twp.wrapping_add(0x2C));
+        let (flags, kind) = if (0x8000_0000..0x8C00_0000).contains(&cwp) { (m.r16(cwp + 4), m.r16(cwp)) } else { (0, 0) };
+        eprintln!("knux-wall: f{} check {at:#x} -> {} (collision flags {flags:#x} touching kind {kind})", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), c.r[3]);
+    }
+}
+
+thread_local! {
+    static PROBE_SAID: Cell<u64> = const { Cell::new(0) };
+    static PROBED: std::cell::RefCell<std::collections::BTreeMap<(u32, u32, usize), (u32, u32)>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+/// SA2_CHAO_DRAWLOG=1 (debug): the Ninja draw calls ChaoMain makes (main.dol
+/// 0x8011D2F4..0x8011F720), by function, return address and the Chao node
+/// the player's Chao's walk is at, with a count and the last model; the
+/// whole table every five seconds. To find a part that is not drawn.
+pub(super) fn draw_probe(c: &mut Cpu, m: &mut Mem, at: u32) {
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    PROBED.with_borrow_mut(|p| {
+        let e = p.entry((at, c.lr, if NATIVE_DRAW.get() { CHAO_NODE.get() } else { 999 })).or_insert((0, 0));
+        *e = (e.0 + 1, c.r[3]);
+        if f % 300 == 0 && PROBE_SAID.replace(f) != f {
+            let all: Vec<String> = p.iter().map(|(k, v)| format!("{:#x}<{:#x}@{}x{}:{:#x}", k.0, k.1, k.2, v.0, v.1)).collect();
+            eprintln!("chao-draws: f{f} {}", all.join(" "));
+            p.clear();
+        }
+    });
+    original(c, m, at);
 }
 
 /// The game's SetPlayerChar(player, character) (main.dol 0x8001DDC0), called
@@ -255,9 +310,53 @@ pub(super) fn log(m: &Mem, chao: u32, state: u16) {
     let p = CHAO_PLACE.get();
     let ch = HANDS.with_borrow(|h| h.map(|x| x.map_or(f32::NAN, |x| inv_mul(&p, &x)[2][3])));
     let data1 = RIDER.get();
+    if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
+        // Collision info (collision work +0xC: centre +8, sizes a b c +0x14) of his task and of the Chao's.
+        let info = |twp: u32| { let cwp = m.r32(twp.wrapping_add(0x2C)); if (0x8000_0000..0x8C00_0000).contains(&cwp) { let i = m.r32(cwp + 0xC); if (0x8000_0000..0x8C00_0000).contains(&i) { return format!("n {} form {} push {} centre [{:.2} {:.2} {:.2}] size [{:.2} {:.2} {:.2}] flags {:#x}", m.r16(cwp + 2), m.r8(i + 1), m.r8(i + 2), f(i + 8), f(i + 0xC), f(i + 0x10), f(i + 0x14), f(i + 0x18), f(i + 0x1C), m.r16(cwp + 4)); } } "none".to_string() };
+        eprintln!("knux-size: his collision {} | Chao's {} | his player work +0x134 {:.3} +0x138 {:.3} +0x13c {:.3} +0x140 {:.3}", info(data1), info(cw), f(obj2 + 0x134), f(obj2 + 0x138), f(obj2 + 0x13C), f(obj2 + 0x140));
+    }
     eprintln!("knux: f{} state {state} mode {} his motion len {n} frame {his:.2} y {:.2} pelvis {pelvis:.2} sink {:.2} his hands fwd {:.2} {:.2} | chao motion {} frame {:.2} of {:.0}..{:.0} link {} next {:.2} of {:.0}..{:.0} hands fwd {:.2} {:.2} overlay {:.2} skel {}",
         sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r8(data1), f(data1 + 0x18), SINK.get(), hands[0], hands[1],
         LAST_MOTION.get(), f(ctrl + 0x1C), f(ctrl + 0x20), f(ctrl + 0x24), m.r16(ctrl) & 2 != 0, f(ctrl + 0x34), f(ctrl + 0x38), f(ctrl + 0x3C), ch[0], ch[1], OVERLAY.get(), SKEL.with_borrow(|s| s.len()));
+}
+
+/// Ninja colour blending mode (main.dol 0x801179F8: r3 0 = source, 1 =
+/// destination; r4 the mode): the plain alpha blend, source 8 with
+/// destination 6, as the game's own displays set before a see-through model
+/// (0x80052638 / 0x80052644 in the after-image display).
+/// SA2_KNUX_BLEND=0 (debug): not set, to compare.
+pub(super) fn blend_reset(c: &mut Cpu, m: &mut Mem) {
+    // TEST only (SA2_KNUX_BLEND=1): it did not bring the Chao's head back in his stages.
+    if LAST_EXEC.get() == KNUX_EXEC && std::env::var("SA2_KNUX_BLEND").is_ok_and(|v| v == "1") {
+        call(c, m, 0x8011_79F8, &[0, 8]);
+        call(c, m, 0x8011_79F8, &[1, 6]);
+    }
+}
+
+/// TEST (SA2_CAP_ZERO=1): his walked body's models go through the game's own
+/// model draw with the current matrix's turn and size zeroed (nothing reaches
+/// the screen), instead of the draw being skipped, to see whether skipping
+/// it is what leaves the Chao's head undrawn in his stages.
+pub(super) fn walk_unseen(c: &mut Cpu, m: &mut Mem) -> bool {
+    if LAST_EXEC.get() != KNUX_EXEC || !std::env::var("SA2_CAP_ZERO").is_ok_and(|v| v == "1") {
+        return false;
+    }
+    let cur = m.r32(NJ_CURRENT_MATRIX);
+    let keep: [u32; 12] = std::array::from_fn(|k| m.r32(cur + 4 * k as u32));
+    for r in 0..3 { for k in 0..3 { m.w32(cur + 4 * (4 * r + k) as u32, 0); } }
+    original(c, m, CNK_CACHE_DRAW);
+    for (k, v) in keep.into_iter().enumerate() { m.w32(cur + 4 * k as u32, v); }
+    true
+}
+
+/// His task's second display (main.dol 0x8009ADFC) walks his body again with
+/// the motion draw 0x8011E214, returning to 0x8009B358 / 0x8009B38C
+/// (SA2_TRACE_EVDRAW in Wild Canyon: these two, every frame, outside his first
+/// display 0x80099BA0 that the Chao's code already walks without drawing).
+/// SA2_KNUX_LATE=1 (debug): left drawing.
+pub(super) fn late_body(lr: u32) -> bool {
+    // TEST only (SA2_KNUX_LATE=0 skips it): skipping it did not bring the Chao's head back.
+    matches!(lr, 0x8009_B358 | 0x8009_B38C) && matches!(STEP.get(), Step::Live(_)) && std::env::var("SA2_KNUX_LATE").is_ok_and(|v| v == "0")
 }
 
 /// The Ninja draw state words the game's displays set and restore around
@@ -269,6 +368,7 @@ pub(super) fn draw_state_log(c: &Cpu, m: &Mem) {
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
     if f % 120 == 0 && std::env::var_os("SA2_STATE_LOG").is_some() {
         let g = |o: u32| m.r32(c.r[13].wrapping_sub(o));
+        CHAO_REST.with_borrow(|r| if let Some(r) = r.as_ref() { eprintln!("chao-parts: f{f} vertices per node {:?}", r.verts.iter().map(Vec::len).collect::<Vec<_>>()); });
         eprintln!("chao-state: f{f} control3d {:#x} attr and {:#x} or {:#x} saved {:#x} {:#x} {:#x} r13 {:#x}", g(0x71D8), g(0x71DC), g(0x71E0), g(0x7970), g(0x7968), g(0x796C), c.r[13]);
     }
 }
@@ -345,7 +445,7 @@ mod tests {
         assert_eq!(under_motion(0, 119), 119);
         assert_eq!(under_motion(5, 578), 578);
         assert_eq!(under_motion(6, 119), 0);
-        assert!(spins(111) && !spins(109) && !spins(110) && !spins(0));
+        assert!(spins(111) && spins(115) && spins(116) && !spins(109) && !spins(110) && !spins(0));
     }
     #[test]
     fn only_the_dig_modes_sink() {
