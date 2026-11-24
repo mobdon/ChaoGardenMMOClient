@@ -28,6 +28,24 @@ const FI_LENGTH: u32 = 0x34;
 
 static DVD: Global<Option<Dvd<Box<dyn GameFiles>>>> = global!(None);
 
+/// Files made in memory (name, bytes), opened by name like the disc's.
+static MADE: Global<Vec<(String, Vec<u8>)>> = global!(Vec::new());
+/// Their entry numbers start here, far above the disc's.
+const MADE_ENTRY: i32 = 0x4000_0000;
+
+/// A file made in memory that the game can open by `name` (replaces one of that name).
+pub(crate) fn add_file(name: &str, bytes: Vec<u8>) {
+    MADE.with_borrow_mut(|f| match f.iter_mut().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+        Some(old) => old.1 = bytes,
+        None => f.push((name.to_string(), bytes)),
+    });
+}
+
+fn made<R>(e: i32, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
+    let i = usize::try_from(e.checked_sub(MADE_ENTRY)?).ok()?;
+    MADE.with_borrow(|m| m.get(i).map(|(_, b)| f(b)))
+}
+
 /// The files the disc is served from.
 pub fn set_files(files: Box<dyn GameFiles>) {
     DVD.set(Some(Dvd::new(files)));
@@ -77,6 +95,10 @@ fn entry(m: &mut Mem, path: u32) -> Option<i32> {
     {
         return None;
     }
+    let bare = p.trim_start_matches(['/', '\\']);
+    if let Some(i) = MADE.with_borrow(|f| f.iter().position(|(n, _)| n.eq_ignore_ascii_case(bare))) {
+        return Some(MADE_ENTRY + i as i32);
+    }
     let r = DVD.with_borrow_mut(|d| {
         let d = d.as_mut()?;
         let r = d.entry(&p);
@@ -107,8 +129,8 @@ fn open(c: &mut Cpu, m: &mut Mem) {
         c.r[3] = 0;
         return;
     };
-    let len = DVD
-        .with_borrow(|d| d.as_ref().and_then(|d| d.length(e)))
+    let len = made(e, |b| b.len() as u64)
+        .or_else(|| DVD.with_borrow(|d| d.as_ref().and_then(|d| d.length(e))))
         .unwrap_or(0);
     for o in (0..0x30).step_by(4) {
         m.w32(fi + o, 0);
@@ -122,7 +144,15 @@ fn open(c: &mut Cpu, m: &mut Mem) {
 fn read_into(m: &mut Mem, fi: u32, addr: u32, len: u32, off: u32) -> Option<u32> {
     let e = m.r32(fi + FI_START) as i32;
     let mut buf = vec![0u8; len as usize];
-    let n = DVD.with_borrow(|d| d.as_ref()?.read(e, u64::from(off), &mut buf))?;
+    let n = match made(e, |b| {
+        let from = b.get(off as usize..).unwrap_or(&[]);
+        let n = from.len().min(buf.len());
+        buf[..n].copy_from_slice(&from[..n]);
+        n
+    }) {
+        Some(n) => n,
+        None => DVD.with_borrow(|d| d.as_ref()?.read(e, u64::from(off), &mut buf))?,
+    };
     m.load(addr, &buf[..n]);
     if std::env::var_os("SA2_TRACE_DVD").is_some() {
         eprintln!("dvd: read entry {e} off {off:#x} len {len:#x} -> {n:#x} bytes at {addr:#010x}");

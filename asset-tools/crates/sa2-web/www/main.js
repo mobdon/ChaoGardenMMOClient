@@ -234,6 +234,8 @@ function startThread(tid, arg) {
 // The gardens the server lets this Chao into (server game.rs chao-world): the
 // game keeps the others shut (sa2-boot start_stage.rs SA2_GARDENS).
 let gardens = '';
+// The owner's (admin) Chao has the seven Chaos Emeralds around it (sa2-boot emerald_orbit.rs), as in the old hub.
+let emeralds = false;
 async function ownRecord(token) {
   const card = JSON.parse(localStorage.getItem('chao-garden-slots-v1') || '[]').find((r) => r.token === token)?.card;
   const r = card && await fetch('/api/card', { headers: { Authorization: `Bearer ${card}` } });
@@ -241,6 +243,7 @@ async function ownRecord(token) {
   // Dev (admin) accounts get the dev menu in levels too, where there is no room to say so.
   if (own?.player?.admin && !tunerShown) { tunerShown = true; gearTuner(); }
   const p = own?.player;
+  emeralds = !!p?.admin;
   if (p) gardens = (p.admin || p.alignment >= 60 ? 'h' : '') + (p.admin || p.alignment <= -60 ? 'd' : '');
   const record = own?.record;
   const bytes = record ? Uint8Array.from(atob(record), (ch) => ch.charCodeAt(0)) : null;
@@ -979,7 +982,7 @@ async function start() {
   if (q.get('hatch') === '1') e.SA2_HATCH_EGG = '1';
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
-  if (token) { e.SA2_OWN_RECORD_IN = '/mmo/own-record'; if (await ownRecord(token).catch(() => {}) === 'hatch') e.SA2_HATCH_EGG = '1'; e.SA2_GARDENS = gardens; }
+  if (token) { e.SA2_OWN_RECORD_IN = '/mmo/own-record'; if (await ownRecord(token).catch(() => {}) === 'hatch') e.SA2_HATCH_EGG = '1'; e.SA2_GARDENS = gardens; if (emeralds) e.SA2_EMERALDS = '1'; }
   if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RESIDENT_OUT: '/mmo/resident-out', SA2_RESIDENT_IN: '/mmo/resident-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_PVP_IN: '/mmo/pvp-in', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_RINGS_IN: '/mmo/rings-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_STORY_IN: '/mmo/story-in', SA2_STORY_OUT: '/mmo/story-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick', SA2_SKILLS_IN: '/mmo/skills-in', SA2_GOTO_IN: '/mmo/goto-in' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
