@@ -6,8 +6,8 @@
 //! fills one shown flag per row (.bss 0xD3E8 + 0x14, 33 words) from the save
 //! records at 0x801F2340 (0xD854 picks the record), and the draw loop 0xD51C
 //! reads the flags. Story mode is what leads to an uncleared stage, and the
-//! MMO has none, so after 0xEE7C the flags are set from the server's list.
-//! The save itself is left as the game wrote it.
+//! MMO has none, so 0xEE7C's record lookups are answered from the server's
+//! list. The save itself is left as the game wrote it.
 //!
 //! `SA2_STORY_IN` names a file of (stage, character) byte pairs, the stages
 //! the server lets this player start. `SA2_STORY_OUT` names a file that gets
@@ -20,21 +20,13 @@ use sa2_recomp::rt::{Cpu, Mem};
 use sa2_recomp::{global, global::Global};
 
 const ADVERTISE: u32 = 91;
-/// advertiseD section 1: fills the rows' shown flags, then moves the cursor
-/// off a hidden row.
-const FILL_SHOWN: u32 = 0xEE7C;
+/// advertiseD section 1: picks a row's save record; the row fill (0xEE7C, which
+/// then moves the cursor off a hidden row) calls it at 0xEF38.
+const PICK_RECORD: u32 = 0xD854;
+const FILL_RETURN: u32 = 0xEF3C;
 /// advertiseD .data (section 5): the rows, 16 bytes each (stage, character,
 /// column, row); 0xEE7C and 0xD51C loop over 33 of them.
 const ROWS: u32 = 0x6E64;
-const ROW_COUNT: u32 = 33;
-/// advertiseD .bss (section 6): the shown flags, one u32 per row.
-const SHOWN: u32 = 0xD3E8 + 0x14;
-/// advertiseD .bss: the Stage Select's work. +0x68 the cursor's row, +0x20 a
-/// byte 0xEE7C sets with it.
-const WORK: u32 = 0xD488;
-/// City Escape's row and the +0x20 value 0xEE7C sets when it puts the cursor
-/// there (0xF0A4). City Escape is unlocked for everyone.
-const FIRST_ROW: (u8, u8) = (0x17, 0);
 /// Rows left as the game set them: Chao World (0x5A) and Green Hill (0x1F).
 const NATIVE_ROWS: [u32; 2] = [0x5A, 0x1F];
 
@@ -64,25 +56,33 @@ fn shown(stage: u32, character: u32, unlocked: &[(u8, u8)]) -> Option<bool> {
     Some(unlocked.iter().any(|&(s, c)| (u32::from(s), u32::from(c)) == (stage, character)))
 }
 
-fn fill_shown(c: &mut Cpu, m: &mut Mem) {
-    rel_original(c, m, HOOKED.get() + FILL_SHOWN, fill_shown);
-    // No list (not signed in yet, file missing): the game's own flags stay.
-    let Some(unlocked) = unlocked() else { return };
-    let (Some(data), Some(bss)) = (module_section(m, ADVERTISE, 5), module_section(m, ADVERTISE, 6))
-    else {
+/// The server's list as read for this pass of the row fill (None: no list).
+static LIST: Global<Option<Vec<(u8, u8)>>> = global!(None);
+
+/// advertiseD 0xD854(out, stage, row): picks a row's save record. For the row
+/// fill (its call at 0xEF38) a row's flag is the first byte at out[1] (0xEF54);
+/// the answer is pointed at a byte that says what the server's list says, so
+/// the game's own pass fills the flags, keeps the cursor on a shown row and
+/// moves the map itself. Writing the flags after the pass (as before) left the
+/// cursor check to the save: the MMO's save has no clears, so every frame the
+/// cursor went back to Iron Gate (0xF0C8) and no other stage could be picked.
+fn pick_record(c: &mut Cpu, m: &mut Mem) {
+    let text = HOOKED.get();
+    let (out, stage, row, fill) = (c.r[3], c.r[4], c.r[5], c.lr == text + FILL_RETURN);
+    rel_original(c, m, text + PICK_RECORD, pick_record);
+    if !fill {
         return;
-    };
-    for i in 0..ROW_COUNT {
-        let row = data + ROWS + i * 16;
-        if let Some(show) = shown(m.r32(row), m.r32(row + 4), &unlocked) {
-            m.w32(bss + SHOWN + i * 4, u32::from(show));
-        }
     }
-    // As 0xEE7C does for a cursor on a hidden row.
-    let cursor = u32::from(m.r8(bss + WORK + 0x68));
-    if cursor < ROW_COUNT && m.r32(bss + SHOWN + cursor * 4) == 0 {
-        m.w8(bss + WORK + 0x68, FIRST_ROW.0);
-        m.w8(bss + WORK + 0x20, FIRST_ROW.1);
+    if row == 0 {
+        // No list (not signed in yet, file missing): the game's own flags stay.
+        LIST.set(unlocked());
+    }
+    let Some(data) = module_section(m, ADVERTISE, 5) else { return };
+    let character = m.r32(data + ROWS + row * 16 + 4);
+    if let Some(show) = LIST.with_borrow(|l| l.as_ref().and_then(|l| shown(stage, character, l))) {
+        // out[0] is the record kind, 0 or 1: its first byte is 0. out[1] is
+        // an address in RAM: its first byte is 0x80.
+        m.w32(out + 4, if show { out + 4 } else { out });
     }
 }
 
@@ -114,10 +114,10 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
         return;
     }
     if old != 0 {
-        c.rt.overrides.remove(&(old + FILL_SHOWN));
+        c.rt.overrides.remove(&(old + PICK_RECORD));
     }
     if text != 0 {
-        c.rt.set_override(text + FILL_SHOWN, fill_shown);
+        c.rt.set_override(text + PICK_RECORD, pick_record);
     }
     c.rt.modules_changed();
     HOOKED.set(text);
