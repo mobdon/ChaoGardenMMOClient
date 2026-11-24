@@ -65,8 +65,12 @@
 //! its record (SA2_RECORD_IN, as the Chao Transporter reads the card's).
 //! They face each other: the portrait's own turn (0x2000) inward each.
 //!
-//! shortcut: the green page is an empty frame (inventory comes next), and
-//! the two Chao only stand: the mating and the egg are not written yet.
+//! The green page is the inventory: what the server says the player carries
+//! (SA2_INV_IN, a "name<tab>count" line per item from the page), listed
+//! with the chart's text draw in two columns. It only shows; using an item
+//! stays where it was (the garden, the web card).
+//! shortcut: names only, no item icons and no boxes; a list longer than
+//! the page (32) is cut. Upgrade with the al_panel icons when it is used.
 //! Unverified until a build run: where the two Chao stand in the box and
 //! which of the two turns faces inward.
 //! shortcut: the picked name is marked with ">" (no flat bar among the
@@ -255,6 +259,40 @@ static BREED: Global<Breed> = global!(Breed {
     chao: Vec::new(),
     picked: String::new(),
 });
+
+/// The inventory page's rows and how many fit a column.
+static INV: Global<Vec<String>> = global!(Vec::new());
+const INV_Y: f32 = 112.0;
+const INV_ROWS: usize = 16;
+
+/// SA2_INV_IN's text into the page's rows ("name xcount").
+fn inv_feed(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|l| l.split_once('\t'))
+        .filter(|(name, _)| !name.trim().is_empty())
+        .map(|(name, count)| format!("{} x{}", name.trim(), count.trim()))
+        .take(LIST_X.len() * INV_ROWS)
+        .collect()
+}
+
+fn inv_read() {
+    if let Some(text) = std::env::var("SA2_INV_IN").ok().and_then(|p| std::fs::read_to_string(p).ok()) {
+        INV.with_borrow_mut(|rows| *rows = inv_feed(&text));
+    }
+}
+
+/// The inventory page's strings.
+fn inv_text(c: &mut Cpu, m: &mut Mem) {
+    // Taken out while the game draws: a guest call may switch game threads.
+    let rows = INV.with_borrow(|rows| rows.clone());
+    text(c, m, "Inventory", 5, 444.0, 84.0, 20.0);
+    if rows.is_empty() {
+        text(c, m, "You carry nothing yet.", 0, LIST_X[0], INV_Y, 16.0);
+    }
+    for (i, row) in rows.iter().enumerate() {
+        text(c, m, row, 0, LIST_X[i / INV_ROWS], INV_Y + LIST_PITCH * (i % INV_ROWS) as f32, 16.0);
+    }
+}
 
 /// SA2_BREED_IN's text into the feed (the pick is kept by the caller).
 fn breed_feed(text: &str) -> Breed {
@@ -686,8 +724,10 @@ fn display(c: &mut Cpu, m: &mut Mem) {
         copy_records(m, pink + 8 * 16, to, 3, |i| Some(spans[i as usize]));
         call(c, m, s1 + QUADS, &[to, 3, tint]);
     }
-    if page == 4 {
-        breed_text(c, m);
+    match page {
+        3 => inv_text(c, m),
+        4 => breed_text(c, m),
+        _ => {}
     }
 }
 
@@ -741,8 +781,12 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
             m.w8(work + 0x14, 0);
         }
         State::Open { work, .. } => {
+            let tick = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed).is_multiple_of(15);
+            if PAGE.get() == 3 && tick {
+                inv_read();
+            }
             if PAGE.get() == 4 {
-                if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed).is_multiple_of(15) {
+                if tick {
                     breed_read();
                 }
                 partner_sync(c, m);
@@ -769,6 +813,9 @@ fn click(c: &mut Cpu, m: &mut Mem, work: u32) {
         return;
     };
     if page != PAGE.replace(page) {
+        if page == 3 {
+            inv_read();
+        }
         if page == 4 {
             breed_read();
         }
@@ -1020,6 +1067,13 @@ mod tests {
         assert_eq!(breed_feed("").chao.len(), 0);
         let many: String = (0..20).map(|i| format!("{i}\tC{i}\n")).collect();
         assert_eq!(breed_feed(&format!("a\n\n\n{many}")).chao.len(), 8, "what the list box holds");
+    }
+
+    #[test]
+    fn the_inventory_feed_is_name_and_count_rows() {
+        assert_eq!(inv_feed("Garden Fruit\t3\nbad line\n\t2\nPink egg\t1\n"), ["Garden Fruit x3", "Pink egg x1"]);
+        let many: String = (0..40).map(|i| format!("I{i}\t1\n")).collect();
+        assert_eq!(inv_feed(&many).len(), 32, "what the page holds");
     }
 
     #[test]

@@ -244,6 +244,26 @@ fn choose_both(m: &mut Mem) -> bool {
     true
 }
 
+/// The game's 1-player picks (Karate's Tournament, the race's Chao Select) are
+/// the same task as the 2-player one (work *lbl_60_bss_50C88) and list the
+/// card's grown Chao. MMO glue: the MMO card's garden has none, so the first
+/// place of the left list is the player's current Chao, as in choose_both.
+fn list_own(m: &mut Mem) {
+    // (rt::sec stops the game on a module that is not linked.)
+    if !crate::chao_player::module_linked(m, CHAO_MAIN) {
+        return;
+    }
+    let bss60 = sa2_recomp::rt::sec(m, CHAO_MAIN, 6);
+    let pick = if bss60 != 0 { m.r32(bss60 + 0x50C88) } else { 0 };
+    if pick != 0 && crate::chao_player::player_chao().is_some() && m.r32(bss60 + 0x3D08) == 0 {
+        m.w32(bss60 + 0x3D08, OWN_INFO);
+        // The panel made its Chao from the empty list: pick +0x34 has it make them again
+        // (side 0's flag; tiny_transporter.rs uses side 1's, +0x40).
+        m.w32(pick + 0x34, 1);
+        eprintln!("chao-pick: the player's Chao is listed");
+    }
+}
+
 /// Takes the opponent's record out of the other garden again.
 fn uninvite(m: &mut Mem) {
     let (id, at) = GUEST.replace((0, 0));
@@ -450,6 +470,7 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
     if std::env::var_os("SA2_KARATE_IN").is_none() {
         return;
     }
+    list_own(m);
     let (text, bss) = sections(m).unwrap_or((0, 0));
     let old = HOOKED.get();
     if text != 0 {

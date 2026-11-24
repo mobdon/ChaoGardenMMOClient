@@ -73,6 +73,14 @@ const LANGUAGE: u32 = 0x801C_C168 + 0x11;
 const SPRITE: u32 = 0x50314;
 /// The window display's first call: normal blending for the sprite draw.
 const SPRITE_BLEND: u32 = 0x4F594;
+/// The Chao font's set-up (fn_60_1B5D0): counts its users at .bss 0x386B8 and
+/// for the first one loads the three font files and clears the glyph cache;
+/// fn_60_1B590 frees them with the last user. Only two of the game's own
+/// windows use it (their FExec 0x39A8 / 0x480C), so outside the lobby there
+/// is often no user at all.
+const FONT_INIT: u32 = 0x1_B5D0;
+const FONT_EXIT: u32 = 0x1_B590;
+const FONT_USERS: u32 = 0x3_86B8;
 const FONT_BEGIN: u32 = 0x1C424;
 const FONT_BUILD: u32 = 0x1BD24;
 const FONT_PLACE: u32 = 0x1B8F0;
@@ -123,6 +131,8 @@ pub struct Place {
 
 static PLACE: Global<Place> = global!(Place { x: 16.0, y: 14.0, inner: 168.0, s: 0.7 });
 static TASK: Global<u32> = global!(0);
+/// The box holds its own user of the Chao font (ChaoMain's count; a new stage clears it).
+static FONT_HELD: Global<bool> = global!(false);
 /// The page's canvas width / height in thousandths (0 = 4:3).
 static ASPECT: Global<u16> = global!(0);
 /// The art's texture list; Some(0) = it did not load (text only, no retry
@@ -198,6 +208,11 @@ fn rings_of(bytes: &[u8]) -> Option<u32> {
     Some(u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?))
 }
 
+/// The box's font user for this frame's area: (give it back, take one).
+fn font_step(menu_area: bool, held: bool) -> (bool, bool) {
+    (menu_area && held, !menu_area && !held)
+}
+
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(MAIN, |_, _| {});
     c.rt.set_override(DELETE, |_, _| TASK.set(0));
@@ -210,6 +225,7 @@ pub(crate) fn drop_stage_loads() {
     TEX.set(None);
     TASK.set(0);
     PORTRAIT.set(None);
+    FONT_HELD.set(false);
 }
 
 /// The canvas aspect from the page (pad bytes 20..22).
@@ -322,6 +338,22 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
         }
         FEED.set((name.map(|b| name_of(&b)).unwrap_or_default(), read("SA2_RINGS_IN").and_then(|b| rings_of(&b))));
     }
+    // The menu-only areas (race, its entry hall, stadium, Karate) have no box,
+    // and the box's font user is given back there: the font is 335 KB of game
+    // heap 0 that stays through area changes, and with it the race entry hall
+    // had 551 KB free instead of 886 and stopped in AL_DeformObjectChild at
+    // 0xbf11629d making its racers after the course select (mob 2026-11-24;
+    // headless: stops with the font held, runs without).
+    let c1 = rt::sec(m, CHAOMAIN, 1);
+    let (give_back, take) = font_step(crate::chao_player::menu_area(call(c, m, c1 + 0x27FA0, &[]) as u16), FONT_HELD.get());
+    if give_back {
+        FONT_HELD.set(false);
+        call(c, m, c1 + FONT_EXIT, &[]);
+        eprintln!("card-box: no box in this area, font user given back; game heap 0 free {} KB", crate::chao_player::os_heap_free(m, 0) / 1024);
+    }
+    if !take && !FONT_HELD.get() {
+        return;
+    }
     // An area change frees the task without a word: its display slot tells.
     let task = TASK.get();
     if task != 0 && m.r32(task + 0x1C) == DISPLAY {
@@ -329,6 +361,16 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
     }
     if TEX.get().is_none() {
         TEX.set(Some(load(c, m)));
+    }
+    // The box's text is a user of the font too. Without one, the game freed
+    // the font with the lobby's window and the box drew its glyphs from, and
+    // into, freed memory (mob 2026-11-24: the name and rings as stripes and
+    // noise in the garden). The box's own user is kept through the areas the
+    // player walks in, for the Tab chart's text as well.
+    if take {
+        FONT_HELD.set(true);
+        call(c, m, c1 + FONT_INIT, &[]);
+        eprintln!("card-box: font user taken for the box; game heap 0 free {} KB", crate::chao_player::os_heap_free(m, 0) / 1024);
     }
     m.load(NAME, b"MMOCard\0");
     let task = call(c, m, CREATE_ELEMENTAL_TASK, &[2, 3, MAIN, NAME]);
@@ -476,6 +518,16 @@ mod tests {
         assert_eq!(left_edge(1333), 0.0);
         // 16:9: the 4:3 picture starts 106.7 game units in from the left.
         assert!((left_edge(1778) + 106.72).abs() < 0.1);
+    }
+
+    #[test]
+    fn the_box_gives_its_font_back_in_the_menu_areas() {
+        // Walked areas: one user, taken once and kept.
+        assert_eq!(font_step(false, false), (false, true));
+        assert_eq!(font_step(false, true), (false, false));
+        // Menu areas: given back once, never taken.
+        assert_eq!(font_step(true, true), (true, false));
+        assert_eq!(font_step(true, false), (false, false));
     }
 
     #[test]

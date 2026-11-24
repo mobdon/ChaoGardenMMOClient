@@ -191,6 +191,51 @@ const STAGE_SELECT_SETUP: u32 = 0x2BB38;
 const GO_TO_MENU: u32 = 0x5B;
 static MENU_SEEN: Global<(u32, u32, u32)> = global!((u32::MAX, u32::MAX, u32::MAX));
 
+/// advertiseD .text fn_91_30818: runs the current menu screen's exec; a
+/// non-zero answer from it ends the menu (it returns 1, and the menu's caller
+/// goes on to the next global mode the screen set).
+const MENU_SCREENS: u32 = 0x3_0818;
+/// main.dol: called by fn_91_30818 as the menu ends, while game state +0x64 is under 4.
+const MENU_END: u32 = 0x8006_42C8;
+/// The advertiseD screen dispatcher the override was set at (0 = not linked).
+static MENU_AT: Global<u32> = global!(0);
+
+/// The menu ends for Chao World on this screen: any but the Stage Select, once
+/// the way to the Stage Select is done (`pending`: the menu's first screens
+/// run until start_stage has set the Stage Select).
+fn leaves_menu(screen: u32, pending: bool) -> bool {
+    screen != SCREEN_STAGE_SELECT && !pending
+}
+
+/// The menu's screen dispatcher. Any screen but the Stage Select (its back
+/// goes to the main menu, screen 7 after the menu's init) ends the menu for
+/// Chao World instead, the way the Stage Select's own Chao World entry does
+/// (advertiseD .text 0x10404..0x104F0, then fn_91_30818's 0x30948).
+fn menu_screens(c: &mut Cpu, m: &mut Mem) {
+    let screen = module_section(m, ADVERTISE, 6).map_or(SCREEN_STAGE_SELECT, |bss| m.r32(bss + MENU_SCREEN));
+    if !leaves_menu(screen, TO_STAGE_SELECT.get()) {
+        return crate::chao_player::rel_original(c, m, MENU_AT.get(), menu_screens);
+    }
+    eprintln!("start-stage: menu screen {screen} is not the Stage Select; back to Chao World");
+    if SHOWN.get().is_none() {
+        SHOWN.set(Some(u32::MAX));
+    }
+    crate::chao_player::unlink_copies(c, m);
+    guest_call(c, m, SET_STAGE_NUM, &[u32::from(CHAO_WORLD)]);
+    guest_call(c, m, SET_PLAYER_CHAR, &[0, rider()]);
+    m.w8(GAME + 0x20, 0);
+    m.w8(GAME + 0x1E, 0);
+    m.w8(GAME, 0);
+    m.w32(NEXT_GLOBAL_MODE, MD_ACTION_INIT);
+    // With +0x5B still set the menu's caller (main.dol 0x800D3538) runs the menu
+    // again by way of the boot logos instead of taking the next mode (seen in a run).
+    m.w8(GAME + GO_TO_MENU, 0);
+    if (m.r16(GAME + 0x64) as i16) < 4 {
+        guest_call(c, m, MENU_END, &[]);
+    }
+    c.r[3] = 1;
+}
+
 pub(crate) fn to_stage_select() {
     TO_STAGE_SELECT.set(true);
 }
@@ -347,6 +392,24 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
     }
     if TO_STAGE_SELECT.get() {
         stage_select_frame(c, m);
+    }
+    // MMO glue: the player never reaches the game's main menu (mob, 2026-11-24).
+    // Set once the menu module is fully linked (its .bss is there): set while it
+    // was still loading, the game stopped on its way to the menu (headless run).
+    // Taken off when the module goes: ChaoMain loads at the same address later.
+    let screens = match (module_section(m, ADVERTISE, 1), module_section(m, ADVERTISE, 6)) {
+        (Some(text), Some(_)) if STARTED.get() => text + MENU_SCREENS,
+        _ => 0,
+    };
+    let was = MENU_AT.replace(screens);
+    if was != screens {
+        if was != 0 {
+            c.rt.overrides.remove(&was);
+            c.rt.modules_changed();
+        }
+        if screens != 0 {
+            c.rt.set_override(screens, menu_screens);
+        }
     }
     if mode == MD_LEFT_STAGE && STARTED.get() && TO_STAGE_SELECT.get() {
         // The game's own way on from here is its title and menus. advertiseD's
@@ -773,6 +836,7 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32, which: &[usize]) {
         // Unverified beyond that: the meaning of +0x84.
         m.w8(param + 0x438, 1);
         m.w8(param + 0x84, 0xFF);
+        perfect_stats(m, param);
         for i in (0..0x34).step_by(4) {
             m.w32(elem + i, 0);
         }
@@ -818,7 +882,7 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32, which: &[usize]) {
     }
 }
 
-/// The residents never age or die (mob 2026-11-22), every frame. Their types
+/// The residents never age, evolve or die (mob 2026-11-22), every frame. Their types
 /// (0x17..0x19) are already outside the game's own life loss (AL_CalcParameter
 /// 0x2149C: the LifeMax decay only for types under 0x14, as for Chaos Chao;
 /// `old` still counts up) and evolution (0x1531C: a child, type 2, only). But the death
@@ -841,6 +905,23 @@ fn hold_residents(m: &mut Mem) {
         m.w16(param + 0x88, 0);
         m.w16(param + 0x8A, life);
         m.w16(param + 0x8C, life);
+        // Never evolving (mob 2026-11-24): growth (+0xC0, see GUIDE) at 0, far
+        // from the value 0x1531C starts the cocoon at, whatever the type.
+        m.w32(param + 0xC0, 0);
+        perfect_stats(m, param);
+    }
+}
+
+/// A resident's stats are the best the game's own rules give (mob 2026-11-24:
+/// "perfect"), so the garden's AI picks its able motions (the run by Run,
+/// 0x19F10; the top swim; flight): for Swim, Fly, Run, Power, Stamina, Luck
+/// and Intelligence, grade S (Abl +0x28 = 5), level 99 (Lev +0x30) and 3266
+/// points (Skill +0x38; chao_player's BEST_POINTS). Offsets: al_chao_info.h.
+fn perfect_stats(m: &mut Mem, param: u32) {
+    for i in 0..7 {
+        m.w8(param + 0x28 + i, 5);
+        m.w8(param + 0x30 + i, 99);
+        m.w16(param + 0x38 + 2 * i, 3266);
     }
 }
 
@@ -1232,6 +1313,15 @@ fn stage_select_table(rel: &[u8]) -> Option<Vec<(i32, i32)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_stage_select_is_ever_run_from_the_games_menu() {
+        // Back on the Stage Select leads to screen 1, the menu's init to 7, a fresh menu to 0.
+        assert!([0, 1, 2, 4, 7, 20].iter().all(|&s| leaves_menu(s, false)));
+        assert!(!leaves_menu(SCREEN_STAGE_SELECT, false));
+        // On the way in from the lobby exit the menu's first screens run.
+        assert!(!leaves_menu(7, true));
+    }
 
     /// Synthetic REL (test input only, not game data): module 7, section 1
     /// code with one relocation at 0x10246 to section 2 + 8, and two rows.
