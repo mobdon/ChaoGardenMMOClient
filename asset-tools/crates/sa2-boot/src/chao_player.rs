@@ -4821,7 +4821,6 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // the rider's B is its own move, not Pet (action 31). Each frame, as
         // the Chao's behaviours may enable touch again (AL_EnableTouch 0x5AB0).
         call(c, m, rt::sec(m, 60, 1) + AL_DISABLE_NADE, &[chao]);
-        collision_fit(m, chao);
         if addr == KNUX_EXEC { knux_rig::no_touch(c, m, chao); }
         // The Chao's gear (Shadow's and Knuckles's textures and models, for the
         // Air Shoes, the ball and the Hammer Gloves), once per stage, in every
@@ -4887,6 +4886,11 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             knuckles_rules(c, m, chao);
             knux_rig::run_style(c, m);
         }
+        // After physics_row: off the board it writes Metal Sonic's whole row, his land size with
+        // it, so the Chao's size set before it was lost in Sonic's and Shadow's stages
+        // (Radical Highway 2026-11-24: radius 4.0, height 10.0 all run; City Escape had the
+        // Chao's size only because it starts on the board).
+        collision_fit(m, chao);
         return;
     }
     tick(c, m, pos);
@@ -5453,7 +5457,12 @@ fn physics_row(m: &mut Mem) {
     let board = BOARD.with_borrow(|b| b.as_ref().is_some_and(|b| f <= b.0 + 2));
     // mob 2026-11-21: the board has its own physics. The game's row is
     // whatever it last wrote there (Metal's is ours), kept for the board.
-    let now: Vec<u32> = (0..0x84).step_by(4).map(|o| m.r32(obj2 + 0xC0 + o)).collect();
+    let mut now: Vec<u32> = (0..0x84).step_by(4).map(|o| m.r32(obj2 + 0xC0 + o)).collect();
+    // The three land sizes collision_fit sets are not the game's: his own again here, so a row
+    // is told from Metal's, and kept for the board, as the game wrote it.
+    if let Some((_, full)) = FULL_SIZE.get().filter(|o| o.0 == obj2) {
+        for (a, v) in [PW_RADIUS, PW_HEIGHT, PW_CENTRE].into_iter().zip(full) { now[((a - 0xC0) / 4) as usize] = v; }
+    }
     let metal = PHYSICS + 0x84 * METAL_ROW;
     let metal: Vec<u32> = (0..0x84).step_by(4).map(|o| m.r32(metal + o)).collect();
     let own = SONIC_ROW.with_borrow_mut(|r| {
