@@ -2934,7 +2934,12 @@ fn stride_lock(m: &mut Mem, chao: u32) {
     if !(len > 0.0) || !frame.is_finite() {
         return;
     }
-    let to = start + locked_phase((frame - start) / len, nframe / n, b) * len;
+    // On Sonic's run the Chao's run cycle is put a tenth of a cycle ahead of his: on the
+    // same phase its feet lifted when his did but went forward 6.5 of his 32 frames late
+    // (measured, SA2_FOOT_TRACE); a tenth splits that between lift and swing.
+    // SA2_STRIDE_PHASE=x (debug): another share of a cycle.
+    let ahead = if GAIT.get() == Some(Gait::Run) { std::env::var("SA2_STRIDE_PHASE").ok().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.1) } else { 0.0 };
+    let to = start + locked_phase((frame - start) / len, nframe / n + ahead, b) * len;
     m.w32(ctrl + 0x1C, to.to_bits());
     if std::env::var("SA2_TRACK_LOG").is_ok_and(|v| v == "1") {
         eprintln!("stride: chao motion {} frame {frame:.2} -> {to:.2} of {start:.0}..{end:.0}, rider frame {nframe:.2} of {n:.0}, blend {b:.2}", m.r32(ctrl + 4));
@@ -3153,20 +3158,15 @@ thread_local! {
     static FOOT_SAID: Cell<u32> = const { Cell::new(0) };
 }
 
-/// A foot node (6, 13) of the overlay on Sonic's run: besides the rider's
-/// foot rotation (skate_node), the foot is swung about its own node so the
-/// Chao's feet come to its centre line, lift and swing when his do (mob
-/// 2026-11-24: on Sonic's run his feet land on his centre line, one ahead of
-/// the other, while the Chao's stayed side by side). MMO adaptation, not game
-/// data and not in the hub (its overlay was rotation only): where his foot
-/// node is, relative to his root node and to its rest place, gives a target
-/// for the Chao's foot (skate::foot_target: sideways by the two stance
-/// widths, lift and swing by the two leg lengths), and the foot points at it
-/// from its node (skate::foot_swing). The node itself is never moved, so the
-/// shoe's top stays on the Chao; the shoes and their jets are drawn from the
-/// foot matrix written here and stay rigid on it.
-/// SA2_FOOT_POS=0 (debug): his turn only, as before. SA2_FOOT_SCALE=x: the
-/// leg scale. SA2_FOOT_TRACE=1: a line a foot a frame.
+/// A foot node (6, 13) of the overlay, after the rider's foot turn
+/// (skate_node). On Sonic's run that turn is replaced by its pitch alone
+/// (skate::foot_pitch); the foot node is never moved, so the shoe's top stays
+/// on the Chao as it does for Shadow's Air Shoes, and the shoes and their
+/// jets, drawn from the foot matrix, stay rigid on it. (Two earlier tries
+/// were taken out again, mob 2026-11-24: moving the foot to where his foot
+/// is took the boot tops off the body; leaning the foot toward it twisted
+/// the shoes.) SA2_FOOT_TRACE=1: a line a foot a frame, with where his foot
+/// would put the Chao's (skate::foot_target), for comparison only.
 fn foot_place(m: &mut Mem, i: usize, src: usize, own: &[[f32; 4]; 3], blend: f32) {
     let obj = RIDER_OBJ.get();
     if !(0x8000_0000..0x8C00_0000).contains(&obj) { return; }
@@ -3204,32 +3204,32 @@ fn foot_place(m: &mut Mem, i: usize, src: usize, own: &[[f32; 4]; 3], blend: f32
     let target = crate::skate::foot_target(now_p, rest_p, foot_rest, scale);
     let p = CHAO_PLACE.get();
     let r3 = |x: &[[f32; 4]; 3]| -> [[f32; 3]; 3] { std::array::from_fn(|a| std::array::from_fn(|b| x[a][b])) };
-    let (own_l, cur_l) = (inv_mul(&p, own), inv_mul(&p, &mtx(m, m.r32(NJ_CURRENT_MATRIX))));
+    let own_l = inv_mul(&p, own);
     // The foot's middle as the Chao's own motion has it, and the way to it after his turn.
     let own_foot: [f32; 3] = { let l = mv(&r3(&own_l), mid); std::array::from_fn(|k| own_l[k][3] + l[k]) };
     // The foot node never leaves the Chao's own foot point (mob 2026-11-24: "dont let the
-    // top of the shoe come off the point of the chao"): the foot and its shoe hang from it,
-    // as before, for both pairs of shoes. On Sonic's run the foot is also leant about that
-    // point toward the target (toward the centre line, lifted and swung when his are): his
-    // own leg swing, which his foot's turn already carries, is exchanged for the Chao's swing
-    // to its target, eased toward SA2_FOOT_SWING degrees at most (70). On
-    // Shadow's skate (the Air Shoes, or Shadow himself as the character) the foot takes his
-    // turn only, as before.
+    // top of the shoe come off the point of the chao"), for both pairs of shoes, and on
+    // Sonic's run the foot is not twisted: of his foot's turn only the pitch (toe up or
+    // down along the way it goes) is taken, eased toward SA2_FOOT_PITCH degrees at most
+    // (35); its turn to the side and its roll are left out, so the shoe never turns
+    // sideways or rolls under the body. SA2_FOOT_POS=0 (debug): his whole turn, as before.
+    // On Shadow's skate (the Air Shoes, or Shadow himself as the character) the foot takes
+    // his whole turn, as it always did.
     let obj2 = m.r32(P1_OBJ2);
     let sonic_run = (0x8000_0000..0x8C00_0000).contains(&obj2) && m.r8(obj2 + 1) == 0 && !shadow_style();
     let on = sonic_run && !std::env::var("SA2_FOOT_POS").is_ok_and(|v| v == "0");
-    let max = std::env::var("SA2_FOOT_SWING").ok().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(70.0).to_radians();
-    // His leg, hip joint to heel, at rest and now, in the Chao's axes.
-    let his_hip = SKEL.with_borrow(|s| (s.len() == 62).then(|| inv_mul(&s[0], &s[hip]))).map(|h| [h[0][3], h[1][3], h[2][3]]).unwrap_or(hip_p);
-    let leg = |heel: [f32; 3], hip: [f32; 3]| crate::chao_retarget::to_chao([heel[0] - hip[0], heel[1] - hip[1], heel[2] - hip[2]]);
-    let aim = crate::skate::foot_swing(lever_rest, std::array::from_fn(|k| target[k] - chao_p[k]), leg(rest_p, hip_p), leg(now_p, his_hip), max, blend);
-    if on {
+    let cap = std::env::var("SA2_FOOT_PITCH").ok().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(35.0).to_radians();
+    let rest_r = RIDER_REST.with_borrow(|r| r.as_ref().and_then(|(_, v)| v.get(src).copied()));
+    let pitch = rest_r.map(|rest| crate::skate::foot_pitch(&r3(&now), &rest, cap));
+    if let (true, Some(pitch)) = (on, pitch) {
         let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
-        let turned = crate::skate::mul(&aim, &r3(&cur_l));
+        let (sn, cs) = pitch.sin_cos();
+        let turn = crate::skate::mul(&[[1.0, 0.0, 0.0], [0.0, cs, -sn], [0.0, sn, cs]], &chao_r);
         for row in 0..3 {
             for col in 0..3 {
-                let v: f32 = (0..3).map(|k| p[row][k] * turned[k][col]).sum();
-                m.w32(cur_ptr + 4 * (4 * row + col) as u32, v.to_bits());
+                let v: f32 = (0..3).map(|k| p[row][k] * turn[k][col]).sum();
+                let own_v = own[row][col];
+                m.w32(cur_ptr + 4 * (4 * row + col) as u32, (own_v + (v - own_v) * blend).to_bits());
             }
         }
     }
@@ -3239,16 +3239,15 @@ fn foot_place(m: &mut Mem, i: usize, src: usize, own: &[[f32; 4]; 3], blend: f32
             FOOT_SAID.set(said | 1 << (i & 31));
             eprintln!("foot-rest: Chao node {i} rest {chao_p:?} foot middle {foot_rest:?} leg {chao_leg:.4} | rider node {src} rest {rest_p:?} hip node {hip} {hip_p:?} leg {his_leg:.4} | leg scale {scale:.4}");
         }
-        let rest_r = RIDER_REST.with_borrow(|r| r.as_ref().and_then(|(_, v)| v.get(src).copied()));
-        let chao_r = CHAO_REST.with_borrow(|r| r.as_ref().and_then(|r| r.worlds(&[]).get(i).map(|x| x.0)));
+        let chao_r = Some(chao_r);
         let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
         // The foot's middle from the matrix as it now stands (what the foot and its shoe are drawn with).
         let drawn_foot: [f32; 3] = { let c = inv_mul(&p, &cur); let l = mv(&r3(&c), mid); std::array::from_fn(|k| c[k][3] + l[k]) };
         let e = match (rest_r, chao_r) { (Some(a), Some(b)) => crate::skate::track(&r3(&now), &a, &r3(&inv_mul(&p, &cur)), &b).2, _ => f32::NAN };
         let (mot, mf) = RIDER_MOTION.get();
-        eprintln!("foot-trace: f{} node {i} motion {mot:#x} frame {mf:.2} blend {blend:.2} | his {now_p:?} | own {own_foot:?} | target {target:?} | drawn {drawn_foot:?} | rot {e:.2} | node moved {:.4}",
+        eprintln!("foot-trace: f{} node {i} motion {mot:#x} frame {mf:.2} blend {blend:.2} | his {now_p:?} | own {own_foot:?} | target {target:?} | drawn {drawn_foot:?} | rot {e:.2} | node moved {:.4} | pitch {:.1}",
             sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed),
-            (0..3).map(|k| { let c = inv_mul(&p, &cur); (c[k][3] - own_l[k][3]).powi(2) }).sum::<f32>().sqrt());
+            (0..3).map(|k| { let c = inv_mul(&p, &cur); (c[k][3] - own_l[k][3]).powi(2) }).sum::<f32>().sqrt(), pitch.unwrap_or(f32::NAN).to_degrees());
     }
 }
 
