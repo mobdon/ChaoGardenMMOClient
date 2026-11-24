@@ -363,3 +363,45 @@ fn a_lock_on_reticle_follows_the_3d_view() {
     // Fixed HUD still moves to its edge.
     assert!(close(ndc_x(&f.draws[3], lives), before.1 * k - (1.0 - k) * sa2_gx::widescreen::STEAM_EDGE));
 }
+
+#[test]
+fn text_over_a_centred_panel_stays_with_it() {
+    // The result screen: a panel half the screen wide in the middle, a label that starts just
+    // left of it and a number that ends just right of it; and the lives icon far from it.
+    // Moved to the screen edges, label and number hung out of the panel on both sides.
+    let mut gx = Gx::new();
+    gx.clear_vtx_desc();
+    gx.set_vtx_desc(attr::POS, attr_type::DIRECT);
+    gx.set_vtx_attr_fmt(0, attr::POS, comp_cnt::POS_XYZ, comp_type::F32, 0);
+    gx.set_viewport(0.0, 0.0, 640.0, 480.0, 0.0, 1.0);
+    let mem = Ram(&[]);
+    let quad = |gx: &mut Gx, x0: f32, x1: f32, y0: f32, y1: f32, z: f32| {
+        gx.begin(command::DRAW_QUADS, 0, 4);
+        for (x, y) in [(x0, y0), (x1, y0), (x1, y1), (x0, y1)] {
+            gx.position3f32(x, y, z);
+        }
+        gx.end(&mem);
+    };
+    gx.load_pos_mtx_imm(&[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, -10.0]], 0);
+    quad(&mut gx, -1.0, 1.0, -1.0, 1.0, 0.0);
+    gx.load_pos_mtx_imm(&HUD, 0);
+    quad(&mut gx, -160.0, -480.0, 100.0, 200.0, -1.0); // panel
+    quad(&mut gx, -130.0, -190.0, 110.0, 130.0, -1.0); // label over its left edge
+    quad(&mut gx, -470.0, -500.0, 110.0, 130.0, -1.0); // number over its right edge
+    quad(&mut gx, -30.0, -90.0, 420.0, 460.0, -1.0); // lives icon
+    let mut f = gx.take_frame();
+    for d in &mut f.draws {
+        d.projection = PERSP;
+    }
+    let at = [[-320.0, 150.0], [-160.0, 120.0], [-485.0, 120.0], [-60.0, 440.0]];
+    let x = |f: &Frame| -> Vec<f32> { f.draws[1..].iter().zip(at).map(|(d, p)| ndc_x(d, [p[0], p[1], -1.0])).collect() };
+    let before = x(&f);
+    assert!(before[1] < -1.0 / 3.0 && before[2] > 1.0 / 3.0, "outside the middle third: {before:?}");
+    widen(&mut f, 16.0 / 9.0);
+    let after = x(&f);
+    let k = 0.75;
+    for i in 0..3 {
+        assert!((after[i] - before[i] * k).abs() < 1e-4, "piece {i} keeps its place by the panel: {before:?} {after:?}");
+    }
+    assert!((after[3] - (before[3] * k - (1.0 - k) * sa2_gx::widescreen::STEAM_EDGE)).abs() < 1e-4, "the lives icon still goes to the edge");
+}

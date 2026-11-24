@@ -105,6 +105,7 @@ pub fn widen(frame: &mut Frame, aspect: f32) {
         .skip(first)
         .any(|d| is_hud(d) && spans(d) && d.material_params.texture_mappings[0].width >= 256.0);
     let centres = group_centres(frame, first);
+    let block = centred_block(&centres);
     // HUD drawn before the last 3D draw marks something in the scene (a
     // lock-on reticle at its target's screen spot): it follows the 3D view.
     let last_3d = frame
@@ -153,7 +154,14 @@ pub fn widen(frame: &mut Frame, aspect: f32) {
             continue;
         }
         // Where its group sits decides (a row of glyphs moves as one).
-        let c = centres.get(i).copied().flatten().unwrap_or((a + b) / 2.0);
+        let (c, span) = centres.get(i).copied().flatten().unwrap_or(((a + b) / 2.0, (a, b, top, bottom)));
+        // Text laid over a centred panel stays with the panel (the result screen's labels
+        // and numbers start and end at its edges: moved to the screen edges they hung
+        // out of it on both sides): a group whose middle is over the panels' width and
+        // that shares some height with them.
+        if block.is_some_and(|(l, r, t, btm)| (l..=r).contains(&c) && span.2 <= btm && span.3 >= t) {
+            continue;
+        }
         let edge = (1.0 - k) * STEAM_EDGE;
         let shift = if c < -1.0 / 3.0 {
             -edge
@@ -180,7 +188,7 @@ pub fn widen(frame: &mut Frame, aspect: f32) {
 /// row (overlapping vertically, at most a small gap apart) form one, such as
 /// the digits of a time or a label and its value. Anchoring by each glyph's
 /// own centre split "05:21:02" between the middle and the right edge.
-fn group_centres(frame: &Frame, first: usize) -> Vec<Option<f32>> {
+fn group_centres(frame: &Frame, first: usize) -> Vec<Option<(f32, (f32, f32, f32, f32))>> {
     const GAP: f32 = 0.12;
     let piece = |d: &DrawCmd| {
         extent(d).filter(|&(a, b, t, btm)| {
@@ -190,9 +198,9 @@ fn group_centres(frame: &Frame, first: usize) -> Vec<Option<f32>> {
     let mut out = vec![None; frame.draws.len()];
     let mut group: Vec<usize> = Vec::new();
     let mut span = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
-    let close = |g: &mut Vec<usize>, s: (f32, f32, f32, f32), out: &mut Vec<Option<f32>>| {
+    let close = |g: &mut Vec<usize>, s: (f32, f32, f32, f32), out: &mut Vec<Option<(f32, (f32, f32, f32, f32))>>| {
         for &j in g.iter() {
-            out[j] = Some((s.0 + s.1) / 2.0);
+            out[j] = Some(((s.0 + s.1) / 2.0, s));
         }
         g.clear();
     };
@@ -215,6 +223,23 @@ fn group_centres(frame: &Frame, first: usize) -> Vec<Option<f32>> {
     }
     close(&mut group, span, &mut out);
     out
+}
+
+/// The screen area of the centred HUD panels (min x, max x, min y, max y, normalised), widened
+/// by a group gap to each side: groups of pieces (a panel may be drawn in parts) between 30%
+/// and 80% of the 4:3 width whose middle is within 7.5% of the screen's. The result screen's
+/// two score panels are 68% wide. None without one.
+/// Shortcut: sizes read off the result screen, not a game value; a centred panel outside
+/// them keeps the old behaviour, add its size here when one turns up.
+fn centred_block(groups: &[Option<(f32, (f32, f32, f32, f32))>]) -> Option<(f32, f32, f32, f32)> {
+    const GAP: f32 = 0.12;
+    groups
+        .iter()
+        .flatten()
+        .filter(|&&(c, (a, b, _, _))| (0.6..=1.6).contains(&(b - a)) && c.abs() <= 0.15)
+        .fold(None, |acc: Option<(f32, f32, f32, f32)>, &(_, (a, b, t, btm))| {
+            Some(acc.map_or((a - GAP, b + GAP, t, btm), |(l, r, tt, bb)| (l.min(a - GAP), r.max(b + GAP), tt.min(t), bb.max(btm))))
+        })
 }
 
 /// Drawn with no view transform (vertices already in view space): 2D quads.
