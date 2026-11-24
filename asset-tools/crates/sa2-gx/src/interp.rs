@@ -1,7 +1,7 @@
 //! Frames between game frames: the game runs at 60 a second, a monitor may
 //! refresh faster. Each draw of the newest frame is matched to one of the
 //! frame before (same material, textures and vertex/index counts; among
-//! those, the nearest), and its position matrices, which carry both the
+//! those, the nearest, and no further than a frame's movement), and its position matrices, which carry both the
 //! object's and the camera's movement, are blended between the two. A draw
 //! with no match, or one that moved or turned too far in a frame (a camera
 //! cut, a teleport), shows as it is.
@@ -15,6 +15,9 @@ const JUMP: f32 = 400.0;
 /// A rotation/scale entry that changes more than this in one frame is a cut
 /// (the camera looking somewhere else), not a turn to smooth.
 const TURN: f32 = 0.5;
+/// See [`reach`]: view units a frame, and the share of the distance.
+const STEP: f32 = 16.0;
+const SWEEP: f32 = 0.25;
 /// How many same-looking draws of the frame before are compared to find the
 /// nearest (bounds the work for scenes with hundreds of copies).
 const CANDIDATES: usize = 48;
@@ -25,15 +28,33 @@ pub struct Tween {
     to: Vec<[Mtx34; 10]>,
 }
 
-fn key(d: &crate::api::DrawCmd) -> u64 {
+/// A draw's look: material and vertex/index counts, with its textures
+/// (`textures`) or without. An effect that steps through texture frames (a
+/// Chaos Chao's head flame, a jet) has other textures than it had a frame
+/// before; with them in the key its only match was another copy of the
+/// effect at that texture frame, somewhere else in the room, and the
+/// pictures in between showed it on the way there (2026-11-24: the flame
+/// off the head and about the room, only on displays above 60).
+fn key(d: &crate::api::DrawCmd, textures: bool) -> u64 {
     let mut h = crate::api::FastHasher::default();
     d.material.hash(&mut h);
     d.vertices.len().hash(&mut h);
     d.indices.len().hash(&mut h);
-    for m in &d.material_params.texture_mappings {
-        m.texture.hash(&mut h);
+    if textures {
+        for m in &d.material_params.texture_mappings {
+            m.texture.hash(&mut h);
+        }
     }
     h.finish()
+}
+
+/// The furthest a draw's place may be from its match's (squared): a fixed
+/// step plus a share of its distance from the camera, which is what a
+/// camera turn moves it by. Further is another object, not this one a frame
+/// earlier, and it shows as it is.
+fn reach(to: &[Mtx34; 10]) -> f32 {
+    let far: f32 = (0..3).map(|r| to[0][r][3].powi(2)).sum::<f32>().sqrt();
+    (STEP + SWEEP * far).powi(2)
 }
 
 /// How far the first matrix's translation moved (squared).
@@ -55,30 +76,42 @@ fn jumped(a: &[Mtx34; 10], b: &[Mtx34; 10]) -> bool {
 impl Tween {
     /// Match `cur`'s draws to `prev`'s.
     pub fn new(prev: &Frame, cur: &Frame) -> Self {
-        let mut by_key: FastMap<u64, Vec<usize>> = FastMap::default();
+        // By look with textures, and by look alone.
+        let mut by_key: [FastMap<u64, Vec<usize>>; 2] = Default::default();
         for (i, d) in prev.draws.iter().enumerate() {
-            by_key.entry(key(d)).or_default().push(i);
+            by_key[0].entry(key(d, true)).or_default().push(i);
+            by_key[1].entry(key(d, false)).or_default().push(i);
         }
+        let mut used = vec![false; prev.draws.len()];
         let to: Vec<[Mtx34; 10]> = cur.draws.iter().map(|d| d.draw_params.pos_mtx).collect();
         let from = cur
             .draws
             .iter()
             .zip(&to)
             .map(|(d, to)| {
-                let bucket = by_key.get_mut(&key(d))?;
                 // The nearest of the first candidates still unmatched, so a
                 // copy that vanished doesn't shift every later copy onto its
-                // neighbour.
-                let (k, _) = bucket
-                    .iter()
-                    .take(CANDIDATES)
-                    .enumerate()
-                    .filter_map(|(k, &i)| {
-                        Some((k, moved(&prev.draws.get(i)?.draw_params.pos_mtx, to)))
-                    })
-                    .min_by(|a, b| a.1.total_cmp(&b.1))?;
-                let i = bucket.remove(k);
-                let from = prev.draws.get(i)?.draw_params.pos_mtx;
+                // neighbour. Same textures first; the same look with other
+                // textures only when that one is nearer.
+                let nearest = |bucket: Option<&Vec<usize>>, used: &[bool]| {
+                    bucket?
+                        .iter()
+                        .filter(|&&i| !used[i])
+                        .take(CANDIDATES)
+                        .map(|&i| (i, moved(&prev.draws[i].draw_params.pos_mtx, to)))
+                        .min_by(|a, b| a.1.total_cmp(&b.1))
+                };
+                let same = nearest(by_key[0].get(&key(d, true)), &used);
+                let look = nearest(by_key[1].get(&key(d, false)), &used);
+                let (i, far) = match (same, look) {
+                    (Some(a), Some(b)) => if b.1 < a.1 { b } else { a },
+                    (a, b) => a.or(b)?,
+                };
+                if !(far <= reach(to)) {
+                    return None;
+                }
+                used[i] = true;
+                let from = prev.draws[i].draw_params.pos_mtx;
                 (!jumped(&from, to)).then_some(from)
             })
             .collect();
