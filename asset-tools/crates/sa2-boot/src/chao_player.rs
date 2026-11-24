@@ -2667,6 +2667,16 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
             record_hand(m, i, m.r32(NJ_CURRENT_MATRIX));
             track_log(m, i, &own);
             head_trace(m, i, &own);
+            if i == 7 || i == 8 {
+                tail_calm(m, i, i - 7, &own);
+            }
+            if i == 1 {
+                // The body: every other part hangs from it (head, arms, feet, tail).
+                if GAIT.get().is_some_and(|g| g != Gait::Run) && !std::env::var("SA2_BOB_CALM").is_ok_and(|v| v == "0") {
+                    tail_calm(m, i, 2, &own);
+                }
+                bob_calm(m);
+            }
             if let Some(k) = SHOES.iter().position(|s| s.0 == i) {
                 let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
                 FEET.with_borrow_mut(|f| f[k] = Some(cur));
@@ -3003,6 +3013,112 @@ fn skate_node(m: &mut Mem, i: usize, src: usize, w: f32, cap: f32) {
             m.w32(a, (own + (v - own) * b).to_bits());
         }
     }
+}
+
+thread_local! {
+    /// Per eased node (tail 7, 8; body 1): the frame, the rotation drawn and the motion's own rotation, last time.
+    static TAIL: std::cell::RefCell<[Option<(u64, [[f32; 3]; 3], [[f32; 3]; 3])>; 3]> = const { std::cell::RefCell::new([None, None, None]) };
+}
+
+/// The player's Chao's tail (nodes 7 and 8; no overlay): its own motion's
+/// turn is followed a quarter of the way a frame, in the Chao's placement.
+/// The Chao's cycle is kept on the character's stride (stride_lock), which
+/// plays its motion many times faster than the game does, and the tail
+/// whipped with it (mob 2026-11-24: "the chaos tail goes wild"); at the
+/// motion's own rate this lag is a few frames of a 30-frame swing.
+/// MMO glue. SA2_TAIL_CALM=0 (debug): as the motion has it; SA2_TAIL_K=x:
+/// the share a frame. SA2_FOOT_TRACE=1 logs each node's turn a frame.
+fn tail_calm(m: &mut Mem, i: usize, slot: usize, own: &[[f32; 4]; 3]) {
+    let p = CHAO_PLACE.get();
+    let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+    // The node as it stands now (its parent may already have been eased).
+    let l = inv_mul(&p, &mtx(m, cur_ptr));
+    let rot: [[f32; 3]; 3] = std::array::from_fn(|a| std::array::from_fn(|b| l[a][b]));
+    // Its size is the rest model's (no stretch from a motion's scale keys).
+    let rest = CHAO_REST.with_borrow(|r| r.as_ref().and_then(|r| r.worlds(&[]).get(i).map(|x| x.0)));
+    let len: [f32; 3] = std::array::from_fn(|j| { let of = rest.as_ref().unwrap_or(&rot); (0..3).map(|r| of[r][j] * of[r][j]).sum::<f32>().sqrt().max(1e-6) });
+    let own_len: [f32; 3] = std::array::from_fn(|j| (0..3).map(|r| rot[r][j] * rot[r][j]).sum::<f32>().sqrt());
+    let unit = crate::skate::unit(&rot);
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let prev = TAIL.with_borrow(|t| t[slot]).filter(|x| f.wrapping_sub(x.0) <= 2);
+    let k = std::env::var("SA2_TAIL_K").ok().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.25).clamp(0.0, 1.0);
+    let on = !std::env::var("SA2_TAIL_CALM").is_ok_and(|v| v == "0");
+    let drawn = match prev {
+        Some((_, was, _)) if on => {
+            // Part of the way from the last drawn turn to this one, made a rotation again.
+            let mix: [[f32; 3]; 3] = std::array::from_fn(|a| std::array::from_fn(|b| was[a][b] + (unit[a][b] - was[a][b]) * k));
+            let col = |j: usize| [mix[0][j], mix[1][j], mix[2][j]];
+            let norm = |v: [f32; 3]| { let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-6); [v[0] / n, v[1] / n, v[2] / n] };
+            let x = norm(col(0));
+            let y0 = col(1);
+            let d = x[0] * y0[0] + x[1] * y0[1] + x[2] * y0[2];
+            let y = norm([y0[0] - d * x[0], y0[1] - d * x[1], y0[2] - d * x[2]]);
+            let z = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]];
+            std::array::from_fn(|a| [x[a], y[a], z[a]])
+        }
+        _ => unit,
+    };
+    if on {
+        for row in 0..3 {
+            for c in 0..3 {
+                let v: f32 = (0..3).map(|q| p[row][q] * drawn[q][c] * len[c]).sum();
+                m.w32(cur_ptr + 4 * (4 * row + c) as u32, v.to_bits());
+            }
+        }
+    }
+    let o = inv_mul(&p, own);
+    let own_u = crate::skate::unit(&std::array::from_fn(|a| std::array::from_fn(|b| o[a][b])));
+    if std::env::var("SA2_FOOT_TRACE").is_ok_and(|v| v == "1") {
+        if let Some((_, was, own_was)) = prev {
+            eprintln!("tail-trace: f{f} node {i} chao motion {} own step {:.2} drawn step {:.2} own size {:.3} {:.3} {:.3} rest size {:.3} {:.3} {:.3}", LAST_MOTION.get(), crate::skate::angle_between(&own_u, &own_was), crate::skate::angle_between(&drawn, &was), own_len[0], own_len[1], own_len[2], len[0], len[1], len[2]);
+        }
+    }
+    TAIL.with_borrow_mut(|t| t[slot] = Some((f, drawn, own_u)));
+}
+
+thread_local! {
+    /// The body node's place in the Chao's placement as last drawn, and the frame (bob_calm).
+    static BOB: Cell<Option<(u64, [f32; 3])>> = const { Cell::new(None) };
+    static BOB_SAID: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The player's Chao on the hidden Sonic's stride (walk, jog, run without the
+/// Air Shoes): its own motion is played at his step rate, several times its
+/// own, and the whole Chao bounced at that rate, its head more than his
+/// (mob 2026-11-24: "the chaos head bounces as well"; measured up and down
+/// 0.20 / 0.36 / 0.41 Chao units in walk / jog / run against his head's 0.07
+/// / 0.10 / 0.25 at the Chao's size). The body node (1), which every other
+/// part hangs from, is followed part of the way a frame in place, and in his
+/// walk and jog in turn as well (tail_calm's easing), so the head, arms, feet
+/// and shoes keep their place on the Chao while the bounce is eased. MMO glue.
+/// SA2_BOB_CALM=0 (debug): as the motion has it; SA2_BOB_K=x: the share a frame (0.2).
+fn bob_calm(m: &mut Mem) {
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    if std::env::var("SA2_FOOT_TRACE").is_ok_and(|v| v == "1") && !BOB_SAID.replace(true) {
+        let parents = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| r.nodes.iter().map(|n| n.0).collect::<Vec<_>>()));
+        eprintln!("bob: Chao node parents {parents:?}");
+    }
+    let on = GAIT.get().is_some() && !std::env::var("SA2_BOB_CALM").is_ok_and(|v| v == "0");
+    let p = CHAO_PLACE.get();
+    let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+    let l = inv_mul(&p, &mtx(m, cur_ptr));
+    let now = [l[0][3], l[1][3], l[2][3]];
+    let prev = BOB.get().filter(|x| f.wrapping_sub(x.0) <= 2).map(|x| x.1);
+    let k = std::env::var("SA2_BOB_K").ok().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.2).clamp(0.0, 1.0);
+    let drawn: [f32; 3] = match prev {
+        Some(was) if on => std::array::from_fn(|a| was[a] + (now[a] - was[a]) * k),
+        _ => now,
+    };
+    if on {
+        for row in 0..3 {
+            let v: f32 = (0..3).map(|q| p[row][q] * drawn[q]).sum::<f32>() + p[row][3];
+            m.w32(cur_ptr + 4 * (4 * row + 3) as u32, v.to_bits());
+        }
+    }
+    if std::env::var("SA2_FOOT_TRACE").is_ok_and(|v| v == "1") {
+        eprintln!("bob-trace: f{f} chao motion {} own {now:?} drawn {drawn:?}", LAST_MOTION.get());
+    }
+    BOB.set(Some((f, drawn)));
 }
 
 /// SA2_FOOT_TRACE=1 (debug), a line a frame at the Chao's body (1) and head (14)
