@@ -117,6 +117,18 @@ pub fn foot_pitch(now: &M3, rest: &M3, cap: f32) -> f32 {
     cap * (pitch / cap).tanh()
 }
 
+/// The trailing foot's extra swing back, in degrees (owner's rule: 10 to 25
+/// while it stays on the Chao). `behind`: how far the rider's foot is behind
+/// its rest place, as a share of his full back reach (under 0: ahead). 0.4 of
+/// `max` once it is just behind (eased in over the first seventh of the
+/// reach, so it does not snap as the foot passes), rising to `max` at full reach.
+pub fn foot_back(behind: f32, max: f32) -> f32 {
+    let f = behind.clamp(0.0, 1.0);
+    let s = (f * 7.0).clamp(0.0, 1.0);
+    let s = s * s * (3.0 - 2.0 * s);
+    s * 0.4 * max + f * 0.6 * max
+}
+
 /// Degrees between two rotations (either may carry scale).
 pub fn angle_between(a: &M3, b: &M3) -> f32 {
     let d = mm(&unit(a), &tr(&unit(b)));
@@ -212,5 +224,13 @@ mod tests {
         let kick: M3 = [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]];
         let p = foot_pitch(&kick, &id, 35f32.to_radians()).to_degrees().abs();
         assert!(p < 35.0 && p > 30.0, "{p}");
+    }
+    #[test]
+    fn foot_back_is_ten_to_twenty_five_degrees_behind_only() {
+        assert_eq!(foot_back(-0.3, 25.0), 0.0, "ahead");
+        assert_eq!(foot_back(0.0, 25.0), 0.0, "level");
+        assert!((foot_back(0.15, 25.0) - 12.25).abs() < 0.01, "just behind: 10 and a little");
+        assert!((foot_back(1.0, 25.0) - 25.0).abs() < 1e-4 && (foot_back(2.0, 25.0) - 25.0).abs() < 1e-4, "full reach");
+        assert!(foot_back(0.02, 25.0) < 1.0, "eased in");
     }
 }

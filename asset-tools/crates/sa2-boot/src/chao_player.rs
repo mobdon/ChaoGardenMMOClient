@@ -2676,6 +2676,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
                     tail_calm(m, i, 2, &own);
                 }
                 bob_calm(m);
+                BODY.set(Some((own, mtx(m, m.r32(NJ_CURRENT_MATRIX)))));
             }
             if let Some(k) = SHOES.iter().position(|s| s.0 == i) {
                 let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
@@ -3082,6 +3083,11 @@ fn tail_calm(m: &mut Mem, i: usize, slot: usize, own: &[[f32; 4]; 3]) {
 }
 
 thread_local! {
+    /// The body node (1) of this draw: as the Chao's own motion has it, and as drawn (overlay, easing).
+    static BODY: Cell<Option<([[f32; 4]; 3], [[f32; 4]; 3])>> = const { Cell::new(None) };
+}
+
+thread_local! {
     /// The body node's place in the Chao's placement as last drawn, and the frame (bob_calm).
     static BOB: Cell<Option<(u64, [f32; 3])>> = const { Cell::new(None) };
     static BOB_SAID: Cell<bool> = const { Cell::new(false) };
@@ -3167,6 +3173,12 @@ thread_local! {
 /// is took the boot tops off the body; leaning the foot toward it twisted
 /// the shoes.) SA2_FOOT_TRACE=1: a line a foot a frame, with where his foot
 /// would put the Chao's (skate::foot_target), for comparison only.
+/// Of a turn in the Chao's axes (it faces +z, y up): how far it turns the forward
+/// axis to the side (degrees, about y) and how far it rolls the side axis (about z).
+fn side_roll(d: &[[f32; 3]; 3]) -> (f32, f32) {
+    (d[0][2].atan2(d[2][2]).to_degrees(), d[1][0].atan2(d[0][0]).to_degrees())
+}
+
 fn foot_place(m: &mut Mem, i: usize, src: usize, own: &[[f32; 4]; 3], blend: f32) {
     let obj = RIDER_OBJ.get();
     if !(0x8000_0000..0x8C00_0000).contains(&obj) { return; }
@@ -3221,6 +3233,34 @@ fn foot_place(m: &mut Mem, i: usize, src: usize, own: &[[f32; 4]; 3], blend: f32
     let cap = std::env::var("SA2_FOOT_PITCH").ok().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(35.0).to_radians();
     let rest_r = RIDER_REST.with_borrow(|r| r.as_ref().and_then(|(_, v)| v.get(src).copied()));
     let pitch = rest_r.map(|rest| crate::skate::foot_pitch(&r3(&now), &rest, cap));
+    // Owner's rule (mob 2026-11-24): "bring the back foot further back while keeping it on
+    // the chao, like 10-25 degrees". While his foot trails (his heel behind its rest place;
+    // he faces -x), the shoe is swung back about the Chao's foot point by 10 degrees when
+    // it is just behind, up to SA2_FOOT_BACK (25) at his full back reach (0.8 of his leg),
+    // in the plane it travels in only, eased in over the first seventh of that reach.
+    let back_max = std::env::var("SA2_FOOT_BACK").ok().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(25.0);
+    let back = crate::skate::foot_back((now_p[0] - rest_p[0]) / (0.8 * his_leg), back_max).to_radians();
+    // The two are one turn about the Chao's side axis (toe down = sole back); together at most 60 degrees.
+    let pitch = pitch.map(|p| (p + back).min(60f32.to_radians()));
+    // The feet hang from the body node, and on his run the body takes his torso's turn
+    // (up to 24 degrees, with its twist and roll): the foot points swung round with it,
+    // one forward and one back, one up and one down, in his rhythm (mob 2026-11-24:
+    // "ur twisting the feet side to side"). On Sonic's run the foot point is put back
+    // where the Chao's own motion has it under the body: the body's drawn turn is
+    // taken out of the foot's place, its drawn position kept. SA2_FOOT_SWAY=1 (debug):
+    // left as the body carries it.
+    let body = BODY.get();
+    let sway = std::env::var("SA2_FOOT_SWAY").is_ok_and(|v| v == "1");
+    if let (true, false, Some((body_own, body_drawn))) = (on, sway, body) {
+        let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+        let cur = mtx(m, cur_ptr);
+        let back = crate::skate::mul(&r3(&body_own), &crate::skate::inv(&r3(&body_drawn)));
+        let d: [f32; 3] = std::array::from_fn(|k| cur[k][3] - body_drawn[k][3]);
+        for row in 0..3 {
+            let v: f32 = (0..3).map(|k| back[row][k] * d[k]).sum::<f32>() + body_drawn[row][3];
+            m.w32(cur_ptr + 4 * (4 * row + 3) as u32, (cur[row][3] + (v - cur[row][3]) * blend).to_bits());
+        }
+    }
     if let (true, Some(pitch)) = (on, pitch) {
         let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
         let (sn, cs) = pitch.sin_cos();
@@ -3245,9 +3285,14 @@ fn foot_place(m: &mut Mem, i: usize, src: usize, own: &[[f32; 4]; 3], blend: f32
         let drawn_foot: [f32; 3] = { let c = inv_mul(&p, &cur); let l = mv(&r3(&c), mid); std::array::from_fn(|k| c[k][3] + l[k]) };
         let e = match (rest_r, chao_r) { (Some(a), Some(b)) => crate::skate::track(&r3(&now), &a, &r3(&inv_mul(&p, &cur)), &b).2, _ => f32::NAN };
         let (mot, mf) = RIDER_MOTION.get();
-        eprintln!("foot-trace: f{} node {i} motion {mot:#x} frame {mf:.2} blend {blend:.2} | his {now_p:?} | own {own_foot:?} | target {target:?} | drawn {drawn_foot:?} | rot {e:.2} | node moved {:.4} | pitch {:.1}",
+        eprintln!("foot-trace: f{} node {i} motion {mot:#x} frame {mf:.2} blend {blend:.2} | his {now_p:?} | own {own_foot:?} | target {target:?} | drawn {drawn_foot:?} | rot {e:.2} | node moved {:.4} | pitch {:.1} back {:.1} | foot turn from rest: side {:.1} roll {:.1} | node at {:?} | body turn added: side {:.1} roll {:.1}",
             sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed),
-            (0..3).map(|k| { let c = inv_mul(&p, &cur); (c[k][3] - own_l[k][3]).powi(2) }).sum::<f32>().sqrt(), pitch.unwrap_or(f32::NAN).to_degrees());
+            (0..3).map(|k| { let c = inv_mul(&p, &cur); (c[k][3] - own_l[k][3]).powi(2) }).sum::<f32>().sqrt(), pitch.unwrap_or(f32::NAN).to_degrees(), back.to_degrees(),
+            side_roll(&crate::skate::mul(&crate::skate::unit(&r3(&inv_mul(&p, &cur))), &crate::skate::inv(&crate::skate::unit(&chao_r.unwrap())))).0,
+            side_roll(&crate::skate::mul(&crate::skate::unit(&r3(&inv_mul(&p, &cur))), &crate::skate::inv(&crate::skate::unit(&chao_r.unwrap())))).1,
+            { let c = inv_mul(&p, &cur); [c[0][3], c[1][3], c[2][3]] },
+            body.map(|(o, d)| side_roll(&crate::skate::mul(&crate::skate::unit(&r3(&inv_mul(&p, &d))), &crate::skate::inv(&crate::skate::unit(&r3(&inv_mul(&p, &o))))))).unwrap_or((f32::NAN, f32::NAN)).0,
+            body.map(|(o, d)| side_roll(&crate::skate::mul(&crate::skate::unit(&r3(&inv_mul(&p, &d))), &crate::skate::inv(&crate::skate::unit(&r3(&inv_mul(&p, &o))))))).unwrap_or((f32::NAN, f32::NAN)).1);
     }
 }
 
