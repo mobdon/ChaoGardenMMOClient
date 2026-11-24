@@ -85,11 +85,16 @@ pub fn rig_limits(node: usize, weight: f32, cap_deg: f32, limit_body: bool, limi
     if full { (1.0, 180.0) } else { (weight, cap_deg) }
 }
 
-/// The Chao node's desired world rotation (Chao model space).
-pub fn desired(now: &M3, rest: &M3, chao_rest: &M3, weight: f32, cap_deg: f32) -> M3 {
+/// The rider node's turn from its rest, in the Chao's facing.
+fn rider_turn(now: &M3, rest: &M3) -> M3 {
     // SA2_SKATE_A=-1 (debug): the opposite quarter turn, to check the facing.
     let a = if std::env::var("SA2_SKATE_A").is_ok_and(|v| v == "-1") { tr(&A) } else { A };
-    let d = mm(&mm(&a, &mm(&unit(now), &tr(&unit(rest)))), &tr(&a));
+    mm(&mm(&a, &mm(&unit(now), &tr(&unit(rest)))), &tr(&a))
+}
+
+/// The Chao node's desired world rotation (Chao model space).
+pub fn desired(now: &M3, rest: &M3, chao_rest: &M3, weight: f32, cap_deg: f32) -> M3 {
+    let d = rider_turn(now, rest);
     let cap = cap_deg.to_radians();
     let d = scale_angle(&d, |a| (a * weight).min(cap));
     mm(&d, chao_rest)
@@ -98,7 +103,9 @@ pub fn desired(now: &M3, rest: &M3, chao_rest: &M3, weight: f32, cap_deg: f32) -
 /// Degrees between two rotations (either may carry scale).
 pub fn angle_between(a: &M3, b: &M3) -> f32 {
     let d = mm(&unit(a), &tr(&unit(b)));
-    ((d[0][0] + d[1][1] + d[2][2] - 1.0) / 2.0).clamp(-1.0, 1.0).acos().to_degrees()
+    // atan2 of sine and cosine: acos alone is noisy near 0 (identical rotations read ~0.03).
+    let s = ((d[2][1] - d[1][2]).powi(2) + (d[0][2] - d[2][0]).powi(2) + (d[1][0] - d[0][1]).powi(2)).sqrt() / 2.0;
+    s.atan2((d[0][0] + d[1][1] + d[2][2] - 1.0) / 2.0).to_degrees()
 }
 
 /// For the tracking log, in degrees: the rider node's turn from its rest (in
@@ -106,7 +113,7 @@ pub fn angle_between(a: &M3, b: &M3) -> f32 {
 /// between those two turns (0 = the Chao node tracks the rider node 1:1).
 pub fn track(now: &M3, rest: &M3, chao_now: &M3, chao_rest: &M3) -> (f32, f32, f32) {
     let id: M3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-    let ds = mm(&mm(&A, &mm(&unit(now), &tr(&unit(rest)))), &tr(&A));
+    let ds = rider_turn(now, rest);
     let dc = mm(&unit(chao_now), &tr(&unit(chao_rest)));
     (angle_between(&ds, &id), angle_between(&dc, &id), angle_between(&ds, &dc))
 }
@@ -127,6 +134,7 @@ mod tests {
         let now = mm(&scale_angle(&[[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]], |_| 0.5), &rest);
         let chao_rest: M3 = [[0.0, 0.0, 2.0], [0.0, 2.0, 0.0], [-2.0, 0.0, 0.0]]; // carries scale
         let d = desired(&now, &rest, &chao_rest, 1.0, 180.0);
+        assert!(angle_between(&d, &d) < 1e-4, "identical rotations read 0");
         let (s, c, e) = track(&now, &rest, &d, &chao_rest);
         assert!((s - 0.5f32.to_degrees()).abs() < 0.01 && (c - s).abs() < 0.01 && e < 0.01, "{s} {c} {e}");
         // Capped at 10 degrees: the Chao node turns 10, the error is the rest.

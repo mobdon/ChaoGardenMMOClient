@@ -569,7 +569,11 @@ pub(crate) fn go_area(area: u32) {
 /// Until 2026-11-23 Shadow himself (character 1) rode here.
 /// SA2_CHAO_RIDER=n overrides (debug; 1 = Shadow).
 fn rider() -> u32 {
-    std::env::var("SA2_CHAO_RIDER").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0)
+    let Ok(v) = std::env::var("SA2_CHAO_RIDER") else { return 0 };
+    v.trim().parse().unwrap_or_else(|_| {
+        eprintln!("start-stage: SA2_CHAO_RIDER={v:?} is not a number; riding Sonic (0)");
+        0
+    })
 }
 
 /// The game's own egg at the player's feet, with guest scratch for the gene
