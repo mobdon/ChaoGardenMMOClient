@@ -2665,6 +2665,25 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
             record_hand(m, i, m.r32(NJ_CURRENT_MATRIX));
             track_log(m, i, &own);
             head_trace(m, i, &own);
+            if (i == 6 || i == 13) && std::env::var("SA2_FOOT_TRACE").is_ok_and(|v| v == "1") {
+                // SA2_FOOT_TRACE=1 (debug): each foot as drawn, in every gait (foot-trace has the run only):
+                // its turn from the rest model in the Chao's placement, and what the body's drawn turn adds.
+                let r3 = |x: &[[f32; 4]; 3]| -> [[f32; 3]; 3] { std::array::from_fn(|a| std::array::from_fn(|b| x[a][b])) };
+                let p = CHAO_PLACE.get();
+                let rest = CHAO_REST.with_borrow(|r| r.as_ref().and_then(|r| r.worlds(&[]).get(i).map(|x| x.0)));
+                if let Some(rest) = rest {
+                    let turn = |x: &[[f32; 4]; 3]| crate::skate::mul(&crate::skate::unit(&r3(&inv_mul(&p, x))), &crate::skate::inv(&crate::skate::unit(&rest)));
+                    let (d, o) = (turn(&mtx(m, m.r32(NJ_CURRENT_MATRIX))), turn(&own));
+                    // The side turn read from the side axis (skate::foot_twist's way): it holds when the foot is pitched steeply.
+                    let yaw = |t: &[[f32; 3]; 3]| (-t[2][0]).atan2(t[0][0]).to_degrees();
+                    let body = BODY.get().map(|(bo, bd, _)| side_roll(&crate::skate::mul(&crate::skate::unit(&r3(&inv_mul(&p, &bd))), &crate::skate::inv(&crate::skate::unit(&r3(&inv_mul(&p, &bo)))))));
+                    eprintln!("foot-drawn: f{} node {i} chao motion {} blend {blend:.2} | drawn side {:.1} roll {:.1} pitch {:.1} | own motion side {:.1} roll {:.1} pitch {:.1} | body added side {:.1} roll {:.1}",
+                        sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), LAST_MOTION.get(),
+                        yaw(&d), side_roll(&d).1, (-d[1][2]).atan2(d[2][2]).to_degrees(),
+                        yaw(&o), side_roll(&o).1, (-o[1][2]).atan2(o[2][2]).to_degrees(),
+                        body.map_or(f32::NAN, |b| b.0), body.map_or(f32::NAN, |b| b.1));
+                }
+            }
             if i == 7 || i == 8 {
                 let k = std::env::var("SA2_TAIL_K").ok().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.25);
                 tail_calm(m, i, i - 7, &own, k);
