@@ -2065,6 +2065,7 @@ fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
         LEVEL_RIG.set(false);
         BOARD_PLACE.set(None);
         NATIVE_DRAW.set(false);
+        knux_rig::hit_log(m, c.r[3]);
         // The gear from the feet and hands this native draw just recorded.
         let t = std::env::var("SA2_GEAR_TEST").unwrap_or_default();
         if !t.contains('g') { hammer_gloves(c, m); }
@@ -2744,6 +2745,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
                 eprintln!("head-node: node {i} model {:#x} own det {:.3} at [{:.2} {:.2} {:.2}] drawn det {:.3} at [{:.2} {:.2} {:.2}] flags {:#x}", m.r32(c.r[3].wrapping_add(4)), det(&o), o[0][3], o[1][3], o[2][3], det(&x), x[0][3], x[1][3], x[2][3], m.r32(c.r[3]));
             }
             record_hand(m, i, m.r32(NJ_CURRENT_MATRIX));
+            knux_rig::hit_node(m, i);
             track_log(m, i, &own);
             head_trace(m, i, &own);
             if i == 7 || i == 8 {
@@ -4358,6 +4360,8 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
 thread_local! {
     /// The hidden character's own land collision size (player work, its three words), to put back.
     static FULL_SIZE: Cell<Option<(u32, [u32; 3])>> = const { Cell::new(None) };
+    /// His body hit shape's own three sizes (his collision table's first entry), to put back.
+    static FULL_BODY: Cell<Option<(u32, [u32; 3])>> = const { Cell::new(None) };
 }
 
 /// The Chao's land collision size from its own move work (as ChaoMain set it
@@ -4374,11 +4378,24 @@ const PW_HEIGHT: u32 = 0x134;
 const PW_CENTRE: u32 = 0x140;
 
 /// The size the hidden character collides with the land at, for a Chao of
-/// this size: the Chao's radius and height, and the centre height at the
-/// same share of the height as his own (the Chao has no such number).
-pub(crate) fn fitted_size(chao_radius: f32, chao_height: f32, his: [f32; 3]) -> Option<[f32; 3]> {
+/// this size: the Chao's radius and height, and for the centre height the
+/// height of the Chao's own body collision's centre (`chao_centre`, 2.0), or
+/// without one the same share of the height as his own.
+pub(crate) fn fitted_size(chao_radius: f32, chao_height: f32, chao_centre: Option<f32>, his: [f32; 3]) -> Option<[f32; 3]> {
     let ok = chao_radius > 0.1 && chao_radius < his[0] && chao_height > 0.1 && chao_height < his[1] && his[1] > 0.0;
-    ok.then(|| [chao_radius, chao_height, chao_height * his[2] / his[1]])
+    ok.then(|| [chao_radius, chao_height, chao_centre.filter(|c| *c > 0.0 && *c < chao_height).unwrap_or(chao_height * his[2] / his[1])])
+}
+
+/// The Chao's body collision entry (its collision table, 0x30 bytes an entry: kind at +0,
+/// centre at +8, sizes a b c at +0x14; the body is kind 129: centre (0, 2, 0), sizes 1.5,
+/// 2.5, 0.7 on the test copy): its centre height and its three sizes.
+fn chao_body_shape(m: &Mem, chao: u32) -> Option<(f32, [u32; 3])> {
+    let cw = m.r32(chao + 0x34);
+    let cwp = if cw == 0 { 0 } else { m.r32(cw + 0x2C) };
+    if !(0x8000_0000..0x8C00_0000).contains(&cwp) { return None; }
+    let (info, n) = (m.r32(cwp + 0xC), u32::from(m.r16(cwp + 0xA)).clamp(1, 8));
+    if !(0x8000_0000..0x8C00_0000).contains(&info) { return None; }
+    (0..n).map(|k| info + 0x30 * k).find(|&e| m.r8(e) == 129).map(|e| (f32::from_bits(m.r32(e + 0xC)), [m.r32(e + 0x14), m.r32(e + 0x18), m.r32(e + 0x1C)]))
 }
 
 /// MMO rule (mob 2026-11-24: "need shrunk but his jump and dig need to be as
@@ -4398,10 +4415,25 @@ fn collision_fit(m: &mut Mem, chao: u32) {
         None => { let o = at.map(|a| m.r32(obj2 + a)); FULL_SIZE.set(Some((obj2, o))); o }
     };
     let f = |m: &Mem, a: u32| f32::from_bits(m.r32(a));
-    let fit = fitted_size(f(m, mw + CHAO_MOVE_RADIUS), f(m, mw + CHAO_MOVE_HEIGHT), full.map(f32::from_bits));
+    let body = chao_body_shape(m, chao);
+    let fit = fitted_size(f(m, mw + CHAO_MOVE_RADIUS), f(m, mw + CHAO_MOVE_HEIGHT), body.map(|b| b.0), full.map(f32::from_bits));
     let use_full = std::env::var("SA2_FULL_SIZE").is_ok_and(|v| v == "1");
     let size = match fit { Some(s) if !use_full => s.map(f32::to_bits), _ => full };
     for (a, v) in at.into_iter().zip(size) { m.w32(obj2 + a, v); }
+    // His body's hit shape (the first entry of his collision table: his own sizes 4.0, 4.0,
+    // 0.65, at his position plus the centre height above): the Chao's own body sizes, so
+    // what is hit is what is seen. His other four spheres (8.0, 4.5, 2.75, 30.0: attack
+    // and pick-up reaches, not told apart yet) stay his.
+    let his_cwp = { let t = m.r32(0x801E_7768); if (0x8000_0000..0x8C00_0000).contains(&t) { m.r32(t + 0x2C) } else { 0 } };
+    let his_body = if (0x8000_0000..0x8C00_0000).contains(&his_cwp) { m.r32(his_cwp + 0xC) } else { 0 };
+    if (0x8000_0000..0x8C00_0000).contains(&his_body) {
+        let own = match FULL_BODY.get().filter(|o| o.0 == his_body) {
+            Some(o) => o.1,
+            None => { let o = [0x14, 0x18, 0x1C].map(|a| m.r32(his_body + a)); FULL_BODY.set(Some((his_body, o))); o }
+        };
+        let shape = match (body, fit) { (Some(b), Some(_)) if !use_full => b.1, _ => own };
+        for (a, v) in [0x14, 0x18, 0x1C].into_iter().zip(shape) { m.w32(his_body + a, v); }
+    }
     if SIZE_SAID.replace(obj2) != obj2 {
         eprintln!("chao-player size: his land collision radius {:.2} height {:.2} centre {:.2} -> {:?} (Chao move work {:.2} {:.2})", f32::from_bits(full[0]), f32::from_bits(full[1]), f32::from_bits(full[2]), size.map(f32::from_bits), f(m, mw + CHAO_MOVE_RADIUS), f(m, mw + CHAO_MOVE_HEIGHT));
     }
@@ -4420,6 +4452,7 @@ thread_local! {
 fn drop_stage_loads() {
     knux_rig::RUN_TABLES.set(None);
     FULL_SIZE.set(None);
+    FULL_BODY.set(None);
     RIDER_REST.set(None);
     RIDER_OBJ.set(0);
     GEAR_LOAD_AT.set(sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) + GEAR_LOAD_DELAY);
@@ -5801,13 +5834,16 @@ mod tests {
     #[test]
     fn the_hidden_character_takes_the_chaos_size_and_nothing_else() {
         // Knuckles 4.0 / 11.4 / 5.7 with a Chao of 1.5 / 3.0: centre at the same share of the height.
-        let s = super::fitted_size(1.5, 3.0, [4.0, 11.4, 5.7]).unwrap();
+        let s = super::fitted_size(1.5, 3.0, None, [4.0, 11.4, 5.7]).unwrap();
         assert_eq!((s[0], s[1]), (1.5, 3.0));
         assert!((s[2] - 1.5).abs() < 1e-5);
+        // With the Chao's own body collision centre (2.0): that height.
+        assert_eq!(super::fitted_size(1.5, 3.0, Some(2.0), [4.0, 11.4, 5.7]).unwrap()[2], 2.0);
+        assert!((super::fitted_size(1.5, 3.0, Some(9.0), [4.0, 11.4, 5.7]).unwrap()[2] - 1.5).abs() < 1e-5);
         // Not a size: left as it is.
-        assert_eq!(super::fitted_size(0.0, 3.0, [4.0, 11.4, 5.7]), None);
-        assert_eq!(super::fitted_size(9.0, 3.0, [4.0, 11.4, 5.7]), None);
-        assert_eq!(super::fitted_size(1.5, 30.0, [4.0, 11.4, 5.7]), None);
+        assert_eq!(super::fitted_size(0.0, 3.0, None, [4.0, 11.4, 5.7]), None);
+        assert_eq!(super::fitted_size(9.0, 3.0, None, [4.0, 11.4, 5.7]), None);
+        assert_eq!(super::fitted_size(1.5, 30.0, None, [4.0, 11.4, 5.7]), None);
     }
     #[test]
     fn second_jump_press_in_the_air_is_the_flight() {
