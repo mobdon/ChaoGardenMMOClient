@@ -3518,6 +3518,7 @@ fn skate_blend(step: bool) -> f32 {
         let target = match GAIT.get() {
             // His walk and jog: the Chao's own motion alone.
             Some(g) => if g == Gait::Run { 1.0f32 } else { 0.0 },
+            None if RUN_SKATE_ONLY.get() => 0.0,
             None => if MOVING.get() && (LAST_MOTION.get() == 119 || (!run_only && LAST_MOTION.get() == 578)) { 1.0f32 } else { 0.0 },
         };
         let p = SKATE_PROGRESS.get();
@@ -3530,6 +3531,7 @@ fn skate_blend(step: bool) -> f32 {
 
 thread_local! {
     static SKATE_PROGRESS: Cell<f32> = const { Cell::new(0.0) };
+    static RUN_SKATE_ONLY: Cell<bool> = const { Cell::new(false) };
 }
 
 thread_local! {
@@ -4892,12 +4894,22 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             // look follows the hidden Sonic's own state (gait): the Chao's own
             // walk in his walk, its own run in his jog, and his run laid over
             // it only in his run. Speeds and change points are his.
+            // The Air Shoes too (mob's rule: "at running speed Air Shoes skate with
+            // jets", none while standing, walking or jogging): before 2026-11-24 the
+            // skate lay over every step, and in his walk and jog states that is
+            // Shadow's slow glide, both feet side by side under the body with the
+            // jets lit (mob: "feet still slide together they dont skate"). His
+            // stride only comes with his run states (8 to 10). Sonic's own speeds
+            // in Chao World keep him below those for most of a room.
+            // SA2_SKATE_ALWAYS=1 (debug): the skate over every step, as before.
             // A frame or two without ground covered (a turn on the spot, a
             // bump) is not a stop: the gait holds for 6 frames.
             let still = if d >= 0.01 { 0 } else { STILL.get().saturating_add(1) };
             STILL.set(still);
-            let gait = ((me || addr == KNUX_EXEC) && own_state.is_none() && (d >= 0.01 || (GAIT.get().is_some() && still < 6)) && (addr == KNUX_EXEC || !shadow_style())).then(|| gait(u32::from(m.r16(m.r32(P1_OBJ2).wrapping_add(OBJ2_ACTION))))).flatten();
+            let gait = ((me || addr == KNUX_EXEC) && own_state.is_none() && (d >= 0.01 || (GAIT.get().is_some() && still < 6)) && (addr == KNUX_EXEC || !shadow_style() || !std::env::var("SA2_SKATE_ALWAYS").is_ok_and(|v| v == "1"))).then(|| gait(u32::from(m.r16(m.r32(P1_OBJ2).wrapping_add(OBJ2_ACTION))))).flatten();
             GAIT.set(gait);
+            // Chao World, the player's own Chao: no skate outside his run states (a push against a wall).
+            RUN_SKATE_ONLY.set(chao_world(m) && me && !std::env::var("SA2_SKATE_ALWAYS").is_ok_and(|v| v == "1"));
             let want = if let Some(mo) = own_state { mo } else if addr == KNUX_EXEC && OWN_MOTION.get() { last } else if let Some(g) = gait.filter(|_| !on_board) { g.motion() } else if addr == KNUX_EXEC { knux_rig::under_motion(still, last) } else if d < 0.01 || on_board { 0 } else if d >= if last == 119 { 0.9 } else { 1.0 } { 119 } else { 578 };
             if want != last {
                 call(c, m, rt::sec(m, 60, 1) + AL_SET_MOTION_LINK, &[chao, want]);
