@@ -2791,6 +2791,69 @@ thread_local! {
     static RIDER_MOTION: Cell<(u32, f32)> = const { Cell::new((0, 0.0)) };
 }
 
+/// The hidden Sonic's ground states by his own animation number (his action
+/// table rows), as seen in a speed ramp with his own physics row: 6 his walk
+/// (from a stand), 7 his jog (from 0.34 a frame), 8 his run (from 1.27), 9
+/// his fastest run (from 2.18), 10 above that.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Gait { Walk, Jog, Run }
+
+pub(crate) fn gait(his_action: u32) -> Option<Gait> {
+    match his_action {
+        6 => Some(Gait::Walk),
+        7 => Some(Gait::Jog),
+        8..=10 => Some(Gait::Run),
+        _ => None,
+    }
+}
+
+impl Gait {
+    /// The Chao's own motion under it: its walk (578 alm_aruki_ncz) and its run (119 alm_run).
+    fn motion(self) -> u32 {
+        if self == Gait::Walk { 578 } else { 119 }
+    }
+}
+
+thread_local! {
+    static GAIT: Cell<Option<Gait>> = const { Cell::new(None) };
+}
+
+// The Chao's own walk and run are played at their own rate: one cycle of its
+// run moves a foot 0.47 units in 30 frames (0.016 a frame, measured with
+// SA2_GAIT_LOG), against 0.34 to 3 a frame on the ground at his speeds, so no
+// playback rate keeps its feet on the ground it covers.
+
+/// SA2_GAIT_LOG=1 (debug), a line a frame in Chao World: the hidden
+/// character's animation state and forward speed, the ground covered, the
+/// Chao's motion and frame, the overlay's share, and how far the Chao's
+/// facing (the shared chao_yaw of his yaw, as it is drawn) is off the way it
+/// actually travelled, in degrees.
+fn gait_log(m: &Mem, chao: u32, data1: u32, moved: [f32; 2]) {
+    if !std::env::var("SA2_GAIT_LOG").is_ok_and(|v| v == "1") {
+        return;
+    }
+    let (cw, obj2) = (m.r32(chao + 0x34), m.r32(P1_OBJ2));
+    if cw == 0 || !(0x8000_0000..0x8C00_0000).contains(&obj2) {
+        return;
+    }
+    let f = |a: u32| f32::from_bits(m.r32(a));
+    let his = m.r32(data1 + 0x0C) & 0xFFFF;
+    let drawn = if data1 == cw && PMOVE_CHAO.get() == chao { chao_yaw(his) } else { m.r32(cw + 0x0C) } & 0xFFFF;
+    let a = drawn as f32 * std::f32::consts::TAU / 65536.0;
+    let d = (moved[0] * moved[0] + moved[1] * moved[1]).sqrt();
+    // The Chao faces (sin, cos) of its yaw.
+    let off = if d > 0.02 { (moved[0] * a.cos() - moved[1] * a.sin()).atan2(moved[0] * a.sin() + moved[1] * a.cos()).to_degrees() } else { 0.0 };
+    let ctrl = cw + CHAO_MOTION_CTRL;
+    let table = m.r32(obj2 + OBJ2_PLACTPTR);
+    let act = u32::from(m.r16(obj2 + OBJ2_ACTION));
+    // Each foot ahead of the body along its facing (last draw; view space is rigid).
+    let p = CHAO_PLACE.get();
+    let len = (0..3).map(|r| p[r][2] * p[r][2]).sum::<f32>().sqrt().max(1e-6);
+    let feet = FEET.with_borrow(|x| x.map(|k| k.map(|k| (0..3).map(|r| (k[r][3] - p[r][3]) * p[r][2]).sum::<f32>() / len)));
+    eprintln!("gait: f{} his action {act} (motion {}) speed {:.3} covered {d:.3} | Chao motion {} frame {:.1} of {:.0}..{:.0} link {} rate {:.2} | overlay {:.2} | his yaw {his:#06x} drawn {drawn:#06x} off travel {off:.1} | feet ahead {:.3} {:.3}",
+        sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), if (0x8000_0000..0x8C00_0000).contains(&table) { m.r16(table + 0x10 * act) } else { 0 }, f(obj2 + 0x64), LAST_MOTION.get(), f(ctrl + 0x1C), f(ctrl + 0x20), f(ctrl + 0x24), m.r16(ctrl) & 2 != 0, f(ctrl + 0x0C), skate_blend(false), feet[0].unwrap_or(f32::NAN), feet[1].unwrap_or(f32::NAN));
+}
+
 /// Where the Chao's stride frame goes so its cycle phase moves `blend` of
 /// the way (the short way round) to the rider's phase; both phases 0..1.
 pub(crate) fn locked_phase(chao: f32, rider: f32, blend: f32) -> f32 {
@@ -2935,7 +2998,11 @@ fn skate_blend(step: bool) -> f32 {
         // nothing: test copy run t1, e up to 100 degrees at blend 0.)
         // SA2_SKATE_RUN_ONLY=1 (debug): only while it runs, as before.
         let run_only = std::env::var("SA2_SKATE_RUN_ONLY").is_ok_and(|v| v == "1");
-        let target = if MOVING.get() && (LAST_MOTION.get() == 119 || (!run_only && LAST_MOTION.get() == 578)) { 1.0f32 } else { 0.0 };
+        let target = match GAIT.get() {
+            // His walk and jog: the Chao's own motion alone.
+            Some(g) => if g == Gait::Run { 1.0f32 } else { 0.0 },
+            None => if MOVING.get() && (LAST_MOTION.get() == 119 || (!run_only && LAST_MOTION.get() == 578)) { 1.0f32 } else { 0.0 },
+        };
         let p = SKATE_PROGRESS.get();
         let dt = if target > p { 1.0 / (0.42 * 60.0) } else { 1.0 / (0.28 * 60.0) };
         SKATE_PROGRESS.set(p + (target - p).clamp(-dt, dt));
@@ -4078,11 +4145,18 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             let on_board = !chao_world(m) && BOARD.with_borrow(|b| b.as_ref().is_some_and(|b| f <= b.0 + 1));
             // Chao World: swimming or in the air the Chao plays its own motion for it.
             let own_state = if me { chao_world_state(c, m, task, chao, area) } else { (SWIM.set(None), AIR.set(false)); None };
-            let want = if let Some(mo) = own_state { mo } else if d < 0.01 || on_board { 0 } else if d >= if last == 119 { 0.9 } else { 1.0 } { 119 } else { 578 };
+            // mob 2026-11-24, Chao World with no shoes or the Light Shoes: the
+            // look follows the hidden Sonic's own state (gait): the Chao's own
+            // walk in his walk, its own run in his jog, and his run laid over
+            // it only in his run. Speeds and change points are his.
+            let gait = (me && own_state.is_none() && d >= 0.01 && !shadow_style()).then(|| gait(u32::from(m.r16(m.r32(P1_OBJ2).wrapping_add(OBJ2_ACTION))))).flatten();
+            GAIT.set(gait);
+            let want = if let Some(mo) = own_state { mo } else if d < 0.01 || on_board { 0 } else if let Some(g) = gait { g.motion() } else if d >= if last == 119 { 0.9 } else { 1.0 } { 119 } else { 578 };
             if want != last {
                 call(c, m, rt::sec(m, 60, 1) + AL_SET_MOTION_LINK, &[chao, want]);
                 LAST_MOTION.set(want);
             }
+            gait_log(m, chao, data1, [f32::from_bits(pos[0]) - f32::from_bits(lp[0]), f32::from_bits(pos[2]) - f32::from_bits(lp[2])]);
             stride_lock(m, chao);
         }
         pin(m, chao, data1);
@@ -4738,7 +4812,15 @@ fn physics_row(m: &mut Mem) {
         }
         r.clone().unwrap_or_default()
     });
-    let metal = if chao_world(m) { crate::chao_speed::row(m, INFO, &own, &metal) } else { metal };
+    // mob 2026-11-24: in Chao World the ground speeds, acceleration and the
+    // walk / jog / run change points are Sonic's own: his row as the game set
+    // it. SA2_CHAO_SPEED=metal (test) is Metal Sonic's row as before, =run the
+    // old scaling by Run points. Levels keep Metal's row off the board.
+    let metal = match (chao_world(m), std::env::var("SA2_CHAO_SPEED").as_deref()) {
+        (true, Ok("metal")) | (false, _) => metal,
+        (true, Ok("run")) => crate::chao_speed::row(m, INFO, &own, &metal),
+        (true, _) => if own.len() == metal.len() { own.clone() } else { metal },
+    };
     // mob 2026-11-23: every Chao jumps as Sonic does; only mob's own Chao has
     // Metal Sonic's jump. The jump is the row's jump speed (+0x18: Sonic 1.66,
     // Metal Sonic 2.52; the hold time +0x00 and hold lift +0x38 are the same in
@@ -4747,7 +4829,9 @@ fn physics_row(m: &mut Mem) {
     let metal_jump = std::env::var("SA2_CHAO_JUMP").is_ok_and(|v| v.trim() == "metal");
     for (i, o) in (0..0x84).step_by(4).enumerate() {
         let his = board || (o == ROW_JUMP_SPEED && !metal_jump && own.len() > i);
-        m.w32(obj2 + 0xC0 + o, if his { own[i] } else { metal[i] });
+        // (With Sonic's row in Chao World the Metal jump is Metal's own row's jump speed.)
+        let v = if o == ROW_JUMP_SPEED && metal_jump { m.r32(PHYSICS + 0x84 * METAL_ROW + o) } else if his { own[i] } else { metal[i] };
+        m.w32(obj2 + 0xC0 + o, v);
     }
 }
 
