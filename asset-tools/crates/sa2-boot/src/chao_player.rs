@@ -1970,6 +1970,7 @@ fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
     if let Step::Live(chao) = STEP.get() {
         if c.r[3] == chao {
             knux_rig::draw_state_log(c, m);
+            knux_rig::blend_reset(c, m);
             pin(m, chao, RIDER.get());
             follow_ball(m, chao);
         }
@@ -2272,6 +2273,22 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(KNUX_EXEC, |c, m| exec(c, m, KNUX_EXEC));
     c.rt.set_override(knux_rig::SET_PLAYER_CHAR, knux_rig::set_char);
     c.rt.set_override(knux_rig::AFTER_IMAGE_DISP, knux_rig::after_image);
+    if std::env::var_os("SA2_CHAO_DRAWLOG").is_some() {
+        c.rt.set_override(0x8011_E23C, |c, m| knux_rig::draw_probe(c, m, 0x8011_E23C));
+        c.rt.set_override(0x8011_E368, |c, m| knux_rig::draw_probe(c, m, 0x8011_E368));
+        c.rt.set_override(0x8011_E6F0, |c, m| knux_rig::draw_probe(c, m, 0x8011_E6F0));
+        c.rt.set_override(0x8011_D484, |c, m| knux_rig::draw_probe(c, m, 0x8011_D484));
+        c.rt.set_override(0x8011_D554, |c, m| knux_rig::draw_probe(c, m, 0x8011_D554));
+        c.rt.set_override(0x8011_D410, |c, m| knux_rig::draw_probe(c, m, 0x8011_D410));
+        c.rt.set_override(0x8011_D2F4, |c, m| knux_rig::draw_probe(c, m, 0x8011_D2F4));
+        c.rt.set_override(0x8011_DF20, |c, m| knux_rig::draw_probe(c, m, 0x8011_DF20));
+        c.rt.set_override(0x8011_F720, |c, m| knux_rig::draw_probe(c, m, 0x8011_F720));
+        c.rt.set_override(0x8011_F6B4, |c, m| knux_rig::draw_probe(c, m, 0x8011_F6B4));
+        c.rt.set_override(0x8011_F668, |c, m| knux_rig::draw_probe(c, m, 0x8011_F668));
+        c.rt.set_override(0x8011_ED60, |c, m| knux_rig::draw_probe(c, m, 0x8011_ED60));
+    }
+    c.rt.set_override(knux_rig::GLIDE_WALL, |c, m| knux_rig::wall_check(c, m, knux_rig::GLIDE_WALL));
+    c.rt.set_override(knux_rig::JUMP_WALL, |c, m| knux_rig::wall_check(c, m, knux_rig::JUMP_WALL));
     // The walkers' exec: only once walker.rs asks for the pilot (own_pilot).
     c.rt.set_override(WALKER_EXEC, |c, m| {
         LAST_EXEC.set(WALKER_EXEC);
@@ -2421,6 +2438,9 @@ fn ev_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
         if addr == 0x8011_DF44 && knux_rig::item_draw(c.lr) { return; }
         return level_capture(c, m, addr);
     }
+    if knux_rig::late_body(lr) {
+        return;
+    }
     if from_board_disp(c, m) {
         return board_draw(c, m, addr);
     }
@@ -2563,6 +2583,9 @@ fn cnk_cache_draw(c: &mut Cpu, m: &mut Mem) {
     if !CAPTURE.get() {
         return original(c, m, CNK_CACHE_DRAW);
     }
+    if knux_rig::walk_unseen(c, m) {
+        return;
+    }
     c.r[3] = 0;
 }
 
@@ -2665,7 +2688,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
                         }
                     };
                     let (w, cap) = knux_rig::spin_limits(i, w, cap);
-                    skate_node(m, i, src, w, cap);
+                    if !std::env::var("SA2_ROW_OFF").is_ok_and(|v| v == "all" || v.split('+').any(|x| x.parse() == Ok(i))) { skate_node(m, i, src, w, cap); }
                     if i == 6 || i == 13 {
                         foot_place(m, i, src, &own, blend);
                     }
@@ -3024,6 +3047,10 @@ fn skate_node(m: &mut Mem, i: usize, src: usize, w: f32, cap: f32) {
     let chao_rest = CHAO_REST.with_borrow(|r| r.as_ref().and_then(|r| r.worlds(&[]).get(i).map(|x| x.0)));
     let (Some(rest), Some(chao_rest)) = (rest, chao_rest) else { return };
     let d = crate::skate::desired(&now, &rest, &chao_rest, w, cap);
+    if i == 14 && std::env::var_os("SA2_STATE_LOG").is_some() && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
+        let det = |x: &[[f32; 3]; 3]| x[0][0] * (x[1][1] * x[2][2] - x[1][2] * x[2][1]) - x[0][1] * (x[1][0] * x[2][2] - x[1][2] * x[2][0]) + x[0][2] * (x[1][0] * x[2][1] - x[1][1] * x[2][0]);
+        eprintln!("head-row: his node {src} now det {:.3} rest det {:.3} chao rest det {:.3} desired det {:.3} now {now:?} rest {rest:?}", det(&now), det(&rest), det(&chao_rest), det(&d));
+    }
     let p = CHAO_PLACE.get();
     let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
     // Blended with the Chao's own walk pose while the skate comes in or goes out.
