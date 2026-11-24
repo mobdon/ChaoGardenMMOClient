@@ -561,9 +561,24 @@ pub(super) fn walk_unseen(c: &mut Cpu, m: &mut Mem) -> bool {
 /// the motion draw 0x8011E214, returning to 0x8009B358 / 0x8009B38C
 /// (SA2_TRACE_EVDRAW in Wild Canyon: these two, every frame, outside his first
 /// display 0x80099BA0 that the Chao's code already walks without drawing).
+/// The stopgap shadow (the default until the Chao's own outline works): his own body shadow at
+/// SHADOW_SIZE of his size, under the matrix his shadow display set, right before its draw.
+/// MMO glue, not a game value: at the Chao's height over his (3.0 / 11.4 = 0.26) the shadow was
+/// a few texels under one foot (knux/sh-cmp6.jpg); 0.45 is about the Chao's width on the ground.
+const SHADOW_SIZE: f32 = 0.45;
+
+pub(super) fn late_body_scale(m: &mut Mem, lr: u32) {
+    if !SHADOW_SCALE.get() || !matches!(lr, 0x8009_B358 | 0x8009_B38C) {
+        return;
+    }
+    let (cur, k) = (m.r32(NJ_CURRENT_MATRIX), SHADOW_SIZE);
+    if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 120 == 0 { eprintln!("knux-shadow: his body at {k:.3} of his size (lr {lr:#x})"); }
+    for r in 0..3 { for c in 0..3 { let a = cur + 4 * (4 * r + c) as u32; m.w32(a, (f32::from_bits(m.r32(a)) * k).to_bits()); } }
+}
+
 /// It is his drop shadow (own_shadow). SA2_KNUX_LATE=1 or SA2_SHOW_SONIC (debug): left drawing.
 pub(super) fn late_body(lr: u32) -> bool {
-    matches!(lr, 0x8009_B358 | 0x8009_B38C) && matches!(STEP.get(), Step::Live(_)) && std::env::var_os("SA2_SHOW_SONIC").is_none() && !std::env::var("SA2_KNUX_LATE").is_ok_and(|v| v == "1")
+    !SHADOW_SCALE.get() && matches!(lr, 0x8009_B358 | 0x8009_B38C) && matches!(STEP.get(), Step::Live(_)) && std::env::var_os("SA2_SHOW_SONIC").is_none() && !std::env::var("SA2_KNUX_LATE").is_ok_and(|v| v == "1")
 }
 
 thread_local! {
@@ -665,7 +680,11 @@ pub(super) fn wall_frame(root: &[[f32; 4]; 3]) -> [[f32; 4]; 3] {
 /// character shadow draw 0x8011E214, or his own shadow at the Chao's size (mob to choose).
 /// SA2_SHOW_SONIC (debug: he is drawn) and SA2_KNUX_LATE=1 keep his own.
 pub(super) const SHADOW_DISP: u32 = 0x8009_ADFC;
-const CHAO_SHADOW: u32 = 0x855C;
+/// Scratch for one node's object while the Chao's shadow is drawn (beside the other debug scratch at 0x82F00300).
+const SHADOW_OBJ: u32 = 0x82F0_0400;
+thread_local! {
+    static SHADOW_SCALE: Cell<bool> = const { Cell::new(false) };
+}
 
 pub(super) fn shadow_disp(c: &mut Cpu, m: &mut Mem) {
     let Step::Live(chao) = STEP.get() else { return original(c, m, SHADOW_DISP) };
@@ -673,21 +692,38 @@ pub(super) fn shadow_disp(c: &mut Cpu, m: &mut Mem) {
         return original(c, m, SHADOW_DISP);
     }
     let keep = c.r;
-    let w = m.r32(chao + 0x3C);
-    let far = (0x8000_0000..0x8C00_0000).contains(&w).then(|| m.r32(w + 0x30));
-    if far.is_some() { m.w32(w + 0x30, 0); }
-    if std::env::var("SA2_KNUX_LOG").is_ok_and(|v| v == "1") && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
-        let fl = |a: u32| f32::from_bits(m.r32(a));
-        let (cw, his) = (m.r32(chao + 0x34), m.r32(keep[3] + 0x34));
-        let cur = m.r32(NJ_CURRENT_MATRIX);
-        eprintln!("knux-shadow-task: chao task {chao:#x} words +0x10.. {:x?} | his task {:#x} words {:x?} | ChaoMain text {:#x}", (0x10..0x34).step_by(4).map(|o| m.r32(chao + o)).collect::<Vec<_>>(), keep[3], (0x10..0x34).step_by(4).map(|o| m.r32(keep[3] + o)).collect::<Vec<_>>(), rt::sec(m, 60, 1));
-        eprintln!("knux-shadow: chao places body [{:.1} {:.1} {:.1}] b0 [{:.1} {:.1} {:.1}] his place [{:.1} {:.1} {:.1}] far {:?} area {} limit {:.1} cur row0 [{:.3} {:.3} {:.3} {:.1}] row2 [{:.3} {:.3} {:.3} {:.1}]",
-            fl(cw + 0x5CC), fl(cw + 0x5D0), fl(cw + 0x5D4), fl(cw + 0x5C0), fl(cw + 0x5C4), fl(cw + 0x5C8), fl(his + 0x14), fl(his + 0x18), fl(his + 0x1C),
-            far.map(f32::from_bits), m.r32(rt::sec(m, 60, 5) + 0x972EC), fl(rt::sec(m, 60, 5) + 0x2A50 + 0x7C),
-            fl(cur), fl(cur + 4), fl(cur + 8), fl(cur + 12), fl(cur + 32), fl(cur + 36), fl(cur + 40), fl(cur + 44));
+    let _ = chao;
+    match std::env::var("SA2_KNUX_SHADOW").as_deref() {
+        Ok("off") => {}
+        // The Chao's own outline: each of its nodes' models, as its display last placed them,
+        // drawn by the game's model draw (0x8011DF44) under this pass's camera. One node at a
+        // time through a copy of its object with no children and no transform of its own.
+        // TRIAL, shows nothing yet (2026-11-24: one node with a model is recorded, the whole body;
+        // it is drawn at the right place and no shadow appears).
+        Ok("chao") => {
+            let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+            let pass = mtx(m, cur_ptr);
+            let (base, nodes) = super::SHADOW_NODES.with_borrow(|s| s.clone());
+            if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
+                let w: Vec<String> = nodes.iter().take(3).map(|(o, mt)| { let x = inv_mul(&base, mt); format!("{o:#x} model {:#x} at [{:.1} {:.1} {:.1}]", m.r32(o + 4), x[0][3], x[1][3], x[2][3]) }).collect();
+                eprintln!("knux-shadow: {} Chao nodes; pass row0 [{:.2} {:.2} {:.2} {:.1}]; {}", nodes.len(), pass[0][0], pass[0][1], pass[0][2], pass[0][3], w.join(" | "));
+            }
+            for (obj, mat) in nodes {
+                let world = inv_mul(&base, &mat);
+                let at = mul34(&pass, &world);
+                for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, at[r][k].to_bits()); } }
+                m.w32(SHADOW_OBJ, 0x17);
+                m.w32(SHADOW_OBJ + 4, m.r32(obj + 4));
+                for o in (8..0x2C).step_by(4) { m.w32(SHADOW_OBJ + o, if o >= 0x20 { 1.0f32.to_bits() } else { 0 }); }
+                m.w32(SHADOW_OBJ + 0x2C, 0);
+                m.w32(SHADOW_OBJ + 0x30, 0);
+                call(c, m, 0x8011_DF44, &[SHADOW_OBJ]);
+            }
+            for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, pass[r][k].to_bits()); } }
+        }
+        // His own body shadow at the Chao's size (late_body_scale).
+        _ => { SHADOW_SCALE.set(true); original(c, m, SHADOW_DISP); SHADOW_SCALE.set(false); }
     }
-    call(c, m, rt::sec(m, 60, 1) + CHAO_SHADOW, &[chao]);
-    if let Some(v) = far { m.w32(w + 0x30, v); }
     c.r = keep;
 }
 

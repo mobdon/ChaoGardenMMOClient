@@ -2475,6 +2475,7 @@ fn ev_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
         if addr == 0x8011_DF44 && knux_rig::item_draw(c.lr) { return; }
         return level_capture(c, m, addr);
     }
+    knux_rig::late_body_scale(m, lr);
     if knux_rig::late_body(lr) {
         return;
     }
@@ -2748,6 +2749,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
                 eprintln!("head-node: node {i} model {:#x} own det {:.3} at [{:.2} {:.2} {:.2}] drawn det {:.3} at [{:.2} {:.2} {:.2}] flags {:#x}", m.r32(c.r[3].wrapping_add(4)), det(&o), o[0][3], o[1][3], o[2][3], det(&x), x[0][3], x[1][3], x[2][3], m.r32(c.r[3]));
             }
             record_hand(m, i, m.r32(NJ_CURRENT_MATRIX));
+            shadow_node(m, i, c.r[3]);
             knux_rig::hit_node(m, i);
             track_log(m, i, &own);
             head_trace(m, i, &own);
@@ -3644,6 +3646,21 @@ fn hide_foot(m: &mut Mem, cur_ptr: u32) {
     }
 }
 
+thread_local! {
+    /// The player's Chao as last drawn in a stage: the camera matrix of that draw, and each
+    /// node's object and view-space matrix (knux_rig::shadow_disp draws them as its shadow).
+    static SHADOW_NODES: std::cell::RefCell<([[f32; 4]; 3], Vec<(u32, [[f32; 4]; 3])>)> = const { std::cell::RefCell::new(([[0.0; 4]; 3], Vec::new())) };
+}
+
+fn shadow_node(m: &Mem, i: usize, obj: u32) {
+    let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
+    let base = mtx(m, m.r32(NJ_BASE_MATRIX));
+    SHADOW_NODES.with_borrow_mut(|s| {
+        if i == 0 { *s = (base, Vec::new()); }
+        if plain_object(m, obj) && m.r32(obj + 4) != 0 { s.1.push((obj, cur)); }
+    });
+}
+
 /// Arm nodes 3/10's view-space matrices from this draw walk, for the gloves.
 fn record_hand(m: &Mem, i: usize, cur_ptr: u32) {
     if matches!(i, 1 | 3 | 6 | 10 | 13 | 16) {
@@ -4445,9 +4462,8 @@ fn collision_fit(m: &mut Mem, chao: u32) {
     let size = match fit { Some(s) if !use_full => s.map(f32::to_bits), _ => full };
     for (a, v) in at.into_iter().zip(size) { m.w32(obj2 + a, v); }
     // His body's hit shape (the first entry of his collision table: his own sizes 4.0, 4.0,
-    // 0.65, at his position plus the centre height above): the Chao's own body sizes, so
-    // what is hit is what is seen. His other four spheres (8.0, 4.5, 2.75, 30.0: attack
-    // and pick-up reaches, not told apart yet) stay his.
+    // 0.65, at his position plus the centre height above; the only one of his five that is
+    // on outside his attacks, so it is both what is hurt and what picks rings up).
     let his_cwp = { let t = m.r32(0x801E_7768); if (0x8000_0000..0x8C00_0000).contains(&t) { m.r32(t + 0x2C) } else { 0 } };
     let his_body = if (0x8000_0000..0x8C00_0000).contains(&his_cwp) { m.r32(his_cwp + 0xC) } else { 0 };
     if (0x8000_0000..0x8C00_0000).contains(&his_body) {
@@ -4455,8 +4471,10 @@ fn collision_fit(m: &mut Mem, chao: u32) {
             Some(o) => o.1,
             None => { let o = [0x14, 0x18, 0x1C].map(|a| m.r32(his_body + a)); FULL_BODY.set(Some((his_body, o))); o }
         };
-        // SA2_BODY_FULL=1 (debug): his own body hit shape with the Chao-sized land collision, to tell what each does.
-        let shape = match (body, fit) { (Some(b), Some(_)) if !use_full && !std::env::var("SA2_BODY_FULL").is_ok_and(|v| v == "1") => b.1, _ => own };
+        // mob 2026-11-24 (choice between the two): the shape that is hurt and that picks rings up stays
+        // his own size; only the land collision above is the Chao's. SA2_BODY_SMALL=1: the Chao's own
+        // body sizes here too (what it was for a few hours that day: rings above the Chao were missed).
+        let shape = match (body, fit) { (Some(b), Some(_)) if !use_full && std::env::var("SA2_BODY_SMALL").is_ok_and(|v| v == "1") => b.1, _ => own };
         for (a, v) in [0x14, 0x18, 0x1C].into_iter().zip(shape) { m.w32(his_body + a, v); }
     }
     if SIZE_SAID.replace(obj2) != obj2 {
