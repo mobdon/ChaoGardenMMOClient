@@ -100,6 +100,17 @@ pub fn desired(now: &M3, rest: &M3, chao_rest: &M3, weight: f32, cap_deg: f32) -
     mm(&d, chao_rest)
 }
 
+/// Where a Chao foot goes for the rider's foot (the overlay's foot place; MMO
+/// adaptation). `his_now` / `his_rest`: the rider's foot node in his root
+/// node's space (he faces -x, y up, z to his side). `chao_rest`: the Chao's
+/// foot node at rest in its placement (it faces +z, x to its side). Sideways
+/// by the two stance widths, so its feet meet on its centre line when his do;
+/// lift and swing from the rest place by `leg` (the two leg lengths' ratio).
+pub fn foot_target(his_now: [f32; 3], his_rest: [f32; 3], chao_rest: [f32; 3], leg: f32) -> [f32; 3] {
+    let side = if his_rest[2].abs() > 1e-3 { chao_rest[0].abs() / his_rest[2].abs() } else { leg };
+    [his_now[2] * side, chao_rest[1] + leg * (his_now[1] - his_rest[1]), chao_rest[2] - leg * (his_now[0] - his_rest[0])]
+}
+
 /// Degrees between two rotations (either may carry scale).
 pub fn angle_between(a: &M3, b: &M3) -> f32 {
     let d = mm(&unit(a), &tr(&unit(b)));
@@ -171,5 +182,14 @@ mod tests {
         let d = desired(&big, &id, &id, 1.0, 18.0);
         let ang = ((d[0][0] + d[1][1] + d[2][2] - 1.0) / 2.0).acos().to_degrees();
         assert!((ang - 18.0).abs() < 0.01, "{ang}");
+    }
+    #[test]
+    fn foot_target_follows_the_riders_foot() {
+        // His heel at rest 1.2 to his side, the Chao's 0.5 to its side; leg ratio 0.25.
+        let (his_rest, chao_rest) = ([0.1, -4.0, 1.2], [0.5, -0.9, 0.05]);
+        assert_eq!(foot_target(his_rest, his_rest, chao_rest, 0.25), chao_rest, "rest on rest");
+        // On his centre line, lifted 2 and 4 ahead of its rest (he faces -x): on the Chao's centre line, up 0.5, 1 ahead (+z).
+        let t = foot_target([-3.9, -2.0, 0.0], his_rest, chao_rest, 0.25);
+        assert!(t[0].abs() < 1e-6 && (t[1] + 0.4).abs() < 1e-6 && (t[2] - 1.05).abs() < 1e-6, "{t:?}");
     }
 }
