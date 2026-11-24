@@ -140,10 +140,137 @@ pub(super) fn under_motion(still_frames: u32, last: u32) -> u32 {
     if still_frames >= 6 { 0 } else { last }
 }
 
-/// The Air Shoes' jets in his stages: none. In the game they belong to
-/// Shadow's skate motions only (mob 2026-11-24); his stages have no skate yet.
+/// His run states (action numbers; his own table plays motions 8, 9 and 126 in them).
+pub(super) fn runs(state: u16) -> bool {
+    (8..=10).contains(&state)
+}
+
+/// The Air Shoes' jets in his stages: only while he is in a run state with the
+/// Air Shoes shown and the Chao takes Shadow's skate (run_source). In the game
+/// they belong to Shadow's skate motions only (mob 2026-11-24).
 pub(super) fn jets() -> bool {
-    LAST_EXEC.get() != KNUX_EXEC
+    LAST_EXEC.get() != KNUX_EXEC || (SKATING.get() && shadow_style())
+}
+
+thread_local! {
+    /// Per stage: the motion numbers of Shadow's skate and of Sonic's run for his run states 8, 9, 10
+    /// (0 = not loaded), and Shadow's body model the two are walked on.
+    pub(super) static RUN_TABLES: Cell<Option<([u32; 3], [u32; 3], u32)>> = const { Cell::new(None) };
+    /// The Chao is drawn from Shadow's skate this frame.
+    static SKATING: Cell<bool> = const { Cell::new(false) };
+    static RUN_SAID: Cell<u8> = const { Cell::new(0) };
+}
+
+/// A file name in main.dol's strings ("SONICMTN.PRS": Sonic's loader passes it to the motion load at 0x80087644).
+fn find_name(m: &Mem, name: &[u8]) -> Option<u32> {
+    (0x8017_4000u32..0x8017_6000).find(|&a| name.iter().enumerate().all(|(i, &b)| m.r8(a + i as u32) == b) && m.r8(a + name.len() as u32) == 0)
+}
+
+/// Free motion table entries (nothing loaded there) that his own table never plays.
+fn spare_motions(m: &Mem, table: u32, n: usize) -> Vec<u32> {
+    let used: std::collections::BTreeSet<u32> = (0..217u32).map(|k| u32::from(m.r16(table + 0x10 * k))).collect();
+    (0..300u32).rev().filter(|k| m.r32(MOTIONS + 8 * k + 4) == 0 && !used.contains(k)).take(n).collect()
+}
+
+/// MMO rule (mob 2026-11-24: "i want just the skating when ur at running speed
+/// for knuckles", "or sonic running", "if they have sonic shoes"): in his run
+/// states the Chao's look follows the shoes it wears, as in the lobby
+/// (shadow_style): Air Shoes shown = Shadow's skate with the jets; Light Shoes
+/// or no shoes = Sonic's run. Standing, walking, jogging and every move of his
+/// own stay his, and so do his speeds, physics and his own (hidden) animation:
+/// nothing of his is changed. Only the skeleton the overlay reads is another
+/// one in those states: Shadow's body model (TERIOSMDL, already loaded for the
+/// gear) walked with Shadow's skate or Sonic's run motion of the same state,
+/// at his run motion's place in its cycle (level_capture walks it right after
+/// his own, drawing nothing). The motions come from the game's own files by
+/// its own loader, kept at spare motion numbers.
+/// Tried first and dropped: his own run rows playing those motions on his own
+/// skeleton. The tree is the same but the motions are made for Sonic's and
+/// Shadow's rest pose: he came out upside down (knux/rt-all.jpg).
+/// This loads the motions once a stage. SA2_KNUX_RUN=own (debug): his own run.
+pub(super) fn run_style(c: &mut Cpu, m: &mut Mem) {
+    let obj2 = m.r32(P1_OBJ2);
+    if !(0x8000_0000..0x8C00_0000).contains(&obj2) || RUN_TABLES.get().is_some() || std::env::var("SA2_KNUX_RUN").is_ok_and(|v| v == "own") {
+        return;
+    }
+    let own = m.r32(obj2 + OBJ2_PLACTPTR);
+    // After the gear (Shadow's models) is in: his body is what the motions are walked on.
+    let body = SHADOW_MODELS.with_borrow(|e| e.values().copied().collect::<Vec<_>>()).into_iter()
+        .find(|&o| (0x8000_0000..0x8C00_0000).contains(&o) && crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]).nodes.len() == 62);
+    let (Some(body), true) = (body, (0x8000_0000..0x8030_0000).contains(&own)) else { return };
+    let mut keep: Vec<u32> = (0..0x960).step_by(4).map(|o| m.r32(MOTIONS + o)).collect();
+    let heap_var = c.r[13].wrapping_sub(SY_HEAP_SDA);
+    let keep_heap = m.r32(heap_var);
+    let mut made = [[0u32; 3]; 2];
+    // The look the shoes ask for now first: there may be room for only one file.
+    // (Measured in Wild Canyon: Shadow's file takes about 600 KB; the gear heap had 790 KB
+    // left after the gear, the game's own heap 1.3 MB.) A file goes into the gear heap
+    // when 450 KB is free there, else into the game's own heap when it has 1250 KB free (about 650 KB stay).
+    let looks = [(0usize, Some(SHADOW_MTN_NAME), SHADOW_ACTIONS), (1, find_name(m, b"SONICMTN.PRS"), SONIC_ACTIONS)];
+    let order = if shadow_style() { [0, 1] } else { [1, 0] };
+    for (which, name, actions) in order.map(|i| looks[i]) {
+        let (gear, game) = (crate::chao_player::os_heap_free(m, GEAR_HEAP), crate::chao_player::os_heap_free(m, 0));
+        let heap = if gear > 450 * 1024 { Some(GEAR_HEAP) } else if game > 1250 * 1024 { Some(0) } else { None };
+        let (Some(name), Some(heap)) = (name, heap) else {
+            eprintln!("chao-player knux: run look {which} not loaded (name {name:?}, gear heap free {} KB, game heap free {} KB): his own run there", gear / 1024, game / 1024);
+            continue;
+        };
+        m.w32(heap_var, heap);
+        let mtn = call(c, m, LOAD_MTN, &[name]);
+        m.w32(heap_var, keep_heap);
+        // The three motions of that character's run states, then the motion table as it was.
+        let theirs: Vec<[u32; 2]> = (8..=10u32).map(|st| { let k = u32::from(m.r16(actions + 0x10 * st)); [m.r32(MOTIONS + 8 * k), m.r32(MOTIONS + 8 * k + 4)] }).collect();
+        for (k, o) in (0..0x960u32).step_by(4).enumerate() { m.w32(MOTIONS + o, keep[k]); }
+        let spare = spare_motions(m, own, 3);
+        if spare.len() < 3 || theirs.iter().any(|t| t[1] == 0) {
+            eprintln!("chao-player knux: run look {which}: motions {theirs:?}, spare numbers {spare:?}: his own run there");
+            continue;
+        }
+        for (i, (e, &k)) in theirs.iter().zip(&spare).enumerate() {
+            m.w32(MOTIONS + 8 * k, e[0]);
+            m.w32(MOTIONS + 8 * k + 4, e[1]);
+            (keep[2 * k as usize], keep[2 * k as usize + 1]) = (e[0], e[1]);
+            made[which][i] = k;
+        }
+        eprintln!("chao-player knux: run look {which} ({}) loaded {mtn:#x} at motion numbers {spare:?}, gear heap free {} KB", if which == 0 { "Shadow's skate" } else { "Sonic's run" }, crate::chao_player::os_heap_free(m, GEAR_HEAP) / 1024);
+    }
+    RUN_TABLES.set(Some((made[0], made[1], body)));
+}
+
+/// In his run states: Shadow's body, the motion to walk it with and the frame, for the
+/// overlay's skeleton (see run_style). `his`: his own motion and its frame this draw.
+/// The frame is his frame's share of his cycle on the other motion's length (frame
+/// count at motion +4, as punch_lock reads it).
+pub(super) fn run_source(m: &Mem, his_motion: u32, his_frame: f32) -> Option<(u32, u32, f32)> {
+    SKATING.set(false);
+    let obj2 = m.r32(P1_OBJ2);
+    let (skate, sonic, body) = RUN_TABLES.get()?;
+    if !(0x8000_0000..0x8C00_0000).contains(&obj2) || !(0x8000_0000..0x8C00_0000).contains(&his_motion) {
+        return None;
+    }
+    let state = m.r16(obj2 + OBJ2_ACTION);
+    if !runs(state) {
+        return None;
+    }
+    let shadow = shadow_style();
+    let k = if shadow { skate } else { sonic }[usize::from(state - 8)];
+    let motion = if k == 0 { 0 } else { m.r32(MOTIONS + 8 * k + 4) };
+    if !(0x8000_0000..0x8C00_0000).contains(&motion) {
+        return None;
+    }
+    let (n_his, n) = (m.r32(his_motion + 4) as f32, m.r32(motion + 4) as f32);
+    let frame = run_frame(his_frame, n_his, n);
+    SKATING.set(shadow);
+    let said = 1 + u8::from(shadow);
+    if RUN_SAID.replace(said) != said {
+        eprintln!("chao-player knux: in his run the Chao takes {} (Air Shoes shown: {shadow}; motion {k}, {n} frames, his {n_his})", if shadow { "Shadow's skate" } else { "Sonic's run" });
+    }
+    Some((body, motion, frame))
+}
+
+/// The other motion's frame at the same share of the cycle as his.
+pub(super) fn run_frame(his_frame: f32, his_len: f32, len: f32) -> f32 {
+    if his_len > 0.0 && len > 0.0 && his_frame.is_finite() { (his_frame / his_len).rem_euclid(1.0) * len } else { 0.0 }
 }
 
 /// The Chao stands on his spot with its own body collision on (ChaoMain's
@@ -322,8 +449,8 @@ pub(super) fn log(m: &Mem, chao: u32, state: u16) {
         let _ = his_task_twp;
         eprintln!("knux-size: his collision {} | Chao's {} | his player work +0x134 {:.3} +0x138 {:.3} +0x13c {:.3} +0x140 {:.3}", info(data1), info(cw), f(obj2 + 0x134), f(obj2 + 0x138), f(obj2 + 0x13C), f(obj2 + 0x140));
     }
-    eprintln!("knux: f{} state {state} mode {} his motion len {n} frame {his:.2} y {:.2} pelvis {pelvis:.2} sink {:.2} his hands fwd {:.2} {:.2} | chao motion {} frame {:.2} of {:.0}..{:.0} link {} next {:.2} of {:.0}..{:.0} hands fwd {:.2} {:.2} overlay {:.2} skel {}",
-        sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r8(data1), f(data1 + 0x18), SINK.get(), hands[0], hands[1],
+    eprintln!("knux: f{} state {state} mode {} his motion len {n} frame {his:.2} y {:.2} pelvis {pelvis:.2} sink {:.2} wallsink {:.2} his hands fwd {:.2} {:.2} | chao motion {} frame {:.2} of {:.0}..{:.0} link {} next {:.2} of {:.0}..{:.0} hands fwd {:.2} {:.2} overlay {:.2} skel {}",
+        sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r8(data1), f(data1 + 0x18), SINK.get(), WALL_SINK.get(), hands[0], hands[1],
         LAST_MOTION.get(), f(ctrl + 0x1C), f(ctrl + 0x20), f(ctrl + 0x24), m.r16(ctrl) & 2 != 0, f(ctrl + 0x34), f(ctrl + 0x38), f(ctrl + 0x3C), ch[0], ch[1], OVERLAY.get(), SKEL.with_borrow(|s| s.len()));
 }
 
@@ -404,14 +531,45 @@ pub(super) fn at_root(m: &mut Mem) {
     }
     let sink = root[1][3] - f32::from_bits(m.r32(data1 + 0x18));
     SINK.set(sink);
-    if digging(m.r8(data1)) && std::env::var("SA2_KNUX_SINK").map_or(true, |v| v != "0") {
+    let on = std::env::var("SA2_KNUX_SINK").map_or(true, |v| v != "0");
+    // His root node from his own position, in the world.
+    let f = |o: u32| f32::from_bits(m.r32(data1 + o));
+    let off = [root[0][3] - f(0x14), root[1][3] - f(0x18), root[2][3] - f(0x1C)];
+    let (base, cur) = (mtx(m, m.r32(NJ_BASE_MATRIX)), m.r32(NJ_CURRENT_MATRIX));
+    let mode = m.r8(data1);
+    if digging(mode) && on {
         // World up in view space is the base matrix's y column.
-        let (base, cur) = (mtx(m, m.r32(NJ_BASE_MATRIX)), m.r32(NJ_CURRENT_MATRIX));
         for r in 0..3u32 {
             let a = cur + 4 * (4 * r + 3);
             m.w32(a, (f32::from_bits(m.r32(a)) + base[r as usize][1] * sink).to_bits());
         }
+    } else if wall_digging(mode) && on {
+        // On a wall he goes into it along the wall's own direction: the Chao moves as far as
+        // his root has moved from where it was against his position when the dig began.
+        let was = WALL_OFF.get();
+        let d = [off[0] - was[0], off[1] - was[1], off[2] - was[2]];
+        for r in 0..3usize {
+            let a = cur + 4 * (4 * r as u32 + 3);
+            m.w32(a, (f32::from_bits(m.r32(a)) + (0..3).map(|k| base[r][k] * d[k]).sum::<f32>()).to_bits());
+        }
+        WALL_SINK.set((d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt());
+    } else {
+        WALL_OFF.set(off);
+        WALL_SINK.set(0.0);
     }
+}
+
+thread_local! {
+    /// His root from his position on the last frame he was not digging into a wall.
+    static WALL_OFF: Cell<[f32; 3]> = const { Cell::new([0.0; 3]) };
+    /// How far the Chao is moved into the wall this frame (logged).
+    pub(super) static WALL_SINK: Cell<f32> = const { Cell::new(0.0) };
+}
+
+/// His action modes digging on a wall: 65 going in, 66 coming back out (seen in Wild
+/// Canyon, SA2_KNUX_LOG: animation states 95, 96 then 98).
+pub(super) fn wall_digging(mode: u8) -> bool {
+    matches!(mode, 65 | 66)
 }
 
 #[cfg(test)]
@@ -453,10 +611,16 @@ mod tests {
         assert_eq!(under_motion(5, 578), 578);
         assert_eq!(under_motion(6, 119), 0);
         assert!(spins(111) && spins(115) && spins(116) && !spins(109) && !spins(110) && !spins(0));
+        assert!(runs(8) && runs(9) && runs(10) && !runs(7) && !runs(6) && !runs(0) && !runs(11));
+        // His 8-frame run at frame 6 = three quarters through: frame 3 of a 4-frame skate cycle.
+        assert_eq!(run_frame(6.0, 8.0, 4.0), 3.0);
+        assert_eq!(run_frame(9.0, 8.0, 4.0), 0.5);
+        assert_eq!(run_frame(1.0, 0.0, 4.0), 0.0);
     }
     #[test]
     fn only_the_dig_modes_sink() {
         for mode in 0..=255u8 { assert_eq!(digging(mode), mode == 61 || mode == 62); }
+        for mode in 0..=255u8 { assert_eq!(wall_digging(mode), mode == 65 || mode == 66); }
     }
     #[test]
     fn the_chaos_fist_is_out_when_his_is() {
