@@ -111,20 +111,15 @@ pub fn foot_target(his_now: [f32; 3], his_rest: [f32; 3], chao_rest: [f32; 3], l
     [his_now[2] * side, chao_rest[1] + leg * (his_now[1] - his_rest[1]), chao_rest[2] - leg * (his_now[0] - his_rest[0])]
 }
 
-/// The extra turn that swings a Chao foot about its own node toward a target
-/// (MMO adaptation), on top of the rider's foot turn it already has. `rest`
-/// is the way from the node to the foot's middle at rest, `to` the way from
-/// the node's rest place to the target; `his_rest` / `his_now` are the
-/// rider's leg (hip joint to heel) at rest and now, in the Chao's axes. His
-/// own leg swing is already in his foot's turn, so it is taken out and the
-/// Chao's swing put in: the foot keeps his ankle's turn and leans to its own
-/// target. The Chao's swing is eased so it never passes `max` radians
-/// (max * tanh(angle / max)); `share` (0..1) of the result is returned.
-pub fn foot_swing(rest: [f32; 3], to: [f32; 3], his_rest: [f32; 3], his_now: [f32; 3], max: f32, share: f32) -> M3 {
-    use crate::chao_retarget::rot_between;
-    let own = scale_angle(&rot_between(rest, to), |a| max * (a / max).tanh());
-    let his = rot_between(his_rest, his_now);
-    scale_angle(&mm(&own, &tr(&his)), |a| a * share.clamp(0.0, 1.0))
+/// The pitch (radians, about the Chao's side axis x; it faces +z) of the
+/// rider's foot turn from its rest, eased so it never passes `cap`
+/// (cap * tanh(pitch / cap)): the toe up or down along the way he goes,
+/// without the turn to the side or the roll.
+pub fn foot_pitch(now: &M3, rest: &M3, cap: f32) -> f32 {
+    let d = mm(&mm(&A, &mm(&unit(now), &tr(&unit(rest)))), &tr(&A));
+    // Where the turn takes the forward axis: a pitch of t about x gives (0, -sin t, cos t).
+    let pitch = (-d[1][2]).atan2(d[2][2]);
+    cap * (pitch / cap).tanh()
 }
 
 /// Degrees between two rotations (either may carry scale).
@@ -209,23 +204,21 @@ mod tests {
         assert!(t[0].abs() < 1e-6 && (t[1] + 0.4).abs() < 1e-6 && (t[2] - 1.05).abs() < 1e-6, "{t:?}");
     }
     #[test]
-    fn foot_swing_points_the_foot_at_the_target_within_the_limit() {
-        let down = [0.0, -1.0, 0.0];
-        let turn = |r: &M3, v: [f32; 3]| -> [f32; 3] { std::array::from_fn(|i| (0..3).map(|k| r[i][k] * v[k]).sum()) };
-        // Nothing to do at rest.
-        let r = foot_swing(down, down, down, down, 1.2, 1.0);
-        assert!((turn(&r, down)[1] + 1.0).abs() < 1e-5);
-        // A small swing inward is all but followed (10 degrees eased at a 70 degree limit: 9.9).
-        let to = [-(10f32.to_radians().sin()), -(10f32.to_radians().cos()), 0.0];
-        let got = turn(&foot_swing(down, to, down, down, 70f32.to_radians(), 1.0), down);
-        let ang = (got[0] * to[0] + got[1] * to[1]).clamp(-1.0, 1.0).acos().to_degrees();
-        assert!(ang < 0.2, "{ang}");
-        // A target above the node never takes the foot past the limit.
-        let got = turn(&foot_swing(down, [0.0, 1.0, 0.3], down, down, 70f32.to_radians(), 1.0), down);
-        // His own leg swing is not added twice: when the Chao's swing is the same as his, nothing is added.
-        let r = foot_swing(down, to, down, to, 3.0, 1.0);
-        assert!(angle_between(&r, &[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]) < 1.0);
-        let from_rest = (-got[1]).clamp(-1.0, 1.0).acos().to_degrees();
-        assert!(from_rest < 70.0 && from_rest > 60.0, "{from_rest}");
+    fn foot_pitch_takes_the_toe_up_or_down_only() {
+        let id: M3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        assert!(foot_pitch(&id, &id, 0.6).abs() < 1e-6, "rest");
+        // The rider (faces -x, side z) tips his foot 20 degrees about his side axis: all of it is pitch.
+        let (s, c) = 20f32.to_radians().sin_cos();
+        let about_z: M3 = [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]];
+        let p = foot_pitch(&about_z, &id, 10.0).to_degrees();
+        assert!((p.abs() - 20.0).abs() < 0.1, "{p}");
+        // Turned to the side about his up axis only: no pitch.
+        let about_y: M3 = [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]];
+        assert!(foot_pitch(&about_y, &id, 10.0).abs() < 1e-5);
+        // A big kick is eased under the cap.
+        let (s, c) = 120f32.to_radians().sin_cos();
+        let kick: M3 = [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]];
+        let p = foot_pitch(&kick, &id, 35f32.to_radians()).to_degrees().abs();
+        assert!(p < 35.0 && p > 30.0, "{p}");
     }
 }
