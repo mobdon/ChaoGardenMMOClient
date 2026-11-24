@@ -4696,12 +4696,47 @@ thread_local! {
     static GEAR_LOAD_AT: Cell<u64> = const { Cell::new(0) };
     static LIVE_STAGE_NUM: Cell<u16> = const { Cell::new(u16::MAX) };
     static PMOVE_CHAO: Cell<u32> = const { Cell::new(0) };
+    /// What the last mirror wrote: (character task work, Chao task work, their shared six words).
+    static TWP_MIRROR: Cell<Option<(u32, u32, [u32; 6])>> = const { Cell::new(None) };
     /// The heading the character's exec left on the Chao's body (twp +0x08..).
     static CHAR_ANG: Cell<Option<[u32; 3]>> = const { Cell::new(None) };
-    static AREA_DONE: Cell<bool> = const { Cell::new(false) };
+    static AREA_DONE: Cell<usize> = const { Cell::new(0) };
     static LIVE_STAGE: Cell<u16> = const { Cell::new(u16::MAX) };
     static SELF_LOGGED: Cell<bool> = const { Cell::new(false) };
     static TASK_LOGGED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The six words of a task work the Chao and the hidden character share: angle and position (+0x08..+0x20).
+fn placed(m: &Mem, twp: u32) -> [u32; 6] {
+    std::array::from_fn(|i| m.r32(twp + 0x08 + 4 * i as u32))
+}
+
+/// Whether the game put the hidden character somewhere itself since the last mirror: his task
+/// work no longer holds what the mirror wrote for this same pair of task works.
+fn game_moved(last: Option<(u32, u32, [u32; 6])>, own: u32, cw: u32, now: [u32; 6]) -> bool {
+    last.is_some_and(|(o, w, was)| o == own && w == cw && was != now)
+}
+
+/// The game places the player by writing playertwp[0], the hidden character's own task work
+/// (the Kindergarten's entrance: on the path outside, then at the room's start; ChaoStgKinder
+/// through playertwp). In self mode the Chao's task work is the one that moves and the
+/// character's is overwritten from it every frame, so those placements were lost: the Chao ran
+/// the entrance from the room's origin into the wall by the camera (mob 2026-11-24). A change
+/// the game made to the mirrored words between two frames is taken over by the Chao first.
+fn game_placed(m: &mut Mem, task: u32, chao: u32) {
+    let (own, cw) = (m.r32(task + 0x34), m.r32(chao + 0x34));
+    if own == 0 || cw == 0 {
+        return;
+    }
+    let now = placed(m, own);
+    if game_moved(TWP_MIRROR.get(), own, cw, now) {
+        let f = |v: u32| f32::from_bits(v);
+        eprintln!("chao-player: the game placed the player at ({:.2},{:.2},{:.2}) yaw {:#x}; the Chao goes there", f(now[3]), f(now[4]), f(now[5]), now[1] & 0xFFFF);
+        for (i, v) in now.into_iter().enumerate() {
+            m.w32(cw + 0x08 + 4 * i as u32, v);
+        }
+        TWP_MIRROR.set(Some((own, cw, now)));
+    }
 }
 
 fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
@@ -4763,6 +4798,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             eprintln!("yaw: frame {} char {:#06x} native pos ({:.2},{:.2}) height {:.2} state {} flags {:#x}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r32(own + 0x0C) & 0xFFFF, f(own + 0x14), f(own + 0x1C), f(own + 0x18), m.r8(own), m.r16(own + 4));
         }
     } else if let (true, Step::Live(chao)) = (pmove, STEP.get()) {
+        game_placed(m, task, chao);
         let pwp = m.r32(P1_OBJ2);
         if (0x8000_0000..0x8C00_0000).contains(&pwp) {
             PRE_VY.set(f32::from_bits(m.r32(pwp + 0x68)));
@@ -4795,12 +4831,13 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         crate::start_stage::to_stage_select();
         call(c, m, rt::sec(m, 60, 1) + LEAVE_CHAO_WORLD, &[]);
     }
-    // SA2_CHAO_AREA_AT=frame,area (debug): change Chao World area once at that
+    // SA2_CHAO_AREA_AT=frame,area[;frame,area...] (debug): change Chao World area once at each
     // frame, with ChaoMain's own area change (.text 0x27E00, as start_stage
     // uses it; 7 = the lobby), to test the gear across a second change.
     if chao_world(m) && module_linked(m, 60) {
-        if let Some((f, to)) = std::env::var("SA2_CHAO_AREA_AT").ok().and_then(|v| { let (f, a) = v.split_once(',')?; Some((f.trim().parse::<u64>().ok()?, a.trim().parse::<u32>().ok()?)) }) {
-            if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= f && !AREA_DONE.replace(true) {
+        if let Some((f, to)) = std::env::var("SA2_CHAO_AREA_AT").ok().and_then(|v| { let v = v.split(';').nth(AREA_DONE.get())?; let (f, a) = v.split_once(',')?; Some((f.trim().parse::<u64>().ok()?, a.trim().parse::<u32>().ok()?)) }) {
+            if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= f {
+                AREA_DONE.set(AREA_DONE.get() + 1);
                 eprintln!("chao-player: debug area change to {to}");
                 call(c, m, rt::sec(m, 60, 1) + 0x27E00, &[to]);
             }
@@ -4854,12 +4891,14 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         let own = m.r32(task + 0x34);
         if data1 != 0 {
             if !pmove {
+                game_placed(m, task, chao);
                 crate::chao_drive::drive(c, m, chao, rt::sec(m, 60, 1));
             }
             if own != 0 {
                 for o in (0x08..0x20).step_by(4) {
                     m.w32(own + o, m.r32(data1 + o));
                 }
+                TWP_MIRROR.set(Some((own, data1, placed(m, own))));
             }
         }
     }
@@ -6044,6 +6083,20 @@ mod tests {
         assert_eq!(super::fitted_size(9.0, 3.0, None, [4.0, 11.4, 5.7]), None);
         assert_eq!(super::fitted_size(1.5, 30.0, None, [4.0, 11.4, 5.7]), None);
     }
+    #[test]
+    fn a_placement_by_the_game_is_seen_only_for_the_mirrored_pair() {
+        let was = [0, 0x4000, 0, 0, 0, 0];
+        let kinder_path = [0, 0x4000, 0, 0, 0, 199.028f32.to_bits()];
+        // No mirror yet (the Chao was just made): nothing to compare with.
+        assert!(!super::game_moved(None, 0x8010_0000, 0x8020_0000, kinder_path));
+        // The same words: the game left him alone.
+        assert!(!super::game_moved(Some((0x8010_0000, 0x8020_0000, was)), 0x8010_0000, 0x8020_0000, was));
+        // The Kindergarten put him on the path outside.
+        assert!(super::game_moved(Some((0x8010_0000, 0x8020_0000, was)), 0x8010_0000, 0x8020_0000, kinder_path));
+        // Another Chao task work (a new area's Chao): the old mirror says nothing.
+        assert!(!super::game_moved(Some((0x8010_0000, 0x8020_0000, was)), 0x8010_0000, 0x8030_0000, kinder_path));
+    }
+
     #[test]
     fn the_menu_areas_have_no_swim_or_flight() {
         // Lobby, the three gardens and the kindergarten are walked in.
