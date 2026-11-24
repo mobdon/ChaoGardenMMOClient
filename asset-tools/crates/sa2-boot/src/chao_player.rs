@@ -770,7 +770,7 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
         // jets in the heel's frame instead of the toe's.
         // Glue: shown while the skate is in (the game: while his skating
         // motions 8-10 play).
-        if skate_blend(false) > 0.0 && !debug_off("jets") {
+        if skate_blend(false) > 0.0 && !debug_off("jets") && knux_rig::jets() {
             let odd = m.r32(0x801C_C168 + 0x7C) & 1 != 0;
             // SA2_JET_OLD=1 (debug): where they were drawn before, to compare.
             let old = std::env::var("SA2_JET_OLD").is_ok_and(|v| v == "1");
@@ -1409,7 +1409,7 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
                 // Heel/toe jets (Shadow's right jets 96-99 = slots 181-184, the
                 // hub's: modelled in the same foot frame as the boot) while moving.
                 // shortcut: all four drawn; the hub picks narrow/wide by speed.
-                if MOVING.get() && !debug_off("jets") {
+                if MOVING.get() && !debug_off("jets") && knux_rig::jets() {
                     for js in 181..=184u32 {
                         let jo = model_obj(m, js);
                         if (0x8000_0000..0x8C00_0000).contains(&jo) {
@@ -1969,6 +1969,7 @@ fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
     crate::name_tags::begin(tag_label(m, c.r[3]));
     if let Step::Live(chao) = STEP.get() {
         if c.r[3] == chao {
+            knux_rig::draw_state_log(c, m);
             pin(m, chao, RIDER.get());
             follow_ball(m, chao);
         }
@@ -2270,6 +2271,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(SONIC_EXEC, |c, m| exec(c, m, SONIC_EXEC));
     c.rt.set_override(KNUX_EXEC, |c, m| exec(c, m, KNUX_EXEC));
     c.rt.set_override(knux_rig::SET_PLAYER_CHAR, knux_rig::set_char);
+    c.rt.set_override(knux_rig::AFTER_IMAGE_DISP, knux_rig::after_image);
     // The walkers' exec: only once walker.rs asks for the pilot (own_pilot).
     c.rt.set_override(WALKER_EXEC, |c, m| {
         LAST_EXEC.set(WALKER_EXEC);
@@ -2662,6 +2664,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
                             crate::skate::rig_limits(i, w, cap, body, head)
                         }
                     };
+                    let (w, cap) = knux_rig::spin_limits(i, w, cap);
                     skate_node(m, i, src, w, cap);
                     if i == 6 || i == 13 {
                         foot_place(m, i, src, &own, blend);
@@ -3594,11 +3597,24 @@ fn reflect_x(l: &[[f32; 4]; 3]) -> [[f32; 4]; 3] {
 /// Each node's left/right partner: the node whose rest position is nearest
 /// its own reflected in x (itself on the midline).
 fn mirror_partners(rest: &crate::chao_retarget::ChaoRest) -> Vec<usize> {
-    let w = rest.worlds(&[]);
-    w.iter().map(|&(_, p)| {
-        let q = [-p[0], p[1], p[2]];
-        let d = |j: usize| (0..3).map(|k| (w[j].1[k] - q[k]).powi(2)).sum::<f32>();
-        (0..w.len()).min_by(|&a, &b| d(a).total_cmp(&d(b))).unwrap_or(0)
+    let pos: Vec<[f32; 3]> = rest.worlds(&[]).iter().map(|&(_, p)| p).collect();
+    let parent: Vec<Option<usize>> = rest.nodes.iter().map(|n| usize::try_from(n.0).ok()).collect();
+    partners_of(&pos, &parent)
+}
+
+/// A joint and the part hanging from it rest on the same spot (the Chao's
+/// shoulder 2 and arm 3, 9 and 10): of the nodes equally near the reflected
+/// spot, the one as deep in the tree as the node itself is its partner. Taking
+/// the first gave the arm the other shoulder's pose: in punch 2 both arms
+/// hung at the sides and no arm punched (test copy 2026-11-24, knux/q-front).
+pub(crate) fn partners_of(pos: &[[f32; 3]], parent: &[Option<usize>]) -> Vec<usize> {
+    let depth = |mut k: usize| { let mut n = 0; while let Some(p) = parent.get(k).copied().flatten().filter(|&p| p < k) { k = p; n += 1; } n };
+    (0..pos.len()).map(|i| {
+        let q = [-pos[i][0], pos[i][1], pos[i][2]];
+        let d = |j: usize| (0..3).map(|k| (pos[j][k] - q[k]).powi(2)).sum::<f32>();
+        let best = (0..pos.len()).map(d).fold(f32::INFINITY, f32::min);
+        let near = (0..pos.len()).filter(|&j| d(j) <= best + 1e-4);
+        near.clone().find(|&j| depth(j) == depth(i)).or(near.clone().next()).unwrap_or(i)
     }).collect()
 }
 
@@ -3634,6 +3650,10 @@ fn mirror_node(m: &mut Mem, i: usize, cur_ptr: u32) {
         let j = s.partner.get(i).copied().unwrap_or(i);
         let l = if j <= i { s.local[j] } else { s.last.get(j).copied().unwrap_or(s.local[i]) };
         let out = mul34(&place, &reflect_x(&l));
+        if std::env::var_os("SA2_MIRROR_LOG").is_some() && (i == 3 || i == 10 || i == 1) {
+            let own = s.local[i];
+            eprintln!("mirror: f{} node {i} partner {j} parent {parent:?} own at [{:.2} {:.2} {:.2}] x axis [{:.2} {:.2} {:.2}] partner at [{:.2} {:.2} {:.2}] last {} partners {:?}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), own[0][3], own[1][3], own[2][3], own[0][0], own[1][0], own[2][0], l[0][3], l[1][3], l[2][3], s.last.len(), if i == 1 { s.partner.clone() } else { vec![] });
+        }
         s.written.push(out);
         Some(out)
     });
@@ -4436,9 +4456,9 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             // bump) is not a stop: the gait holds for 6 frames.
             let still = if d >= 0.01 { 0 } else { STILL.get().saturating_add(1) };
             STILL.set(still);
-            let gait = (me && own_state.is_none() && (d >= 0.01 || (GAIT.get().is_some() && still < 6)) && !shadow_style()).then(|| gait(u32::from(m.r16(m.r32(P1_OBJ2).wrapping_add(OBJ2_ACTION))))).flatten();
+            let gait = (me && own_state.is_none() && (d >= 0.01 || (GAIT.get().is_some() && still < 6)) && (addr == KNUX_EXEC || !shadow_style())).then(|| gait(u32::from(m.r16(m.r32(P1_OBJ2).wrapping_add(OBJ2_ACTION))))).flatten();
             GAIT.set(gait);
-            let want = if let Some(mo) = own_state { mo } else if addr == KNUX_EXEC && OWN_MOTION.get() { last } else if let Some(g) = gait.filter(|_| !on_board) { g.motion() } else if d < 0.01 || on_board { 0 } else if d >= if last == 119 { 0.9 } else { 1.0 } { 119 } else { 578 };
+            let want = if let Some(mo) = own_state { mo } else if addr == KNUX_EXEC && OWN_MOTION.get() { last } else if let Some(g) = gait.filter(|_| !on_board) { g.motion() } else if addr == KNUX_EXEC { knux_rig::under_motion(still, last) } else if d < 0.01 || on_board { 0 } else if d >= if last == 119 { 0.9 } else { 1.0 } { 119 } else { 578 };
             if want != last {
                 call(c, m, rt::sec(m, 60, 1) + AL_SET_MOTION_LINK, &[chao, want]);
                 LAST_MOTION.set(want);
@@ -4469,6 +4489,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // the rider's B is its own move, not Pet (action 31). Each frame, as
         // the Chao's behaviours may enable touch again (AL_EnableTouch 0x5AB0).
         call(c, m, rt::sec(m, 60, 1) + AL_DISABLE_NADE, &[chao]);
+        if addr == KNUX_EXEC { knux_rig::no_touch(c, m, chao); }
         // The Chao's gear (Shadow's and Knuckles's textures and models, for the
         // Air Shoes, the ball and the Hammer Gloves), once per stage, in every
         // stage the Chao plays, whoever the hidden character is: each file is
@@ -4584,6 +4605,7 @@ fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
         }
     }
     OWN_MOTION.set(own.is_some());
+    knux_rig::SPIN.set(knux_rig::spins(act));
     MIRROR.set(own.is_some_and(|o| o.1));
     ARM_FWD.set(if matches!(act, 111 | 138) { 0.8 } else { 0.0 });
     if own.is_some_and(|o| o.0 == 582) {
