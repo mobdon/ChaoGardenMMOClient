@@ -88,3 +88,38 @@ fn a_camera_turn_cut_snaps() {
     assert_eq!(Tween::new(&prev, &turned(0.1)).matched(), 1);
     assert_eq!(Tween::new(&prev, &turned(2.5)).matched(), 0);
 }
+
+#[test]
+fn a_far_copy_is_not_the_same_object() {
+    // One copy leaves and another appears across the room: nothing to blend from.
+    let prev = frame(&[0.0], false);
+    let mut cur = frame(&[60.0], false);
+    let tw = Tween::new(&prev, &cur);
+    assert_eq!(tw.matched(), 0);
+    tw.apply(&mut cur, 0.5);
+    assert_eq!(tx(&cur, 0), 60.0);
+    // Far from the camera a turn moves a draw further, and still blends.
+    let far = |x: f32| {
+        let mut f = frame(&[x], false);
+        f.draws[0].draw_params.pos_mtx[0][2][3] = -400.0;
+        f
+    };
+    assert_eq!(Tween::new(&far(0.0), &far(60.0)).matched(), 1);
+}
+
+#[test]
+fn an_effect_on_another_texture_frame_blends_from_itself() {
+    // Two copies of an animated effect, 30 apart: each steps to the texture the other had.
+    let with = |xs: &[f32], ids: [u32; 2]| {
+        let mut f = frame(xs, false);
+        for (d, id) in f.draws.iter_mut().zip(ids) {
+            d.material_params.texture_mappings[0].texture = Some(id);
+        }
+        f
+    };
+    let prev = with(&[0.0, 30.0], [1, 2]);
+    let mut cur = with(&[1.0, 31.0], [2, 1]);
+    let tw = Tween::new(&prev, &cur);
+    tw.apply(&mut cur, 0.5);
+    assert_eq!((tx(&cur, 0), tx(&cur, 1)), (0.5, 30.5), "each from itself, not from the copy with its texture");
+}
