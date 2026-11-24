@@ -172,6 +172,8 @@ thread_local! {
     static RUN_BLOCKS: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
     /// The Chao is drawn from Shadow's skate this frame.
     static SKATING: Cell<bool> = const { Cell::new(false) };
+    /// The run look's motion frame, his frame and motion at the last step, his last step, and the game frame.
+    static RUN_PHASE: Cell<(f32, f32, u32, f32, u64)> = const { Cell::new((0.0, 0.0, 0, 0.0, 0)) };
     static RUN_SAID: Cell<u8> = const { Cell::new(0) };
 }
 
@@ -262,8 +264,12 @@ pub(super) fn run_style(c: &mut Cpu, m: &mut Mem) {
 
 /// In his run states: Shadow's body, the motion to walk it with and the frame, for the
 /// overlay's skeleton (see run_style). `his`: his own motion and its frame this draw.
-/// The frame is his frame's share of his cycle on the other motion's length (frame
-/// count at motion +4, as punch_lock reads it).
+/// The frame goes on by his own motion's step this frame times the other character's
+/// row speed over his (action rows +0xC: Sonic's run 0.8, 0.6, 0.4; Shadow's skate 0.12,
+/// 0.15, 0.2), as the game steps that motion for that character at the same speed.
+/// Before 2026-11-24 it was his frame's share of his cycle: his run cycle (31 frames,
+/// about 2.6 a frame in Wild Canyon) turned Shadow's 31-frame skate over five times a
+/// second, which read as running (mob, playing: "it didnt skate while run anyway").
 pub(super) fn run_source(m: &Mem, his_motion: u32, his_frame: f32) -> Option<(u32, u32, f32)> {
     SKATING.set(false);
     let obj2 = m.r32(P1_OBJ2);
@@ -282,7 +288,21 @@ pub(super) fn run_source(m: &Mem, his_motion: u32, his_frame: f32) -> Option<(u3
         return None;
     }
     let (n_his, n) = (m.r32(his_motion + 4) as f32, m.r32(motion + 4) as f32);
-    let frame = run_frame(his_frame, n_his, n);
+    let speed = |table: u32| f32::from_bits(m.r32(table + 0x10 * u32::from(state) + 0xC));
+    let ratio = speed(if shadow { SHADOW_ACTIONS } else { SONIC_ACTIONS }) / speed(m.r32(obj2 + OBJ2_PLACTPTR));
+    let now = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let (mut phase, last_his, last_motion, mut step, at) = RUN_PHASE.get();
+    if now != at {
+        // His step: the frame's change on the same motion (wrapped at its end); across his
+        // two-frame link motions and on the first frame, the last step again.
+        if last_motion == his_motion && now == at + 1 {
+            step = (his_frame - last_his).rem_euclid(n_his.max(1.0));
+        }
+        if now > at + 1 { phase = 0.0; }
+        phase = run_step(phase, step, ratio, n);
+        RUN_PHASE.set((phase, his_frame, his_motion, step, now));
+    }
+    let frame = phase;
     SKATING.set(shadow);
     let said = 1 + u8::from(shadow);
     if RUN_SAID.replace(said) != said {
@@ -291,9 +311,9 @@ pub(super) fn run_source(m: &Mem, his_motion: u32, his_frame: f32) -> Option<(u3
     Some((body, motion, frame))
 }
 
-/// The other motion's frame at the same share of the cycle as his.
-pub(super) fn run_frame(his_frame: f32, his_len: f32, len: f32) -> f32 {
-    if his_len > 0.0 && len > 0.0 && his_frame.is_finite() { (his_frame / his_len).rem_euclid(1.0) * len } else { 0.0 }
+/// The other motion's frame one game frame on: his step times the row speed ratio.
+pub(super) fn run_step(phase: f32, his_step: f32, ratio: f32, len: f32) -> f32 {
+    if len > 0.0 && his_step.is_finite() && ratio.is_finite() { (phase + his_step * ratio).rem_euclid(len) } else { 0.0 }
 }
 
 /// The Chao stands on his spot with its own body collision on (ChaoMain's
@@ -607,22 +627,31 @@ pub(super) fn wall_frame(root: &[[f32; 4]; 3]) -> [[f32; 4]; 3] {
     std::array::from_fn(|i| [side[i], up[i], front[i], root[i][3]])
 }
 
-/// His task's second display (main.dol 0x8009ADFC, task +0x2C) draws his whole body as the
-/// drop shadow: his shape and size around a Chao a third as tall (mob 2026-11-24). Not drawn
-/// while the Chao stands in for him (late_body); the Chao draws its own instead: its display
-/// ends in ChaoMain .text 0x855C, which draws the Chao's shadow models only while the float at
-/// [task +0x3C] +0x30 is under the ChaoMain table value at .data 0x2A50 +0x7C. In a stage
-/// that float is past it (no shadow at all with his gone, run sh-late0). It reads 0 while the
-/// player's own Chao is drawn in his stage, and gets its value back.
-/// unverified: what the float is (it is compared like a distance from the camera).
-pub(super) fn own_shadow(m: &mut Mem, task: u32) -> Option<(u32, u32)> {
-    let w = m.r32(task + 0x3C);
-    if LAST_EXEC.get() != KNUX_EXEC || !(0x8000_0000..0x8C00_0000).contains(&w) || std::env::var("SA2_KNUX_LATE").is_ok_and(|v| v == "1") {
-        return None;
+/// His task's second display (main.dol 0x8009ADFC, task +0x2C: the stage's shadow pass calls
+/// it) draws his whole body as the drop shadow: his shape and size around a Chao a third as
+/// tall (mob 2026-11-24). While the Chao stands in for him it runs the Chao's own shadow
+/// function instead (ChaoMain .text 0x855C, the last call of the Chao's display: its seven
+/// shadow models at the places its display stored). In its display those draws show nothing
+/// in a stage (SA2_CHAO_DRAWLOG: made every frame, no shadow on the ground): only this pass
+/// draws shadows there. 0x855C draws only while the float at [task +0x3C] +0x30 is under the
+/// ChaoMain table value at .data 0x2A50 +0x7C: it reads 0 for the call.
+/// unverified: what that float is (it is compared like a distance from the camera).
+/// SA2_SHOW_SONIC (debug: he is drawn) and SA2_KNUX_LATE=1 keep his own.
+pub(super) const SHADOW_DISP: u32 = 0x8009_ADFC;
+const CHAO_SHADOW: u32 = 0x855C;
+
+pub(super) fn shadow_disp(c: &mut Cpu, m: &mut Mem) {
+    let Step::Live(chao) = STEP.get() else { return original(c, m, SHADOW_DISP) };
+    if std::env::var_os("SA2_SHOW_SONIC").is_some() || std::env::var("SA2_KNUX_LATE").is_ok_and(|v| v == "1") {
+        return original(c, m, SHADOW_DISP);
     }
-    let keep = m.r32(w + 0x30);
-    m.w32(w + 0x30, 0);
-    Some((w + 0x30, keep))
+    let keep = c.r;
+    let w = m.r32(chao + 0x3C);
+    let far = (0x8000_0000..0x8C00_0000).contains(&w).then(|| m.r32(w + 0x30));
+    if far.is_some() { m.w32(w + 0x30, 0); }
+    call(c, m, rt::sec(m, 60, 1) + CHAO_SHADOW, &[chao]);
+    if let Some(v) = far { m.w32(w + 0x30, v); }
+    c.r = keep;
 }
 
 /// The Ninja draw state words the game's displays set and restore around
@@ -747,9 +776,10 @@ mod tests {
         assert!(spins(111) && spins(115) && spins(116) && !spins(109) && !spins(110) && !spins(0));
         assert!(runs(8) && runs(9) && runs(10) && !runs(7) && !runs(6) && !runs(0) && !runs(11));
         // His 8-frame run at frame 6 = three quarters through: frame 3 of a 4-frame skate cycle.
-        assert_eq!(run_frame(6.0, 8.0, 4.0), 3.0);
-        assert_eq!(run_frame(9.0, 8.0, 4.0), 0.5);
-        assert_eq!(run_frame(1.0, 0.0, 4.0), 0.0);
+        // His step 2.6 a frame, Shadow's skate row 0.12 against his 0.8: 0.39 a frame, wrapped at the end.
+        assert!((run_step(0.0, 2.6, 0.12 / 0.8, 31.0) - 0.39).abs() < 1e-5);
+        assert!((run_step(30.9, 2.6, 0.12 / 0.8, 31.0) - 0.29).abs() < 1e-4);
+        assert_eq!(run_step(5.0, 1.0, f32::NAN, 31.0), 0.0);
     }
     #[test]
     fn on_a_wall_the_chao_is_upright_with_its_belly_to_the_rock() {

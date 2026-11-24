@@ -1957,11 +1957,7 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
     if turn {
         m.w32(cw + 0x0C, chao_yaw(keep_yaw));
     }
-    let shade = Some(task).filter(|_| matches!(STEP.get(), Step::Live(ch) if ch == task) && RIDER.get() != 0).and_then(|t| knux_rig::own_shadow(m, t));
     chao_display_inner(c, m);
-    if let Some((at, keep)) = shade {
-        m.w32(at, keep);
-    }
     if swim.is_some() {
         m.w32(cw + 0x18, keep_y);
     }
@@ -2313,6 +2309,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(KNUX_EXEC, |c, m| exec(c, m, KNUX_EXEC));
     c.rt.set_override(knux_rig::SET_PLAYER_CHAR, knux_rig::set_char);
     c.rt.set_override(knux_rig::AFTER_IMAGE_DISP, knux_rig::after_image);
+    c.rt.set_override(knux_rig::SHADOW_DISP, knux_rig::shadow_disp);
     if std::env::var_os("SA2_CHAO_DRAWLOG").is_some() {
         c.rt.set_override(0x8011_E23C, |c, m| knux_rig::draw_probe(c, m, 0x8011_E23C));
         c.rt.set_override(0x8011_E368, |c, m| knux_rig::draw_probe(c, m, 0x8011_E368));
@@ -4468,7 +4465,7 @@ fn collision_fit(m: &mut Mem, chao: u32) {
 
 thread_local! {
     static SIZE_SAID: Cell<u32> = const { Cell::new(0) };
-    static WIN_DONE: Cell<bool> = const { Cell::new(false) };
+    static WIN_DONE: Cell<usize> = const { Cell::new(0) };
 }
 
 /// A new stage (not a Chao World area change): the game has released the
@@ -4611,11 +4608,12 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         eprintln!("chao-drive: self mode {me} (stage {}, step {:?})", m.r16(STAGE_NUM), STEP.get());
     }
     let pmove = me && player_move_on();
-    // SA2_WIN_AT=frame (debug, test only): once at that frame in a stage, the game's own
+    // SA2_WIN_AT=frame[,frame...] (debug, test only): once at each of those frames in a stage, the game's own
     // stage-clear call for player 0 (main.dol 0x8001C810: it starts the result screen
     // 0x8005DD88 / 0x8005ED8C), to test the result and the way back without playing to the goal.
-    if !chao_world(m) && std::env::var("SA2_WIN_AT").ok().and_then(|v| v.trim().parse::<u64>().ok()).is_some_and(|f| sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= f) && !WIN_DONE.replace(true) {
-        eprintln!("chao-player: debug stage clear (0x8001C810)");
+    if !chao_world(m) && std::env::var("SA2_WIN_AT").ok().and_then(|v| v.split(',').nth(WIN_DONE.get())?.trim().parse::<u64>().ok()).is_some_and(|f| sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= f) {
+        WIN_DONE.set(WIN_DONE.get() + 1);
+        eprintln!("chao-player: debug stage clear (0x8001C810) in stage {}", m.r16(STAGE_NUM));
         let keep = c.r;
         call(c, m, 0x8001_C810, &[0]);
         c.r = keep;
