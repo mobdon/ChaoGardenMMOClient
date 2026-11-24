@@ -56,6 +56,20 @@ impl Region {
     pub fn new(base: u32, end: u32) -> Self {
         Region { base, end, top: base, free: vec![] }
     }
+    /// A region emptied except for `kept` blocks (address, size): they stay allocated, the gaps
+    /// before and between them are free again, and new blocks go after the last of them.
+    /// For an area change that drops every other block at once while files loaded into the
+    /// region are still in use (Shadow's motions under the mixed action rows, chao_player.rs).
+    pub fn with_kept(base: u32, end: u32, kept: &[(u32, u32)]) -> Self {
+        let mut k: Vec<(u32, u32)> = kept.iter().map(|&(a, s)| (a, (s + 31) & !31)).filter(|&(a, s)| a >= base && a + s <= end).collect();
+        k.sort();
+        let (mut at, mut free) = (base, vec![]);
+        for (a, s) in k {
+            if a > at { free.push((at, a - at)); }
+            at = at.max(a + s);
+        }
+        Region { base, end, top: at, free }
+    }
     pub fn alloc(&mut self, size: u32) -> Option<u32> {
         let size = (size + 31) & !31;
         if let Some(i) = self.free.iter().position(|&(_, s)| s >= size) {
@@ -180,6 +194,26 @@ pub fn used_bytes() -> u32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_region_emptied_around_kept_blocks_never_hands_them_out() {
+        // Two files loaded early, other blocks between and after; all but the files dropped.
+        let mut r = Region::new(0x1000, 0x9000);
+        let a = r.alloc(0x400).unwrap();
+        let _x = r.alloc(0x200).unwrap();
+        let b = r.alloc(0x300).unwrap();
+        let _y = r.alloc(0x800).unwrap();
+        let kept = [(a, 0x400), (b, 0x300)];
+        let mut r = Region::with_kept(0x1000, 0x9000, &kept);
+        assert_eq!(r.used(), 0x700);
+        let hits = |p: u32, n: u32| kept.iter().any(|&(k, s)| p < k + s && k < p + n);
+        for n in [0x200, 0x100, 0x800, 0x40, 0x2000] {
+            let p = r.alloc(n).unwrap();
+            assert!(!hits(p, n), "{p:#x}+{n:#x} overlaps a kept block");
+        }
+        // Nothing kept: the whole region again.
+        assert_eq!(Region::with_kept(0x1000, 0x9000, &[]).alloc(0x8000), Some(0x1000));
+    }
+
     use super::*;
 
     #[test]

@@ -4949,9 +4949,18 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // The card box's portrait Chao (extra_chao) lives there too.
         let kept = REMOTE.with_borrow(|r| r.values().filter(|e| e.task != 0).count()) + EXTRA_TASKS.with_borrow(|x| x.len());
         if kept == 0 {
+            // The motion files this module loaded there stay (Shadow's for the mixed action
+            // rows, the run looks in Knuckles's stages): an area change is not a stage change,
+            // his rows go on naming those motions, and with the whole region handed out again
+            // the next remote Chao's blocks would have been written over them (garden thread,
+            // 2026-11-24). Only the other blocks are dropped.
+            let ours: Vec<u32> = SHADOW_MOVE_BLOCKS.with_borrow(|b| b.clone()).into_iter().chain(knux_rig::run_blocks()).collect();
             REMOTE_ALLOC.with_borrow_mut(|r| if let Some((reg, sizes)) = r.as_mut() {
-                *reg = crate::chao_cache::Region::new(REMOTE_HEAP_START, REMOTE_HEAP_END);
+                let keep: Vec<(u32, u32)> = ours.iter().filter_map(|a| sizes.get(a).map(|&n| (*a, n))).collect();
+                *reg = crate::chao_cache::Region::with_kept(REMOTE_HEAP_START, REMOTE_HEAP_END, &keep);
                 sizes.clear();
+                eprintln!("chao-player remote: area change with no remote Chao left: their heap is empty again, {} motion file blocks kept ({} KB)", keep.len(), keep.iter().map(|k| k.1).sum::<u32>() / 1024);
+                sizes.extend(keep);
             });
         } else {
             eprintln!("chao-player remote: {kept} remote Chao outlived the area change; their blocks stay allocated");

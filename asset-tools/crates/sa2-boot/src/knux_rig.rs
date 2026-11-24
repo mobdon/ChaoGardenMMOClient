@@ -200,6 +200,11 @@ fn spare_motions(m: &Mem, table: u32, n: usize) -> Vec<u32> {
     (0..300u32).rev().filter(|k| m.r32(MOTIONS + 8 * k + 4) == 0 && !used.contains(k)).take(n).collect()
 }
 
+/// The run-look files' blocks in the module's own memory (kept across an area change).
+pub(super) fn run_blocks() -> Vec<u32> {
+    RUN_BLOCKS.with_borrow(|b| b.clone())
+}
+
 /// A stage change: the run look is loaded again there, and its files' blocks are free again.
 pub(super) fn forget_run_look() {
     RUN_TABLES.set(None);
