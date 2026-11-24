@@ -2310,6 +2310,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(knux_rig::SET_PLAYER_CHAR, knux_rig::set_char);
     c.rt.set_override(knux_rig::AFTER_IMAGE_DISP, knux_rig::after_image);
     c.rt.set_override(knux_rig::SHADOW_DISP, knux_rig::shadow_disp);
+    c.rt.set_override(knux_rig::SONIC_SHADOW_DISP, knux_rig::sonic_shadow_disp);
     if std::env::var_os("SA2_CHAO_DRAWLOG").is_some() {
         c.rt.set_override(0x8011_E23C, |c, m| knux_rig::draw_probe(c, m, 0x8011_E23C));
         c.rt.set_override(0x8011_E368, |c, m| knux_rig::draw_probe(c, m, 0x8011_E368));

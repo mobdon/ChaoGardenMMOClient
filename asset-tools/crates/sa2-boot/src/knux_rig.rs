@@ -576,7 +576,7 @@ pub(super) fn walk_unseen(c: &mut Cpu, m: &mut Mem) -> bool {
 const SHADOW_SIZE: f32 = 0.45;
 
 pub(super) fn late_body_scale(m: &mut Mem, lr: u32) {
-    if !SHADOW_SCALE.get() || !matches!(lr, 0x8009_B358 | 0x8009_B38C) {
+    if !SHADOW_SCALE.get() || !SHADOW_DRAWS.contains(&lr) {
         return;
     }
     let (cur, k) = (m.r32(NJ_CURRENT_MATRIX), SHADOW_SIZE);
@@ -586,7 +586,7 @@ pub(super) fn late_body_scale(m: &mut Mem, lr: u32) {
 
 /// It is his drop shadow (own_shadow). SA2_KNUX_LATE=1 or SA2_SHOW_SONIC (debug): left drawing.
 pub(super) fn late_body(lr: u32) -> bool {
-    !SHADOW_SCALE.get() && matches!(lr, 0x8009_B358 | 0x8009_B38C) && matches!(STEP.get(), Step::Live(_)) && std::env::var_os("SA2_SHOW_SONIC").is_none() && !std::env::var("SA2_KNUX_LATE").is_ok_and(|v| v == "1")
+    !SHADOW_SCALE.get() && SHADOW_DRAWS.contains(&lr) && matches!(STEP.get(), Step::Live(_)) && std::env::var_os("SA2_SHOW_SONIC").is_none() && !std::env::var("SA2_KNUX_LATE").is_ok_and(|v| v == "1")
 }
 
 thread_local! {
@@ -688,6 +688,25 @@ pub(super) fn wall_frame(root: &[[f32; 4]; 3]) -> [[f32; 4]; 3] {
 /// character shadow draw 0x8011E214, or his own shadow at the Chao's size (mob to choose).
 /// SA2_SHOW_SONIC (debug: he is drawn) and SA2_KNUX_LATE=1 keep his own.
 pub(super) const SHADOW_DISP: u32 = 0x8009_ADFC;
+/// Sonic's and Shadow's shadow display (their task +0x2C, set at main.dol 0x8007E... with the
+/// task's other displays) and the body draws (0x8011E214) inside the two displays, by return address.
+pub(super) const SONIC_SHADOW_DISP: u32 = 0x8007_E304;
+const SHADOW_DRAWS: [u32; 6] = [0x8009_B2F0, 0x8009_B358, 0x8009_B38C, 0x8007_E63C, 0x8007_E780, 0x8007_E794];
+
+/// Sonic's and Shadow's stages and Chao World: their own body shadow at the Chao's size, as in
+/// Knuckles's stages (shadow_disp). SA2_KNUX_SHADOW=off: none; SA2_SHOW_SONIC or SA2_KNUX_LATE=1: his own.
+pub(super) fn sonic_shadow_disp(c: &mut Cpu, m: &mut Mem) {
+    let own = !matches!(STEP.get(), Step::Live(_)) || std::env::var_os("SA2_SHOW_SONIC").is_some() || std::env::var("SA2_KNUX_LATE").is_ok_and(|v| v == "1");
+    if own {
+        return original(c, m, SONIC_SHADOW_DISP);
+    }
+    if std::env::var("SA2_KNUX_SHADOW").is_ok_and(|v| v == "off") {
+        return;
+    }
+    SHADOW_SCALE.set(true);
+    original(c, m, SONIC_SHADOW_DISP);
+    SHADOW_SCALE.set(false);
+}
 /// Scratch for one node's object while the Chao's shadow is drawn (beside the other debug scratch at 0x82F00300).
 const SHADOW_OBJ: u32 = 0x82F0_0400;
 thread_local! {
