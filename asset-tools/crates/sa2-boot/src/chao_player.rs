@@ -27,6 +27,8 @@ use crate::original;
 use sa2_recomp::rt::{self, Cpu, Mem};
 use std::cell::Cell;
 
+mod emerald_orbit;
+
 const SONIC_EXEC: u32 = 0x8008_3E44;
 const SONIC_DISP: u32 = 0x8007_BFF4;
 const KNUX_EXEC: u32 = 0x8009_F8A0;
@@ -2975,6 +2977,7 @@ const TUNE_NONE: [f32; 7] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
 const BOOT_TUNE: [f32; 7] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.75];
 
 fn try_on(c: &mut Cpu, m: &mut Mem) {
+    emerald_orbit::draw(c, m);
     if debug_set("tryon").as_deref() != Some("1") {
         return;
     }
@@ -3813,6 +3816,7 @@ fn drop_stage_loads() {
     BAKED_BOOT.set(None);
     HUB_SHOE.set(None);
     LIGHT_SHOE.set(None);
+    emerald_orbit::forget();
     GLOVE_FIT.set(None);
     SHADOW_MOVES.set(false);
     BOARD.set(None);
