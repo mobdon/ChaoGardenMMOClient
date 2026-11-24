@@ -27,6 +27,9 @@ use crate::original;
 use sa2_recomp::rt::{self, Cpu, Mem};
 use std::cell::Cell;
 
+#[path = "knux_rig.rs"]
+mod knux_rig;
+
 const SONIC_EXEC: u32 = 0x8008_3E44;
 const SONIC_DISP: u32 = 0x8007_BFF4;
 const KNUX_EXEC: u32 = 0x8009_F8A0;
@@ -1306,7 +1309,7 @@ const SHOE_LENGTH_RATIO: f32 = 0.90;
 /// Chao foot position is last frame's pose.
 fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     let (Some(tex), Step::Live(chao)) = (SHADOW_TEX.get(), STEP.get()) else { return };
-    if OWN_MOTION.get() || std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") || debug_off("shoes") {
+    if std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") || debug_off("shoes") {
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 { eprintln!("chao-player shoes: own motion {}", OWN_MOTION.get()); }
         return;
     }
@@ -1995,7 +1998,7 @@ fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
     // Only for riders on Sonic's skeleton (his exec): the overlay's node map is
     // his and Shadow's. Knuckles's and Rouge's stages keep their own path
     // (knuckles_rules: the Chao's own motions, mirrored where set).
-    let old_level = !chao_world(m) && (LAST_EXEC.get() != SONIC_EXEC || std::env::var("SA2_LEVEL_RETARGET").is_ok_and(|v| v == "1"));
+    let old_level = !chao_world(m) && (!matches!(LAST_EXEC.get(), SONIC_EXEC | KNUX_EXEC) || std::env::var("SA2_LEVEL_RETARGET").is_ok_and(|v| v == "1"));
     if PILOT_SEAT.get().is_none() && live && RIDER.get() != 0 && (old_level || (self_retarget(m) && self_in_motion()) || std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")) {
         level_pose(m, c.r[3]);
         CHAO_DRAW.set(true);
@@ -2266,6 +2269,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     }
     c.rt.set_override(SONIC_EXEC, |c, m| exec(c, m, SONIC_EXEC));
     c.rt.set_override(KNUX_EXEC, |c, m| exec(c, m, KNUX_EXEC));
+    c.rt.set_override(knux_rig::SET_PLAYER_CHAR, knux_rig::set_char);
     // The walkers' exec: only once walker.rs asks for the pilot (own_pilot).
     c.rt.set_override(WALKER_EXEC, |c, m| {
         LAST_EXEC.set(WALKER_EXEC);
@@ -2631,6 +2635,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
                 let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
                 for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, seat[r][k].to_bits()); } }
             }
+            if LEVEL_RIG.get() { knux_rig::at_root(m); }
             CHAO_PLACE.set(mtx(m, m.r32(NJ_CURRENT_MATRIX)));
         }
         rel_original(c, m, a, chao_node);
@@ -2664,6 +2669,8 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
             // The hands as this draw places them, for the hammer gloves: after
             // the skate overlay, or the gloves stay on the Chao's own run arms
             // while the arm meshes take the skate pose (up to 75 degrees apart).
+            // (Punch 2 on the level rig: the Chao's karate mirrored, as on the old path.)
+            if LEVEL_RIG.get() && MIRROR.get() { mirror_node(m, i, m.r32(NJ_CURRENT_MATRIX)); }
             record_hand(m, i, m.r32(NJ_CURRENT_MATRIX));
             track_log(m, i, &own);
             head_trace(m, i, &own);
@@ -2916,7 +2923,7 @@ fn stride_lock(m: &mut Mem, chao: u32) {
     // In his walk and jog (the Chao's own motion alone) the cycle is his too.
     let b = if GAIT.get().is_some_and(|g| g != Gait::Run) && !std::env::var("SA2_GAIT_LOCK").is_ok_and(|v| v == "0") { 1.0 } else { skate_blend(false) };
     let (cw, obj2) = (m.r32(chao + 0x34), m.r32(P1_OBJ2));
-    if b <= 0.0 || cw == 0 || !(0x8000_0000..0x8C00_0000).contains(&obj2) || std::env::var("SA2_STRIDE_LOCK").is_ok_and(|v| v == "0") {
+    if b <= 0.0 || OWN_MOTION.get() || cw == 0 || !(0x8000_0000..0x8C00_0000).contains(&obj2) || std::env::var("SA2_STRIDE_LOCK").is_ok_and(|v| v == "0") {
         return;
     }
     let f = |m: &Mem, a: u32| f32::from_bits(m.r32(a));
@@ -3336,7 +3343,8 @@ fn foot_place(m: &mut Mem, i: usize, src: usize, own: &[[f32; 4]; 3], blend: f32
 /// `step`: advance one frame (once per draw, at node 0).
 fn skate_blend(step: bool) -> f32 {
     if LEVEL_RIG.get() {
-        return 1.0;
+        // Out while the Chao plays its own motion (Knuckles's punch, glide, climb).
+        return knux_rig::overlay(step);
     }
     // Swimming or in the air in Chao World the Chao plays its own motion: no overlay, no jets.
     if SWIM.get().is_some() || AIR.get() {
@@ -4410,7 +4418,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // alm_aruki_ncz (walk), 119 alm_run (run); common-motions.ini.
         // shortcut: walk/run switch at 1.0 / 0.9 units a frame (hysteresis as
         // the hub's 1.05/0.95); not yet scaled to the hub's speed units.
-        let old_level = addr != SONIC_EXEC || std::env::var("SA2_LEVEL_RETARGET").is_ok_and(|v| v == "1");
+        let old_level = !matches!(addr, SONIC_EXEC | KNUX_EXEC) || std::env::var("SA2_LEVEL_RETARGET").is_ok_and(|v| v == "1");
         if chao_world(m) || !old_level {
             let d = d2.sqrt();
             let last = LAST_MOTION.get();
@@ -4428,7 +4436,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             STILL.set(still);
             let gait = (me && own_state.is_none() && (d >= 0.01 || (GAIT.get().is_some() && still < 6)) && !shadow_style()).then(|| gait(u32::from(m.r16(m.r32(P1_OBJ2).wrapping_add(OBJ2_ACTION))))).flatten();
             GAIT.set(gait);
-            let want = if let Some(mo) = own_state { mo } else if let Some(g) = gait.filter(|_| !on_board) { g.motion() } else if d < 0.01 || on_board { 0 } else if d >= if last == 119 { 0.9 } else { 1.0 } { 119 } else { 578 };
+            let want = if let Some(mo) = own_state { mo } else if addr == KNUX_EXEC && OWN_MOTION.get() { last } else if let Some(g) = gait.filter(|_| !on_board) { g.motion() } else if d < 0.01 || on_board { 0 } else if d >= if last == 119 { 0.9 } else { 1.0 } { 119 } else { 578 };
             if want != last {
                 call(c, m, rt::sec(m, 60, 1) + AL_SET_MOTION_LINK, &[chao, want]);
                 LAST_MOTION.set(want);
@@ -4459,6 +4467,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // the rider's B is its own move, not Pet (action 31). Each frame, as
         // the Chao's behaviours may enable touch again (AL_EnableTouch 0x5AB0).
         call(c, m, rt::sec(m, 60, 1) + AL_DISABLE_NADE, &[chao]);
+        if addr == KNUX_EXEC { knux_rig::no_pick_up(c, m, chao); }
         // The Chao's gear (Shadow's and Knuckles's textures and models, for the
         // Air Shoes, the ball and the Hammer Gloves), once per stage, in every
         // stage the Chao plays, whoever the hidden character is: each file is
@@ -4542,19 +4551,19 @@ thread_local! {
     static ARM_FWD: Cell<f32> = const { Cell::new(0.0) };
 }
 
-/// mob's approved rules for Knuckles and Rouge (coordinator 2026-11-21):
-/// punch 1 (Knuckles motion 109) = Chao karate 582, punch 2 (110) = 582
-/// mirrored, punch 3 on (111 uppercut, 138 hammer) = Knuckles retargeted with
-/// the arms biased 0.8 forward; glide (105) = Chao fly 130, climb (100) =
-/// Chao climb 155; dig (90-92, 95-96) and the rest retargeted.
-/// shortcut: the karate motion starts on the action change, not frame-synced
-/// to Knuckles's 109/110 nframe.
-/// shortcut: no arm snap (chao-arm-dirs.json is not on this PC): 1:1 arms.
+/// mob's approved rules for Knuckles (coordinator 2026-11-21, 2026-11-24):
+/// the Chao's own motion in his punch 1 and 2, glide and climb
+/// (knux_rig::own_motion); every other state of his (punch 3, hammer, dig,
+/// drill) is the Chao's own rig with the overlay from his skeleton, as in
+/// Sonic's stages. Rouge's stages run Knuckles.
+/// SA2_LEVEL_RETARGET=1 (debug): the old limb copy, arms biased 0.8 forward
+/// in 111 / 138.
 fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
     let obj2 = m.r32(P1_OBJ2);
     if !(0x8000_0000..0x8C00_0000).contains(&obj2) {
         return;
     }
+    knux_rig::test_upgrades(m, obj2);
     let idx = u32::from(m.r16(obj2 + OBJ2_ACTION));
     let table = m.r32(obj2 + OBJ2_PLACTPTR);
     if !(0x8000_0000..0x8C00_0000).contains(&table) {
@@ -4563,29 +4572,22 @@ fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
     // The animation state (PC CharObj2 AnimInfo.Current; mob's numbers).
     // SA2_KNUX_STATE=n (debug): treat the rider as in state n, to check a rule.
     let act = std::env::var("SA2_KNUX_STATE").ok().filter(|_| forced_now()).and_then(|v| v.parse().ok()).unwrap_or(idx as u16);
-    let actnum = m.r16(table + 0x10 * idx);
-    if LAST_ACT.get() != act {
-        eprintln!("chao-player knux: state {act} actnum {actnum}");
-    }
-    let (own, mirror, fwd) = match act {
-        109 => (Some(582), false, 0.0),
-        110 => (Some(582), true, 0.0),
-        111 | 138 => (None, false, 0.8),
-        105 => (Some(130), false, 0.0),
-        100 => (Some(155), false, 0.0),
-        _ => (None, false, 0.0),
-    };
+    let own = knux_rig::own_motion(act);
     if LAST_ACT.replace(act) != act {
-        eprintln!("chao-player knux: action {act} -> chao motion {own:?} mirror {mirror} arm fwd {fwd}");
-        if let Some(mo) = own {
+        eprintln!("chao-player knux: state {act} motion {} -> chao motion {own:?}", m.r16(table + 0x10 * idx));
+        if let Some((mo, _)) = own {
             let s1 = rt::sec(m, 60, 1);
             call(c, m, s1 + AL_SET_MOTION_LINK, &[chao, mo]);
             LAST_MOTION.set(mo);
         }
     }
     OWN_MOTION.set(own.is_some());
-    MIRROR.set(mirror);
-    ARM_FWD.set(fwd);
+    MIRROR.set(own.is_some_and(|o| o.1));
+    ARM_FWD.set(if matches!(act, 111 | 138) { 0.8 } else { 0.0 });
+    if own.is_some_and(|o| o.0 == 582) {
+        knux_rig::punch_lock(m, chao);
+    }
+    knux_rig::log(m, chao, act);
 }
 
 /// SA2_SONIC_STATE=n[,flags] (debug): hold the rider in animation state n
