@@ -1934,6 +1934,9 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
     let task = c.r[3];
     let cw = m.r32(task + 0x34);
     let own = matches!(STEP.get(), Step::Live(ch) if ch == task) && cw != 0 && self_drive(m) && !std::env::var("SA2_CHAO_TILT").is_ok_and(|v| v == "1");
+    if own && PMOVE_CHAO.get() == task {
+        if let Some((his, _, _)) = TWP_MIRROR.get().filter(|o| o.1 == cw) { game_placed_at(m, his, cw); }
+    }
     let keep = (m.r32(cw.wrapping_add(0x08)), m.r32(cw.wrapping_add(0x10)));
     // The character's exec leaves its own yaw in the shared task work, and
     // the two do not mean the same: the character goes along (cos, sin) of
@@ -4453,6 +4456,20 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
     IN_PMOVE.set(false);
     m.w32(own, m.r32(cw));
     m.w32(own + 4, m.r32(cw + 4));
+    // His body's hit shape is put by his exec at his own centre height above his feet (5.4,
+    // whatever his land collision's centre is set to), over the Chao's head: object triggers
+    // at the Chao's height were missed by the game's own hit (the lobby exit's, 4.0 above its
+    // pad). Brought down to the fitted centre height, along the same line from his feet.
+    if let Some((obj2, full)) = FULL_SIZE.get().filter(|o| o.0 == m.r32(P1_OBJ2)) {
+        let (fit, full) = (f32::from_bits(m.r32(obj2 + PW_CENTRE)), f32::from_bits(full[2]));
+        let body = { let p = m.r32(own + 0x2C); if (0x8000_0000..0x8C00_0000).contains(&p) { m.r32(p + 0xC) } else { 0 } };
+        if (0x8000_0000..0x8C00_0000).contains(&body) {
+            for o in [0u32, 4, 8] {
+                let v = lowered(f32::from_bits(m.r32(cw + 0x14 + o)), f32::from_bits(m.r32(body + 8 + o)), fit, full);
+                m.w32(body + 8 + o, v.to_bits());
+            }
+        }
+    }
     CHAR_ANG.set(Some([m.r32(cw + 0x08), m.r32(cw + 0x0C), m.r32(cw + 0x10)]));
     m.w32(cw, chao_head[0]);
     m.w32(cw + 4, chao_head[1]);
@@ -4744,6 +4761,12 @@ fn game_moved(last: Option<(u32, u32, [u32; 6])>, own: u32, cw: u32, now: [u32; 
     last.is_some_and(|(o, w, was)| o == own && w == cw && was != now)
 }
 
+/// One coordinate of his body shape's centre `at`, with his feet at `feet`, at the fitted
+/// centre height `fit` in place of his own `full`; as it is when the fit is not a smaller one.
+fn lowered(feet: f32, at: f32, fit: f32, full: f32) -> f32 {
+    if fit > 0.0 && fit < full { feet + (at - feet) * fit / full } else { at }
+}
+
 /// A change of place too long for one frame's push by a solid object: the game placing the player.
 fn far_step(was: [u32; 6], now: [u32; 6]) -> bool {
     (3..6).any(|i| (f32::from_bits(now[i]) - f32::from_bits(was[i])).abs() > 3.0)
@@ -4770,6 +4793,13 @@ fn game_placed(m: &mut Mem, task: u32, chao: u32) {
     if own == 0 || cw == 0 {
         return;
     }
+    game_placed_at(m, own, cw);
+}
+
+/// The same for the two task works. Also done before the player's Chao is drawn: the push
+/// that stands the hidden character on a solid object's top comes after his exec, and taken
+/// only at his next exec the Chao was drawn 0.58 into the pad (garden transporter, lobby exit).
+fn game_placed_at(m: &mut Mem, own: u32, cw: u32) {
     let now = placed(m, own);
     if game_moved(TWP_MIRROR.get(), own, cw, now) {
         let f = |v: u32| f32::from_bits(v);
@@ -6171,6 +6201,17 @@ mod tests {
         assert!(super::exit_near([0.0, 2.5, 0.0], [0.0, 0.0, 0.0]));
         assert!(super::exit_near([12.0, 0.0, 10.0], [0.0, 0.0, 0.0]));
         assert!(!super::exit_near([80.0, 0.0, 80.0], [0.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn his_body_shape_sits_at_the_chaos_centre_height() {
+        // On the lobby exit's pad (feet 3.09): from 5.4 above them to 2.2 above them.
+        assert!((super::lowered(3.09, 8.49, 2.2, 5.4) - 5.29).abs() < 1e-4);
+        // Sideways coordinates of an upright body do not move.
+        assert_eq!(super::lowered(7.0, 7.0, 2.2, 5.4), 7.0);
+        // His own size (SA2_FULL_SIZE) or no fit: left as it is.
+        assert_eq!(super::lowered(3.09, 8.49, 5.4, 5.4), 8.49);
+        assert_eq!(super::lowered(3.09, 8.49, 0.0, 5.4), 8.49);
     }
 
     #[test]
