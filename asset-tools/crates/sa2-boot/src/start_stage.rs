@@ -438,6 +438,9 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             RESIDENT_TWP.set([0; 3]);
             RESIDENT_TASK.set([0; 3]);
             LEAVING.set([0; 3]);
+            SHARED.set([None; 3]);
+            MOTION.set([0; 3]);
+            PINNED.set([false; 3]);
             STANDING_TASK.set(0);
         }
         // As the egg: ENTRY is the arrival point only once the area has placed the player (mob 2026-11-23).
@@ -449,6 +452,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         } else if RESIDENTS_OUT.get() {
             roam_live(c, m, text, now);
         }
+        share_residents(c, m, text);
         hold_residents(m);
         restore_cocoon(m);
         watch_slot(m);
@@ -713,6 +717,7 @@ fn roam_live(c: &mut Cpu, m: &mut Mem, text: u32, now: u32) {
                 continue;
             }
             guest_call(c, m, text + AL_SET_MOTION_LINK, &[task[n], WALK_MOTION]);
+            set_motion(n, WALK_MOTION);
         }
         leaving[n] += 1;
         let at = twp[n] + 0x14;
@@ -774,6 +779,10 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32, which: &[usize]) {
         if task != 0 {
             twp[n] = m.r32(task + 0x34);
             tasks[n] = task;
+            set_motion(n, 0);
+            let mut pinned = PINNED.get();
+            pinned[n] = false;
+            PINNED.set(pinned);
             if n == STANDING {
                 standing_task = task;
             }
@@ -783,6 +792,13 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32, which: &[usize]) {
     RESIDENT_TWP.set(twp);
     RESIDENT_TASK.set(tasks);
     c.r[1] = sp;
+    // Shared residents: the AI hook to hold them still on a game that only
+    // draws them, and the motion hook to send what the leading game's AI plays.
+    for (a, f) in [(AL_BEHAVIOR_CONTROL, crate::chao_player::behavior as sa2_recomp::rt::Func), (AL_SET_MOTION_LINK, resident_motion)] {
+        if !c.rt.overrides.contains_key(&(text + a)) {
+            c.rt.set_override(text + a, f);
+        }
+    }
     // Tails stands as the guide only by the lobby's arrival teleporter.
     if standing_task != 0 && now == LOBBY {
         // chao_player's AI hook skips the standing resident; install it if
@@ -834,11 +850,124 @@ pub(crate) fn resident_type(m: &Mem, task: u32) -> Option<u8> {
 static STANDING_TASK: Global<u32> = global!(0);
 
 /// True for the task or taskwk (AL_BehaviorControl's r3) of a resident that
-/// runs no AI: the standing one, and one walking out.
+/// runs no AI: the standing one, one walking out, and every one while
+/// another player's game runs them (see share_residents).
 pub(crate) fn standing_resident(m: &Mem, r3: u32) -> bool {
-    let (tasks, leaving) = (RESIDENT_TASK.get(), LEAVING.get());
-    let out = (0..3).filter(|&n| leaving[n] != 0).map(|n| tasks[n]);
+    let (tasks, leaving, drawn) = (RESIDENT_TASK.get(), LEAVING.get(), !LEAD.get());
+    let out = (0..3).filter(|&n| drawn || leaving[n] != 0).map(|n| tasks[n]);
     std::iter::once(STANDING_TASK.get()).chain(out).any(|task| task != 0 && (r3 == task || r3 == m.r32(task + 0x34)))
+}
+
+// ---- Residents shared between players (MMO glue). ----
+// The server names one player's game per area as the leader. That game runs
+// the roaming residents with the game's own Chao AI and sends their poses;
+// every other game holds their AI and places them from those poses.
+
+/// This game runs the residents' AI. True with no server (the PC window).
+static LEAD: Global<bool> = global!(true);
+/// The leader's last pose of each resident: position, yaw, motion.
+static SHARED: Global<[Option<([f32; 3], u32, u32)>; 3]> = global!([None; 3]);
+/// The motion each resident last had set (0: none seen yet).
+static MOTION: Global<[u32; 3]> = global!([0; 3]);
+/// A drawn resident has been put on the leader's spot once (later it glides).
+static PINNED: Global<[bool; 3]> = global!([false; 3]);
+/// Frames between pose exchanges, as chao_player's own pose (about 10 a second).
+const SHARE_EVERY: u64 = 6;
+/// The part of the way to the leader's spot a drawn resident covers each
+/// frame (an MMO choice: smooths the 10-a-second poses).
+const GLIDE: f32 = 0.25;
+
+fn set_motion(n: usize, motion: u32) {
+    let mut all = MOTION.get();
+    all[n] = motion;
+    MOTION.set(all);
+}
+
+/// AL_SetMotionLink(task, motion): a resident's motion is kept for its pose.
+/// shortcut: only AL_SetMotionLink is seen, so a motion the AI sets another way (AL_SetMotionLinkStep 0x1B4DC and others) is not sent; read the motion from the Chao's work once its offset is traced.
+fn resident_motion(c: &mut Cpu, m: &mut Mem) {
+    if let Some(n) = RESIDENT_TASK.get().iter().position(|&t| t != 0 && t == c.r[3]) {
+        set_motion(n, c.r[4]);
+    }
+    let a = sa2_recomp::rt::sec(m, 60, 1) + AL_SET_MOTION_LINK;
+    crate::chao_player::rel_original(c, m, a, resident_motion);
+}
+
+/// SA2_RESIDENT_IN: "lead 0|1", then one "n x y z yaw motion" line per
+/// resident the leader has out. No file: this game leads.
+fn parse_shared(text: Option<&str>) -> (bool, [Option<([f32; 3], u32, u32)>; 3]) {
+    let mut poses = [None; 3];
+    let Some(text) = text else { return (true, poses) };
+    for line in text.lines() {
+        let v: Vec<f32> = line.split_whitespace().filter_map(|w| w.parse().ok()).collect();
+        if let [n, x, y, z, yaw, motion] = v[..] {
+            // Whole and not negative: a cast would turn -1 or 0.5 into resident 0.
+            if let Some(p) = Some(n).filter(|n| *n >= 0.0 && n.fract() == 0.0).and_then(|n| poses.get_mut(n as usize)) {
+                *p = Some(([x, y, z], yaw as u32 & 0xFFFF, motion as u32));
+            }
+        }
+    }
+    (text.lines().next() != Some("lead 0"), poses)
+}
+
+#[test]
+fn shared_residents_lead_without_a_file_and_read_the_leaders_poses() {
+    assert_eq!(parse_shared(None), (true, [None; 3]));
+    assert_eq!(parse_shared(Some("lead 1\n")), (true, [None; 3]));
+    let (lead, poses) = parse_shared(Some("lead 0\n2 1.5 0 -2 16384 578\n7 0 0 0 0 0\n-1 9 9 9 0 0\n0.5 9 9 9 0 0\nbad\n"));
+    assert!(!lead);
+    assert_eq!(poses, [None, None, Some(([1.5, 0.0, -2.0], 16384, 578))]);
+}
+
+/// Every frame: exchange the residents' poses with the page (SA2_RESIDENT_IN
+/// and SA2_RESIDENT_OUT, as chao_player's pose files), and on a game that
+/// does not lead, put each roaming resident where the leader has it.
+/// Unverified live. The guide stands at the same spot in every game and is not sent.
+fn share_residents(c: &mut Cpu, m: &mut Mem, text: u32) {
+    let (twp, task) = (RESIDENT_TWP.get(), RESIDENT_TASK.get());
+    let roaming = || (0..RESIDENTS.len()).filter(|&n| n != STANDING && task[n] != 0);
+    if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % SHARE_EVERY == 0 {
+        let path = std::env::var("SA2_RESIDENT_IN").ok();
+        let file = path.as_ref().and_then(|p| std::fs::read_to_string(p).ok());
+        // A server file that cannot be read this time (or has no word yet) changes nothing.
+        let (lead, poses) = if path.is_some() && file.is_none() { (LEAD.get(), SHARED.get()) } else { parse_shared(file.as_deref()) };
+        if lead != LEAD.get() {
+            eprintln!("residents: this game {}", if lead { "leads" } else { "draws the leader's" });
+            PINNED.set([false; 3]);
+        }
+        LEAD.set(lead);
+        SHARED.set(poses);
+        if let Ok(path) = std::env::var("SA2_RESIDENT_OUT") {
+            let motion = MOTION.get();
+            let lines: String = roaming()
+                .map(|n| {
+                    let g = |o: u32| f32::from_bits(m.r32(twp[n] + o));
+                    format!("{n} {} {} {} {} {}\n", g(0x14), g(0x18), g(0x1C), m.r32(twp[n] + 0x0C) & 0xFFFF, motion[n])
+                })
+                .collect();
+            let _ = std::fs::write(path, lines);
+        }
+    }
+    if LEAD.get() {
+        return;
+    }
+    let (shared, mut pinned) = (SHARED.get(), PINNED.get());
+    for n in roaming() {
+        let Some((to, yaw, motion)) = shared[n] else { continue };
+        let k = if pinned[n] { GLIDE } else { 1.0 };
+        pinned[n] = true;
+        for (i, to) in to.into_iter().enumerate() {
+            let at = twp[n] + 0x14 + 4 * i as u32;
+            let from = f32::from_bits(m.r32(at));
+            m.w32(at, (from + (to - from) * k).to_bits());
+        }
+        m.w32(twp[n] + 0x0C, yaw);
+        if motion != 0 && motion != MOTION.get()[n] {
+            guest_call(c, m, text + AL_SET_MOTION_LINK, &[task[n], motion]);
+            set_motion(n, motion);
+        }
+    }
+    PINNED.set(pinned);
 }
 
 /// ChaoMain's section `n` address, from the same module entry as `text`.

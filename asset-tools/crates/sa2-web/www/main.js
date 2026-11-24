@@ -38,7 +38,7 @@ const sh = {
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
-  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32 + 8 + 128 + 8 + 8 + 8 + 1024 + 4 + 32 + 8 + 256 + 4 + 2048 + 8 + 64 + 72), // the MMO files (worker.js, MMO)
+  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32 + 8 + 128 + 8 + 8 + 8 + 1024 + 4 + 32 + 8 + 256 + 4 + 2048 + 8 + 64 + 72 + 520 + 520), // the MMO files (worker.js, MMO)
   // The RAM pages the decoder read for its last frame: [0] word count, then bits (decode.js, worker.js /dev/gxpages).
   pages: new SharedArrayBuffer(4 + 65536),
 };
@@ -300,7 +300,7 @@ function joinRoom(token, zone) {
       }
       // Dev (admin) accounts always get the dev menu (gear tuner, debug toggles, info).
       if (self?.admin && !tunerShown) { tunerShown = true; gearTuner(); }
-      showCard(self); overlay?.snapshot(m); othersIn(m, token); tagNames(m); breedSnapshot(m);
+      showCard(self); overlay?.snapshot(m); othersIn(m, token); residentsIn(m); tagNames(m); breedSnapshot(m);
     }
     if (m.type === 'event') { overlay?.event(m); breedEvent(m); queueEvent(m); if (m.kind === 'staff-goto') staffGoto(m); }
     if (m.kind === 'chat') chatLine(m); else if (m.kind === 'voice') voicePlay(m);
@@ -325,7 +325,7 @@ function staffGoto(m) {
 // Garden resident with no pose as "id idle"); Chao
 // records go to and from the server by version. The server routes may not
 // exist yet: failures stay quiet.
-const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472, SKILLS: 156476, INFO: 156508, INFO_MAX: 256, OWN: 156772, GOTO: 158824, GOTO_MAX: 64, PVP: 158896, PVP_MAX: 72 };
+const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472, SKILLS: 156476, INFO: 156508, INFO_MAX: 256, OWN: 156772, GOTO: 158824, GOTO_MAX: 64, PVP: 158896, PVP_MAX: 72, RES_OUT: 158968, RES_IN: 159488, RES_MAX: 512 };
 const mmoBytes = new Uint8Array(sh.mmo);
 globalThis.sa2Mmo = sh.mmo; // for checks from the console
 const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
@@ -450,6 +450,14 @@ function mmoTick(token) {
       if (full || Object.keys(out).length > 1) room.ws.send(JSON.stringify({ type: 'action', action: 'chao-pose', pose: out }));
     } catch {}
   }
+  // The area's character Chao (sa2-boot start_stage.rs share_residents): only
+  // the game the server named leader sends where its own AI has them.
+  const res = mmoHead(MMO.RES_OUT), rseq2 = Atomics.load(res, 0);
+  if (rseq2 !== resSeen && room?.ws.readyState === 1) {
+    resSeen = rseq2;
+    const lines = new TextDecoder().decode(mmoBytes.slice(MMO.RES_OUT + 8, MMO.RES_OUT + 8 + res[1])).split('\n').filter(Boolean);
+    if (resLead) room.ws.send(JSON.stringify({ type: 'action', action: 'resident-pose', poses: lines.map((l) => l.split(' ').map(Number)) }));
+  }
   const pick = mmoHead(MMO.PICK), pseq = Atomics.load(pick, 0);
   if (pseq !== pickSeen) {
     pickSeen = pseq;
@@ -476,6 +484,20 @@ function mmoTick(token) {
         mmoBytes.set([1, ...j.skills.flatMap(([level, exp, points]) => [level, exp, points >> 8, points & 255])], MMO.SKILLS);
       }).catch(() => {});
   }
+}
+// The server's word on the area's character Chao, for the game
+// (/mmo/resident-in): "lead 0|1", then the leader's "n x y z yaw motion" lines.
+// No word (an area without them): the game runs its own, as before.
+let resSeen = 0, resLead = false;
+function residentsIn(m) {
+  const r = m.residents;
+  resLead = !!r?.lead;
+  const text = new TextEncoder().encode(`lead ${!r || r.lead ? 1 : 0}\n` + (r?.lead === false ? r.poses || [] : []).map((p) => p.join(' ') + '\n').join(''));
+  const n = Math.min(text.length, MMO.RES_MAX);
+  mmoBytes.set(text.subarray(0, n), MMO.RES_IN + 8);
+  const h = mmoHead(MMO.RES_IN);
+  Atomics.store(h, 1, n);
+  Atomics.add(h, 0, 1);
 }
 function othersIn(m, token) {
   Object.assign(queue, { self: m.selfId, token });
@@ -958,7 +980,7 @@ async function start() {
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
   if (token) { e.SA2_OWN_RECORD_IN = '/mmo/own-record'; if (await ownRecord(token).catch(() => {}) === 'hatch') e.SA2_HATCH_EGG = '1'; e.SA2_GARDENS = gardens; }
-  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_PVP_IN: '/mmo/pvp-in', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_RINGS_IN: '/mmo/rings-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_STORY_IN: '/mmo/story-in', SA2_STORY_OUT: '/mmo/story-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick', SA2_SKILLS_IN: '/mmo/skills-in', SA2_GOTO_IN: '/mmo/goto-in' });
+  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RESIDENT_OUT: '/mmo/resident-out', SA2_RESIDENT_IN: '/mmo/resident-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_PVP_IN: '/mmo/pvp-in', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_RINGS_IN: '/mmo/rings-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_STORY_IN: '/mmo/story-in', SA2_STORY_OUT: '/mmo/story-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick', SA2_SKILLS_IN: '/mmo/skills-in', SA2_GOTO_IN: '/mmo/goto-in' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
   if (token) cardChao(token), storyLoad(token);
