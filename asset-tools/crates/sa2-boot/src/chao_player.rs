@@ -4538,6 +4538,8 @@ fn drop_stage_loads() {
     emerald_orbit::forget();
     GLOVE_FIT.set(None);
     SHADOW_MOVES.set(false);
+    SHADOW_MOVES_OK.set(false);
+    remote_release(&SHADOW_MOVE_BLOCKS.take());
     BOARD.set(None);
     crate::card_box::drop_stage_loads();
 }
@@ -5035,6 +5037,10 @@ const MIXED_ACTIONS: u32 = 0x82F0_2000;
 
 thread_local! {
     static SHADOW_MOVES: Cell<bool> = const { Cell::new(false) };
+    /// Shadow's motions for the mixed rows were all there after this stage's load.
+    static SHADOW_MOVES_OK: Cell<bool> = const { Cell::new(false) };
+    /// Shadow's motion file's blocks in the module's own memory.
+    static SHADOW_MOVE_BLOCKS: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
     static SHADOW_STYLE: Cell<Option<bool>> = const { Cell::new(None) };
 }
 
@@ -5438,6 +5444,17 @@ fn shadow_moves(c: &mut Cpu, m: &mut Mem) {
     if !(0x8000_0000..0x8C00_0000).contains(&obj2) || m.r8(obj2 + 1) != 0 || std::env::var("SA2_SHADOW_MOVES").is_ok_and(|v| v == "0") {
         return;
     }
+    // Not before the gear may load (GEAR_LOAD_AT): this ran on his first exec in a new stage,
+    // about 100 frames into Chao World's own load after a stage, and loaded Shadow's motion file
+    // into the middle of it. When that went wrong his action rows pointed at motions that were
+    // not there, and his animation step (main.dol 0x8003D8D0, called from his exec at
+    // 0x8008671C) never came back: the game stopped at the Chao World card (City Escape then
+    // lobby, every run without the emeralds loaded; Security Hall on an older build). Until
+    // then, and if the file's motions are not all there after the load, he keeps Sonic's rows.
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    if !SHADOW_MOVES.get() && f < GEAR_LOAD_AT.get() {
+        return;
+    }
     if !SHADOW_MOVES.replace(true) {
         let rows: Vec<u32> = (0..ACTION_ROWS).filter(|&i| m.r16(SONIC_ACTIONS + 0x10 * i) != m.r16(SHADOW_ACTIONS + 0x10 * i)).collect();
         let need: Vec<u32> = rows.iter().map(|&i| u32::from(m.r16(SHADOW_ACTIONS + 0x10 * i))).collect();
@@ -5445,9 +5462,16 @@ fn shadow_moves(c: &mut Cpu, m: &mut Mem) {
         let keep: Vec<u32> = (0..0x960).step_by(4).map(|o| m.r32(MOTIONS + o)).collect();
         let heap_var = c.r[13].wrapping_sub(SY_HEAP_SDA);
         let keep_heap = m.r32(heap_var);
-        m.w32(heap_var, GEAR_HEAP);
+        // Into the module's own memory where there is one (as the run-look files, knux_rig):
+        // back in the lobby after a stage the gear heap has 0.2 to 0.4 MB free and this file
+        // did not fit (the loader answered 0 after City Escape, 4 runs of 4); its blocks are
+        // given back at the next stage change. Without that memory: the gear heap, as before.
+        let before = remote_blocks();
+        let heap = remote_heap(c, m).unwrap_or(GEAR_HEAP);
+        m.w32(heap_var, heap);
         let mtn = call(c, m, LOAD_MTN, &[SHADOW_MTN_NAME]);
         m.w32(heap_var, keep_heap);
+        SHADOW_MOVE_BLOCKS.with_borrow_mut(|b| b.extend(remote_blocks().into_iter().filter(|a| !before.contains(a))));
         for (k, o) in (0..0x960u32).step_by(4).enumerate() {
             if !need.contains(&(o / 8)) {
                 m.w32(MOTIONS + o, keep[k]);
@@ -5463,9 +5487,14 @@ fn shadow_moves(c: &mut Cpu, m: &mut Mem) {
                 m.w32(d + o, m.r32(s + o));
             }
         }
-        eprintln!("chao-player: Shadow's motions {mtn:#x}; states {rows:?} -> motions {need:?}");
+        let ram = |a: u32| (0x8000_0000..0x8C00_0000).contains(&a);
+        let whole = need.iter().all(|&k| { let p = m.r32(MOTIONS + 8 * k + 4); ram(p) && ram(m.r32(p)) && (1..100_000).contains(&m.r32(p + 4)) });
+        SHADOW_MOVES_OK.set(whole);
+        eprintln!("chao-player: Shadow's motions {mtn:#x}; states {rows:?} -> motions {need:?}{}", if whole { "" } else { " (NOT all loaded: he keeps Sonic's rows in this stage)" });
     }
-    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    if !SHADOW_MOVES_OK.get() {
+        return;
+    }
     let board = BOARD.with_borrow(|b| b.as_ref().is_some_and(|b| f <= b.0 + 2));
     let shadow = shadow_style();
     if SHADOW_STYLE.replace(Some(shadow)) != Some(shadow) {
