@@ -4940,6 +4940,7 @@ fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
     }
     OWN_MOTION.set(own.is_some());
     knux_rig::SPIN.set(knux_rig::spins(act));
+    knux_rig::FALL.set(knux_rig::falls(act));
     MIRROR.set(own.is_some_and(|o| o.1));
     ARM_FWD.set(if matches!(act, 111 | 138) { 0.8 } else { 0.0 });
     if own.is_some_and(|o| o.0 == 582 || o.0 == 155) {

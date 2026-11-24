@@ -120,6 +120,13 @@ pub(super) fn punch_lock(m: &mut Mem, chao: u32, state: u16) {
 /// the drill claw (115 the dive, head down; 116 its end), his jump (65 to 68:
 /// he curls up and turns over; measured 152 degrees between his body and the
 /// Chao's with the cap on) and the leap out of a dig (92, 93: 104 degrees).
+/// His fall and landing (15, 16): after the uppercut he comes down leaning 55 to 58 degrees
+/// (final sheets 2026-11-24: body 58, head 59 off with the 24-degree cap; 0 after an ordinary
+/// jump). The parts take his turn in full there too; the overlay keeps its usual pace (not SPIN).
+pub(super) fn falls(state: u16) -> bool {
+    matches!(state, 15 | 16)
+}
+
 pub(super) fn spins(state: u16) -> bool {
     // and the digs themselves (90, 91 on the ground; 95, 96, 98 on a wall: 111 to 122 degrees measured).
     matches!(state, 111 | 115 | 116 | 65..=68 | 90..=93 | 95 | 96 | 98)
@@ -127,6 +134,7 @@ pub(super) fn spins(state: u16) -> bool {
 
 thread_local! {
     pub(super) static SPIN: Cell<bool> = const { Cell::new(false) };
+    pub(super) static FALL: Cell<bool> = const { Cell::new(false) };
 }
 
 /// MMO rule (mob 2026-11-24, on the punch 3 clip: "chao doesnt fully spin
@@ -138,7 +146,7 @@ pub(super) fn spin_limits(node: usize, w: f32, cap: f32) -> (f32, f32) {
     // The head (14: eyes, mouth and what it wears hang from it) and the arms and
     // hands (3, 4, 10, 11) as well: mob on the drill dive, "head doesnt rotate
     // nor do eyes or hand".
-    if matches!(node, 1 | 14 | 3 | 4 | 10 | 11) && SPIN.get() && LAST_EXEC.get() == KNUX_EXEC { (1.0, 180.0) } else { (w, cap) }
+    if matches!(node, 1 | 14 | 3 | 4 | 10 | 11) && (SPIN.get() || FALL.get()) && LAST_EXEC.get() == KNUX_EXEC { (1.0, 180.0) } else { (w, cap) }
 }
 
 /// The Chao's motion under the overlay in his stages when his state is not
@@ -847,6 +855,7 @@ mod tests {
         for own in [582, 130, 155] { assert_eq!(under_motion(0, own), 0); }
         assert!(spins(66) && spins(90) && spins(91) && spins(92) && spins(93) && spins(96) && !spins(15) && !spins(16) && !spins(100));
         assert!(spins(111) && spins(115) && spins(116) && !spins(109) && !spins(110) && !spins(0));
+        assert!(falls(15) && falls(16) && !falls(0) && !falls(111));
         assert!(runs(8) && runs(9) && runs(10) && !runs(7) && !runs(6) && !runs(0) && !runs(11));
         // His 8-frame run at frame 6 = three quarters through: frame 3 of a 4-frame skate cycle.
         // His step 2.6 a frame, Shadow's skate row 0.12 against his 0.8: 0.39 a frame, wrapped at the end.
