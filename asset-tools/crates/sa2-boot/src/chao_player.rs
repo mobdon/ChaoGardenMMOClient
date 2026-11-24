@@ -4522,7 +4522,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
             let on_board = !chao_world(m) && BOARD.with_borrow(|b| b.as_ref().is_some_and(|b| f <= b.0 + 1));
             // Chao World: swimming or in the air the Chao plays its own motion for it.
-            let own_state = if me { chao_world_state(c, m, task, chao, area) } else { (SWIM.set(None), AIR.set(false)); None };
+            let own_state = if me && !menu_area(area) { chao_world_state(c, m, task, chao, area) } else { (SWIM.set(None), AIR.set(false)); None };
             // mob 2026-11-24, Chao World with no shoes or the Light Shoes: the
             // look follows the hidden Sonic's own state (gait): the Chao's own
             // walk in his walk, its own run in his jog, and his run laid over
@@ -4849,6 +4849,14 @@ pub(crate) fn climb_step(was: (u32, Option<f32>), level: Option<f32>, swimming: 
             if free >= CLIMB_FREE || to > level + CLIMB_TOP { (0, None) } else { (free, Some(to)) }
         }
     }
+}
+
+/// Chao World areas the player does not walk in, only the game's own menus
+/// run there: the race (4), its entry hall (5), the stadium (9) and Karate
+/// (10, 11). The hidden character has no floor there, so he counted as in the
+/// air and every confirm press was held back as the flight's second press.
+pub(crate) fn menu_area(area: u16) -> bool {
+    matches!(area, 4 | 5 | 9 | 10 | 11)
 }
 
 pub(crate) fn water_level(area: u16) -> Option<f32> {
@@ -5628,6 +5636,13 @@ mod tests {
         // held at the top without getting over, or the stick let go: ends
         assert_eq!(climb_step((0, Some(-1.5 + CLIMB_TOP)), w, false, true, true, 4.5), (0, None));
         assert_eq!(climb_step((0, Some(0.0)), w, false, false, true, 0.0), (0, None));
+    }
+
+    #[test]
+    fn the_menu_areas_have_no_swim_or_flight() {
+        // Lobby, the three gardens and the kindergarten are walked in.
+        assert!([0, 1, 2, 3, 6].iter().all(|&a| !super::menu_area(a)));
+        assert!([4, 5, 9, 10, 11].iter().all(|&a| super::menu_area(a)));
     }
 
     #[test]
