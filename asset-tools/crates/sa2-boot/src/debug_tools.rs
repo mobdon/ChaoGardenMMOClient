@@ -36,6 +36,8 @@ const LINE: u32 = 0x40;
 static FREECAM: Global<Option<(u32, u16)>> = global!(None);
 /// The upgrade bytes before Full equipment, put back when it is switched off.
 static SAVED_GEAR: Global<Option<[u8; UPGRADE_COUNT as usize]>> = global!(None);
+/// The (stage, mission) the debug text last logged, so a test can read them from the log.
+static TEXT_LOGGED: Global<Option<(u16, u8)>> = global!(None);
 
 fn on(key: &str) -> bool {
     debug_set(key).is_some_and(|v| v == "1")
@@ -142,6 +144,11 @@ fn lines(m: &Mem, task: u32) -> Vec<String> {
 }
 
 fn text(c: &mut Cpu, m: &mut Mem, task: u32) {
+    let now = (m.r16(STAGE_NUM), m.r8(GAME + 0x23) + 1);
+    if TEXT_LOGGED.get() != Some(now) {
+        TEXT_LOGGED.set(Some(now));
+        eprintln!("debug-tools: debug text on, stage {} mission {}", now.0, now.1);
+    }
     for (i, l) in lines(m, task).iter().enumerate() {
         let at = TEXT + LINE * i as u32;
         let bytes = l.as_bytes();
