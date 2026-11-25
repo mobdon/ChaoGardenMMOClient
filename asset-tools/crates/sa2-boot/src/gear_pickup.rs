@@ -28,6 +28,11 @@ fn newly_found(bytes: [u8; 2], told: &mut [bool; 2]) -> Vec<u8> {
 }
 
 fn poll(_: &mut Cpu, m: &mut Mem) {
+    // The dev menu's Full equipment sets every byte: those are not pickups.
+    if crate::debug_tools::full_gear() {
+        TOLD.set([true; 2]);
+        return;
+    }
     let bytes = SHOES.map(|(off, _)| m.r8(UPGRADES + off));
     let codes = TOLD.with_borrow_mut(|told| newly_found(bytes, told));
     for code in codes {

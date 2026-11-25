@@ -671,7 +671,7 @@ fn tune_matrix(v: &[f32; 7]) -> [[f32; 4]; 3] {
 }
 
 /// A debug panel setting ("set key value" in the tuner file), None without one.
-fn debug_set(key: &str) -> Option<String> {
+pub(crate) fn debug_set(key: &str) -> Option<String> {
     std::env::var_os("SA2_GEAR_TUNE")?;
     let _ = gear_tune("");
     DEBUG_SETS.with_borrow(|s| s.get(key).cloned())
@@ -4899,6 +4899,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     takeoff_test(c, m);
     info_out(m, area);
     debug_teleport(m, task);
+    crate::debug_tools::frame(c, m, task);
     staff_goto(c, m, task, u32::from(area));
     crate::card_box::frame(c, m);
     lobby_exit_hook(c, m);

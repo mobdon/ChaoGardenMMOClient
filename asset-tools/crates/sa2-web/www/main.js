@@ -817,7 +817,7 @@ function showCard(player) {
 // piece "name dx dy dz rx ry rz scale", offsets in the piece's own frame,
 // degrees); "Copy values" puts the lines on the clipboard.
 let tunerShown = false;
-function gearTuner() {
+function gearTuner(preset = {}) {
   const pieces = { fist0: 'Fist 1', fist1: 'Fist 2', boot0: 'Shoe 1', boot1: 'Shoe 2', sunglasses: 'Sunglasses', necklace: 'Air Necklace', sflame: 'Flame Ring (Shadow)', lshoe0: 'Light Shoe 1', lshoe1: 'Light Shoe 2', ring: 'Flame Ring (Sonic)', bracelet: 'Bounce Bracelet' };
   const keys = [['dx', -4, 4, 0.02], ['dy', -4, 4, 0.02], ['dz', -4, 4, 0.02], ['rx', -180, 180, 1], ['ry', -180, 180, 1], ['rz', -180, 180, 1], ['scale', 0.2, 3, 0.01]];
   const vals = Object.fromEntries(Object.keys(pieces).map((p) => [p, { dx: 0, dy: 0, dz: 0, rx: 0, ry: 0, rz: 0, scale: 1 }]));
@@ -858,16 +858,20 @@ function gearTuner() {
   });
   pick.onchange = () => rows.forEach((f) => f());
   // Debug toggles and the sound mute list: "set key value" lines in the same file.
-  const sets = { fists: '1', shoes: '1', jets: '1', tryon: '1', sunglasses: '1', necklace: '1', sflame: '1', lshoe0: '1', lshoe1: '1', ring: '1', bracelet: '1', selog: '0', link: '0', mute: '', tp: '' };
+  const sets = { fists: '1', shoes: '1', jets: '1', tryon: '1', sunglasses: '1', necklace: '1', sflame: '1', lshoe0: '1', lshoe1: '1', ring: '1', bracelet: '1', selog: '0', link: '0', mute: '', tp: '', dbgtext: '0', freecam: '0', fullgear: '0' };
+  // ?debug=text,freecam,fullgear (tests, sa2-web regress): those switches start on.
+  for (const [k, v] of Object.entries(preset)) if (k in sets) sets[k] = v;
   const setText = () => Object.entries(sets).map(([k, v]) => `set ${k} ${v}`).join('\n') + '\n';
   const fx = document.createElement('div');
   fx.style.cssText = 'margin-top:6px;display:flex;flex-wrap:wrap;gap:6px';
   // One switch per try-on piece too (chao_player.rs TRY_ON skips a piece set to 0).
-  for (const k of ['fists', 'shoes', 'jets', 'tryon', 'sunglasses', 'necklace', 'sflame', 'lshoe0', 'lshoe1', 'ring', 'bracelet', 'selog', 'link']) {
+  for (const k of ['fists', 'shoes', 'jets', 'tryon', 'sunglasses', 'necklace', 'sflame', 'lshoe0', 'lshoe1', 'ring', 'bracelet', 'selog', 'link', 'dbgtext', 'freecam', 'fullgear']) {
     const cb = Object.assign(document.createElement('input'), { type: 'checkbox', checked: sets[k] === '1' });
     cb.onchange = () => { sets[k] = cb.checked ? '1' : '0'; send(); rows.forEach((f) => f()); };
     const l = document.createElement('label');
-    l.append(cb, { fists: 'Fists', shoes: 'Shoes', jets: 'Jets', tryon: 'Try-on gear', selog: 'Sound log', link: 'Link fists' }[k] || pieces[k]);
+    // The game's own leftover debug tools (sa2-boot debug_tools.rs): on-screen values,
+    // the EDITOR free camera (WASD turns it while on) and every upgrade.
+    l.append(cb, { fists: 'Fists', shoes: 'Shoes', jets: 'Jets', tryon: 'Try-on gear', selog: 'Sound log', link: 'Link fists', dbgtext: 'Debug text', freecam: 'Free camera', fullgear: 'Full equipment' }[k] || pieces[k]);
     fx.append(l);
   }
   const mute = Object.assign(document.createElement('input'), { placeholder: 'mute ids, e.g. 2003,601c', style: 'width:100%;margin-top:4px' });
@@ -876,6 +880,19 @@ function gearTuner() {
   const tp = Object.assign(document.createElement('input'), { placeholder: 'teleport to x y z', style: 'width:100%;margin-top:4px' });
   tp.onchange = () => { sets.tp = tp.value.trim().replace(/\s+/g, ','); send(); };
   box.append(fx, mute, tp);
+  // Mission picker: this stage again with mission 1st..Last (?mission=, sa2-boot start_stage SA2_START_MISSION).
+  const here = new URLSearchParams(location.search);
+  if (/^\d+$/.test(here.get('stage') || '')) {
+    const mis = document.createElement('select');
+    ['1st', '2nd', '3rd', '4th', 'Last'].forEach((t, i) => mis.append(new Option(`Mission ${t}`, String(i + 1))));
+    mis.value = here.get('mission') || '1';
+    const go = Object.assign(document.createElement('button'), { textContent: 'Play mission' });
+    go.onclick = () => { here.set('mission', mis.value); location.search = here.toString(); };
+    const row = document.createElement('div');
+    row.style.cssText = 'margin-top:4px;display:flex;gap:4px';
+    row.append(mis, go);
+    box.append(row);
+  }
   // Test accounts only (the server refuses others): POST /api/test/override
   // sets the server profile's stats and story progress (story thread).
   const ov = document.createElement('div');
@@ -923,16 +940,18 @@ function gearTuner() {
   return box;
 }
 // The dev menu's button: opens the Gear tuner (made on the first click) and closes it again.
-function gearButton(open) {
+function gearButton(open, preset) {
   const b = Object.assign(document.createElement('button'), { textContent: 'Gear', tabIndex: -1,
     style: 'position:fixed;right:8px;top:8px;z-index:100;font:12px sans-serif;opacity:.75' });
   let box = null;
   b.onclick = () => {
     if (box) box.hidden = !box.hidden;
-    else { box = gearTuner(); box.style.top = '36px'; }
+    else { box = gearTuner(preset); box.style.top = '36px'; }
     b.blur(); // the game's keys do not press the button
   };
   document.body.append(b);
+  // A preset is sent to the game at once, with the panel made but closed.
+  if (preset && !open) { box = gearTuner(preset); box.style.top = '36px'; box.hidden = true; }
   if (open) b.onclick();
 }
 
@@ -998,13 +1017,18 @@ async function start() {
   // Signed in on the Chao MMO title screen (same site): the server memory card is in slot A.
   // ?stage=N from the Chao MMO's Stage Select: start that stage from boot (sa2_boot::start_stage).
   if (/^\d+$/.test(q.get('stage') || '')) e.SA2_START_STAGE = q.get('stage');
+  // ?mission=1..5 (dev menu's mission picker): that mission of the stage.
+  if (/^[1-5]$/.test(q.get('mission') || '')) e.SA2_START_MISSION = q.get('mission');
   // ?geartune=1 (debug): the gear tuner panel (gearTuner) and its file.
   // The game reads its files always (empty until a panel writes them): a
   // dev account's panel opens once the room says it is an admin.
   e.SA2_GEAR_TUNE = '/mmo/gear-tune'; e.SA2_INFO_OUT = '/mmo/info-out';
   // The Gear tuner (dev menu) is there in every stage as a small closed "Gear" button;
   // ?geartune=1 starts it opened. Nothing is sent to the game until it is first opened.
-  if (!tunerShown) { tunerShown = true; gearButton(q.get('geartune') === '1'); }
+  // ?debug=text,freecam,fullgear: the dev menu's debug tools start switched on (sa2-boot debug_tools.rs).
+  const dbg = (q.get('debug') || '').split(',');
+  const preset = Object.fromEntries([['text', 'dbgtext'], ['freecam', 'freecam'], ['fullgear', 'fullgear']].filter(([w]) => dbg.includes(w)).map(([, k]) => [k, '1']));
+  if (!tunerShown) { tunerShown = true; gearButton(q.get('geartune') === '1', Object.keys(preset).length ? preset : undefined); }
   if (/^\d+$/.test(q.get('area') || '')) e.SA2_CHAO_AREA = q.get('area');
   // ?stage=60&combat=1: Big Foot's arena as the combat area (sa2_boot::combat).
   if (q.get('combat') === '1') e.SA2_COMBAT = '1';

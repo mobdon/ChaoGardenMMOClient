@@ -1221,13 +1221,25 @@ fn start(c: &mut Cpu, m: &mut Mem, stage: u16, ch: u32) {
     guest_call(c, m, SET_STAGE_NUM, &[u32::from(stage)]);
     guest_call(c, m, SET_PLAYER_CHAR, &[0, ch]);
     if stage != CHAO_WORLD {
-        m.w8(GAME + 0x23, 0); // mission: the menu's cursor, mission 1 here (and 0 for stage 0x1F)
+        // mission: the menu's cursor, mission 1 here (and 0 for stage 0x1F); the dev menu's
+        // mission picker (SA2_START_MISSION=1..5, page ?mission=) as the old developer
+        // stage select's [X] set it (titleD: 1ST, 2ND, 3RD, 4TH, LAST).
+        m.w8(GAME + 0x23, start_mission());
     }
     m.w8(GAME + 0x20, 0);
     m.w8(GAME + 0x1E, 0);
     m.w8(GAME, 0);
     m.w32(NEXT_GLOBAL_MODE, MD_ACTION_INIT);
     m.w32(GLOBAL_MODE, MD_ACTION_INIT);
+}
+
+/// SA2_START_MISSION=1..5 as the mission byte 0..4 (0 when unset or out of range).
+fn start_mission() -> u8 {
+    mission_byte(std::env::var("SA2_START_MISSION").ok().as_deref())
+}
+
+fn mission_byte(v: Option<&str>) -> u8 {
+    v.and_then(|v| v.trim().parse::<u8>().ok()).filter(|n| (1..=5).contains(n)).map_or(0, |n| n - 1)
 }
 
 /// The browser page's `/dev/area` (sa2-web worker.js): the Chao World area,
@@ -1388,6 +1400,16 @@ mod tests {
             (m.r8(GAME + 0x23), m.r8(GAME + 0x1E), m.r32(GLOBAL_MODE)),
             (0, 0, MD_ACTION_INIT)
         );
+    }
+
+    #[test]
+    fn mission_picker_takes_one_to_five_only() {
+        assert_eq!(mission_byte(None), 0);
+        assert_eq!(mission_byte(Some("1")), 0);
+        assert_eq!(mission_byte(Some(" 5 ")), 4);
+        assert_eq!(mission_byte(Some("6")), 0);
+        assert_eq!(mission_byte(Some("0")), 0);
+        assert_eq!(mission_byte(Some("x")), 0);
     }
 
     #[test]
