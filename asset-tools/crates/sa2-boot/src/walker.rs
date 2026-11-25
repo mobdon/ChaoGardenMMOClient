@@ -79,6 +79,11 @@ const WALKER_DISPLAY: u32 = 0x800A_F558;
 const NJ_CURRENT_MATRIX: u32 = 0x803A_E0C4; // _nj_current_matrix_ptr_
 /// NJS_OBJECT: evalflags +0, model +4, child +0x2C, sibling +0x30; NJD_EVAL_HIDE.
 const HIDE: u32 = 8;
+/// The stage HUD's lives icon (r3 = player): it draws LifeIconTexs[obj2 +3]
+/// (0x801B3B58, one NJS_TEXLIST per character), as two sprites (textures 0
+/// and 1) for characters 3, 7 and 14 (0x80062258..0x80062270), else one.
+const LIFE_ICON: u32 = 0x8006_2134;
+const LIFE_ICON_TEXS: u32 = 0x801B_3B58;
 
 /// The mech row player 1's Chao Walker takes during its load (0 = none).
 static MECH_ROW: AtomicU32 = AtomicU32::new(0);
@@ -100,6 +105,27 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(BANK_CHOOSER, banks);
     c.rt.set_override(NODE_CALLBACK, node_callback);
     c.rt.set_override(WALKER_DISPLAY, display);
+    c.rt.set_override(LIFE_ICON, life_icon);
+}
+
+/// The lives icon of a Dark Chao Walker (character 14), which no 1P stage
+/// has: the game's two-sprite branch for 14 draws texture 1 of zanki_dchao's
+/// list, which has only texture 0 (the next TEXNAME, zanki_big0, is never
+/// loaded): grey static beside the face and in the first digit. It is drawn
+/// as the Chao Walker's (13) is, one sprite: for this call the player counts
+/// as 13 and list 13 is the Dark Chao's, both put back after.
+fn life_icon(c: &mut Cpu, m: &mut Mem) {
+    let obj2 = m.r32(PLAYER1_OBJ2 + 4 * (c.r[3] & 1));
+    if obj2 == 0 || m.r8(obj2 + 3) != 14 {
+        return original(c, m, LIFE_ICON);
+    }
+    let (chao, dark) = (LIFE_ICON_TEXS + 13 * 4, LIFE_ICON_TEXS + 14 * 4);
+    let list = m.r32(chao);
+    m.w8(obj2 + 3, 13);
+    m.w32(chao, m.r32(dark));
+    original(c, m, LIFE_ICON);
+    m.w8(obj2 + 3, 14);
+    m.w32(chao, list);
 }
 
 /// The stock pilot's root node of player 1's Chao Walker, the seat.
@@ -352,6 +378,39 @@ mod tests {
             PHYSICS_SETUP => Some(setup),
             _ => None,
         }
+    }
+
+    #[test]
+    fn a_dark_chao_walker_lives_icon_is_drawn_as_one_sprite_of_its_own_list() {
+        fn hud(c: &mut Cpu, m: &mut Mem) {
+            // Records what the game's lives icon would read: character, list 13.
+            let obj2 = m.r32(PLAYER1_OBJ2 + 4 * c.r[3]);
+            c.r[4] = u32::from(m.r8(obj2 + 3));
+            c.r[5] = m.r32(LIFE_ICON_TEXS + 13 * 4);
+        }
+        let (mut c, mut m) = (Cpu::default(), Mem::default());
+        c.rt.generated = |a| (a == LIFE_ICON).then_some(hud as sa2_recomp::rt::Func);
+        c.rt.set_override(LIFE_ICON, life_icon);
+        m.w32(PLAYER1_OBJ2, OBJ2);
+        m.w32(LIFE_ICON_TEXS + 13 * 4, 0x803A_D320);
+        m.w32(LIFE_ICON_TEXS + 14 * 4, 0x803A_D328);
+        m.w8(OBJ2 + 3, 14);
+        c.r[3] = 0;
+        sa2_recomp::rt::call(&mut c, &mut m, LIFE_ICON);
+        assert_eq!(
+            (c.r[4], c.r[5]),
+            (13, 0x803A_D328),
+            "one sprite, zanki_dchao"
+        );
+        assert_eq!(
+            (m.r8(OBJ2 + 3), m.r32(LIFE_ICON_TEXS + 13 * 4)),
+            (14, 0x803A_D320),
+            "put back"
+        );
+        m.w8(OBJ2 + 3, 6);
+        c.r[3] = 0;
+        sa2_recomp::rt::call(&mut c, &mut m, LIFE_ICON);
+        assert_eq!((c.r[4], c.r[5]), (6, 0x803A_D320), "others untouched");
     }
 
     #[test]
