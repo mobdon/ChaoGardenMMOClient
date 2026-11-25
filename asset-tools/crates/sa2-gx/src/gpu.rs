@@ -138,13 +138,8 @@ pub fn translate_tex_filter(f: u32) -> (wgpu::FilterMode, wgpu::MipmapFilterMode
     }
 }
 
-pub fn translate_max_anisotropy(a: u32) -> u16 {
-    match a {
-        anisotropy::_2 => 2,
-        anisotropy::_4 => 4,
-        _ => 1,
-    }
-}
+/// Anisotropy for linear, mipped samplers (WebGPU's maximum).
+const MAX_ANISOTROPY: u16 = 16;
 
 fn vertex_format(f: InputFormat) -> wgpu::VertexFormat {
     match f {
@@ -530,13 +525,21 @@ impl GxRenderer {
             .or_insert_with(|| {
                 let (min, mip) = translate_tex_filter(d.min_filter);
                 let (mag, _) = translate_tex_filter(d.mag_filter);
-                let aniso = translate_max_anisotropy(d.max_aniso);
+                // Linear mipped textures blend two levels and filter at
+                // grazing angles (as PC renderers do): nearest-level picks
+                // band into seams and far ground smears.
+                let mipped = d.max_lod_x16 > d.min_lod_x16;
+                let mip = if mipped && min == wgpu::FilterMode::Linear {
+                    wgpu::MipmapFilterMode::Linear
+                } else {
+                    mip
+                };
                 // wgpu requires linear filtering for anisotropy.
                 let aniso = if min == wgpu::FilterMode::Linear
                     && mag == wgpu::FilterMode::Linear
                     && mip == wgpu::MipmapFilterMode::Linear
                 {
-                    aniso
+                    MAX_ANISOTROPY
                 } else {
                     1
                 };
