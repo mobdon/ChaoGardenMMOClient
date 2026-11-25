@@ -858,16 +858,18 @@ function gearTuner() {
   });
   pick.onchange = () => rows.forEach((f) => f());
   // Debug toggles and the sound mute list: "set key value" lines in the same file.
-  const sets = { fists: '1', shoes: '1', jets: '1', tryon: '1', sunglasses: '1', necklace: '1', sflame: '1', lshoe0: '1', lshoe1: '1', ring: '1', bracelet: '1', selog: '0', link: '0', mute: '', tp: '' };
+  const sets = { fists: '1', shoes: '1', jets: '1', tryon: '1', sunglasses: '1', necklace: '1', sflame: '1', lshoe0: '1', lshoe1: '1', ring: '1', bracelet: '1', selog: '0', link: '0', mute: '', tp: '', dbgtext: '0', freecam: '0', fullgear: '0' };
   const setText = () => Object.entries(sets).map(([k, v]) => `set ${k} ${v}`).join('\n') + '\n';
   const fx = document.createElement('div');
   fx.style.cssText = 'margin-top:6px;display:flex;flex-wrap:wrap;gap:6px';
   // One switch per try-on piece too (chao_player.rs TRY_ON skips a piece set to 0).
-  for (const k of ['fists', 'shoes', 'jets', 'tryon', 'sunglasses', 'necklace', 'sflame', 'lshoe0', 'lshoe1', 'ring', 'bracelet', 'selog', 'link']) {
+  for (const k of ['fists', 'shoes', 'jets', 'tryon', 'sunglasses', 'necklace', 'sflame', 'lshoe0', 'lshoe1', 'ring', 'bracelet', 'selog', 'link', 'dbgtext', 'freecam', 'fullgear']) {
     const cb = Object.assign(document.createElement('input'), { type: 'checkbox', checked: sets[k] === '1' });
     cb.onchange = () => { sets[k] = cb.checked ? '1' : '0'; send(); rows.forEach((f) => f()); };
     const l = document.createElement('label');
-    l.append(cb, { fists: 'Fists', shoes: 'Shoes', jets: 'Jets', tryon: 'Try-on gear', selog: 'Sound log', link: 'Link fists' }[k] || pieces[k]);
+    // The game's own leftover debug tools (sa2-boot debug_tools.rs): on-screen values,
+    // the EDITOR free camera (WASD turns it while on) and every upgrade.
+    l.append(cb, { fists: 'Fists', shoes: 'Shoes', jets: 'Jets', tryon: 'Try-on gear', selog: 'Sound log', link: 'Link fists', dbgtext: 'Debug text', freecam: 'Free camera', fullgear: 'Full equipment' }[k] || pieces[k]);
     fx.append(l);
   }
   const mute = Object.assign(document.createElement('input'), { placeholder: 'mute ids, e.g. 2003,601c', style: 'width:100%;margin-top:4px' });
@@ -876,6 +878,19 @@ function gearTuner() {
   const tp = Object.assign(document.createElement('input'), { placeholder: 'teleport to x y z', style: 'width:100%;margin-top:4px' });
   tp.onchange = () => { sets.tp = tp.value.trim().replace(/\s+/g, ','); send(); };
   box.append(fx, mute, tp);
+  // Mission picker: this stage again with mission 1st..Last (?mission=, sa2-boot start_stage SA2_START_MISSION).
+  const here = new URLSearchParams(location.search);
+  if (/^\d+$/.test(here.get('stage') || '')) {
+    const mis = document.createElement('select');
+    ['1st', '2nd', '3rd', '4th', 'Last'].forEach((t, i) => mis.append(new Option(`Mission ${t}`, String(i + 1))));
+    mis.value = here.get('mission') || '1';
+    const go = Object.assign(document.createElement('button'), { textContent: 'Play mission' });
+    go.onclick = () => { here.set('mission', mis.value); location.search = here.toString(); };
+    const row = document.createElement('div');
+    row.style.cssText = 'margin-top:4px;display:flex;gap:4px';
+    row.append(mis, go);
+    box.append(row);
+  }
   // Test accounts only (the server refuses others): POST /api/test/override
   // sets the server profile's stats and story progress (story thread).
   const ov = document.createElement('div');
@@ -998,6 +1013,8 @@ async function start() {
   // Signed in on the Chao MMO title screen (same site): the server memory card is in slot A.
   // ?stage=N from the Chao MMO's Stage Select: start that stage from boot (sa2_boot::start_stage).
   if (/^\d+$/.test(q.get('stage') || '')) e.SA2_START_STAGE = q.get('stage');
+  // ?mission=1..5 (dev menu's mission picker): that mission of the stage.
+  if (/^[1-5]$/.test(q.get('mission') || '')) e.SA2_START_MISSION = q.get('mission');
   // ?geartune=1 (debug): the gear tuner panel (gearTuner) and its file.
   // The game reads its files always (empty until a panel writes them): a
   // dev account's panel opens once the room says it is an admin.

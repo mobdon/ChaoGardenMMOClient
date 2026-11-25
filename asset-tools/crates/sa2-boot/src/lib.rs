@@ -18,6 +18,7 @@ pub mod chao_retarget;
 pub mod skate;
 pub mod chao_speed;
 pub mod clock;
+pub mod debug_tools;
 pub mod combat;
 pub mod dvd;
 pub mod font_widths;
